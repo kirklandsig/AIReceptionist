@@ -7,6 +7,8 @@ business:
 
 voice:
   voice_id: "coral"
+  # model options: "gpt-realtime" (latest, default), "gpt-4o-realtime-preview" (original Advanced Voice model)
+  # model: "gpt-realtime"
 
 greeting: "Thank you for calling Acme Dental, how can I help you today?"
 

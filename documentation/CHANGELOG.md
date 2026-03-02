@@ -10,10 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Configurable voice model via `voice.model` field in business YAML (defaults to `"gpt-realtime"`)
+- Telnyx recommended as primary SIP provider in deployment documentation
+- AGPL-3.0 license
+- SEO-optimized README with SaaS competitor comparison
+- API key leak detection in pre-commit hook (OpenAI, LiveKit, AWS, GitHub, Stripe)
+- Active development notice and badges in README
+- Donation addresses (BTC, ETH)
 - CLAUDE.md with project instructions and mandatory documentation update rules
 - Git pre-commit hook (`scripts/pre-commit`) that warns on undocumented code changes and runs pytest
 - Hook installer script (`scripts/install-hooks.sh`)
 - This changelog file (`documentation/CHANGELOG.md`)
+
+### Changed
+- Agent model is now configurable per-business (was hardcoded to plugin default)
 
 ---
 

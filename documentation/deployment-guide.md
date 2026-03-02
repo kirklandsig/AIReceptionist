@@ -11,8 +11,8 @@ This guide covers everything needed to deploy AI Receptionist in production: Liv
 - [Option A: LiveKit Cloud Deployment](#option-a-livekit-cloud-deployment)
 - [Option B: Self-Hosted LiveKit Deployment](#option-b-self-hosted-livekit-deployment)
 - [SIP Trunk Setup](#sip-trunk-setup)
+  - [Telnyx SIP Trunk (Recommended)](#telnyx-sip-trunk)
   - [Twilio SIP Trunk](#twilio-sip-trunk)
-  - [Telnyx SIP Trunk](#telnyx-sip-trunk)
 - [Connecting SIP Trunk to LiveKit](#connecting-sip-trunk-to-livekit)
 - [Running the Agent](#running-the-agent)
   - [Development Mode](#development-mode)
@@ -181,6 +181,12 @@ python -m receptionist.agent start
 ## SIP Trunk Setup
 
 A SIP trunk connects the PSTN (regular phone network) to your LiveKit server. You need a SIP trunk provider to receive phone calls.
+
+**We recommend Telnyx** over Twilio for this project. Telnyx operates its own private IP backbone (vs Twilio routing over the public internet), charges ~$0.007/min vs Twilio's ~$0.013/min, and is a licensed carrier in 30+ countries. For a project focused on voice fidelity, fewer network hops and a private backbone mean cleaner audio reaching your agent. Both are fully supported by LiveKit.
+
+### Telnyx SIP Trunk (Recommended)
+
+See the [Telnyx section below](#telnyx-sip-trunk-1) or follow [Telnyx's LiveKit configuration guide](https://developers.telnyx.com/docs/voice/sip-trunking/livekit-configuration-guide) for the most up-to-date steps.
 
 ### Twilio SIP Trunk
 

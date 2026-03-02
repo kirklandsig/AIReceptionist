@@ -159,7 +159,7 @@ This module defines the entire configuration schema using Pydantic v2 models.
 | Model            | Fields                                                        | Notes                                                                                                  |
 | ---------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `BusinessInfo`   | `name: str`, `type: str`, `timezone: str`                     | Core identity. `timezone` must be a valid IANA timezone string (e.g., `"America/New_York"`).            |
-| `VoiceConfig`    | `voice_id: str` (default `"coral"`)                           | OpenAI Realtime voice selection.                                                                       |
+| `VoiceConfig`    | `voice_id: str` (default `"coral"`), `model: str` (default `"gpt-realtime"`) | OpenAI Realtime voice and model selection. Model can be `"gpt-realtime"` (latest) or `"gpt-4o-realtime-preview"` (original). |
 | `DayHours`       | `open: str`, `close: str`                                     | Both validated by regex `^([01]\d|2[0-3]):[0-5]\d$` to enforce HH:MM 24-hour format.                  |
 | `WeeklyHours`    | 7 fields: `monday` through `sunday`, each `Optional[DayHours]`| A `field_validator` converts the string `"closed"` to `None` for any day.                              |
 | `RoutingEntry`   | `name: str`, `number: str`, `description: str`                | Represents a department the agent can transfer calls to.                                               |
@@ -266,6 +266,7 @@ business:
 
 voice:
   voice_id: "coral"          # OpenAI Realtime voice
+  # model: "gpt-realtime"   # Optional: model variant (default: latest)
 
 hours:
   monday:

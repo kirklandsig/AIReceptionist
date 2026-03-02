@@ -155,7 +155,10 @@ async def handle_call(ctx: agents.JobContext):
     config = load_business_config(ctx)
 
     session = AgentSession(
-        llm=openai.realtime.RealtimeModel(voice=config.voice.voice_id),
+        llm=openai.realtime.RealtimeModel(
+            model=config.voice.model,
+            voice=config.voice.voice_id,
+        ),
     )
 
     await session.start(

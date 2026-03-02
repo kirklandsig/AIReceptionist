@@ -158,6 +158,16 @@ Voice configuration for the OpenAI Realtime API.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `voice_id` | string | No | `"coral"` | The OpenAI voice to use for the receptionist. |
+| `model` | string | No | `"gpt-realtime"` | The OpenAI Realtime model variant to use. |
+
+**Available models**:
+
+| Model | Description |
+|-------|-------------|
+| `gpt-realtime` | Latest speech-to-speech model (default, auto-updates) |
+| `gpt-4o-realtime-preview` | Original Advanced Voice model |
+
+**Recommendation**: `gpt-realtime` (the default) is the latest and highest-quality model. It's the same speech-to-speech technology powering ChatGPT Advanced Voice. Only change this if you have a specific reason to pin to an older variant.
 
 **Available voices**:
 
@@ -178,6 +188,7 @@ Voice configuration for the OpenAI Realtime API.
 ```yaml
 voice:
   voice_id: "sage"
+  model: "gpt-realtime"  # optional, defaults to latest
 ```
 
 ---

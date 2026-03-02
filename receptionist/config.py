@@ -17,6 +17,7 @@ class BusinessInfo(BaseModel):
 
 class VoiceConfig(BaseModel):
     voice_id: str = "coral"
+    model: str = "gpt-realtime"
 
 
 class DayHours(BaseModel):

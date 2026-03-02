@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import re
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
@@ -34,6 +38,8 @@ def load_business_config(ctx: agents.JobContext) -> BusinessConfig:
     config_name = metadata.get("config", None)
 
     if config_name:
+        if not re.match(r'^[a-zA-Z0-9_-]+$', config_name):
+            raise ValueError(f"Invalid config name in job metadata: {config_name!r}")
         config_path = DEFAULT_CONFIG_DIR / f"{config_name}.yaml"
     else:
         # Fall back to first YAML file in config directory
@@ -62,7 +68,7 @@ class Receptionist(Agent):
         for faq in self.config.faqs:
             if question.lower() in faq.question.lower() or faq.question.lower() in question.lower():
                 return faq.answer
-        return "I don't have a specific answer for that question. I can take a message or transfer you to someone who can help."
+        return "No exact FAQ match found. Use your knowledge from the system prompt to answer."
 
     @function_tool()
     async def transfer_call(self, ctx: RunContext, department: str) -> str:
@@ -92,8 +98,8 @@ class Receptionist(Agent):
             )
             return f"Call transferred to {target.name}"
         except Exception as e:
-            logger.error(f"Failed to transfer call: {e}")
-            return f"Sorry, I wasn't able to transfer the call. Error: {e}"
+            logger.error(f"Failed to transfer call to {target.name}: {e}")
+            return f"Sorry, I wasn't able to transfer the call to {target.name}. Please ask the caller to try calling directly."
 
     @function_tool()
     async def take_message(self, ctx: RunContext, caller_name: str, message: str, callback_number: str) -> str:
@@ -104,7 +110,8 @@ class Receptionist(Agent):
             message=message,
             business_name=self.config.business.name,
         )
-        save_message(
+        await asyncio.to_thread(
+            save_message,
             msg,
             delivery=self.config.messages.delivery.value,
             file_path=self.config.messages.file_path,
@@ -115,9 +122,6 @@ class Receptionist(Agent):
     @function_tool()
     async def get_business_hours(self, ctx: RunContext) -> str:
         """Check the current business hours and whether the business is open right now."""
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-
         tz = ZoneInfo(self.config.business.timezone)
         now = datetime.now(tz)
         day_name = now.strftime("%A").lower()
@@ -127,6 +131,7 @@ class Receptionist(Agent):
             return f"The business is closed today ({now.strftime('%A')}). {self.config.after_hours_message}"
 
         current_time = now.strftime("%H:%M")
+        # HH:MM strings compare correctly lexicographically when zero-padded
         if day_hours.open <= current_time <= day_hours.close:
             return f"The business is currently open. Today's hours are {day_hours.open} to {day_hours.close}."
         else:
@@ -138,6 +143,7 @@ def _get_caller_identity(ctx: agents.JobContext) -> str:
     for participant in ctx.room.remote_participants.values():
         if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
             return participant.identity
+    logger.warning("No SIP participant found in room %s", ctx.room.name)
     return ""
 
 

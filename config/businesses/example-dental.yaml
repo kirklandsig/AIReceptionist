@@ -1,0 +1,54 @@
+# config/businesses/example-dental.yaml
+
+business:
+  name: "Acme Dental"
+  type: "dental office"
+  timezone: "America/New_York"
+
+voice:
+  voice_id: "coral"
+
+greeting: "Thank you for calling Acme Dental, how can I help you today?"
+
+personality: |
+  You are a warm, professional receptionist for a dental office.
+  Be concise but friendly. If you don't know something, offer to
+  take a message or transfer to the office manager.
+
+hours:
+  monday:    { open: "08:00", close: "17:00" }
+  tuesday:   { open: "08:00", close: "17:00" }
+  wednesday: { open: "08:00", close: "12:00" }
+  thursday:  { open: "08:00", close: "17:00" }
+  friday:    { open: "08:00", close: "15:00" }
+  saturday:  closed
+  sunday:    closed
+
+after_hours_message: |
+  Our office is currently closed. Our regular hours are Monday
+  through Friday. Would you like to leave a message?
+
+routing:
+  - name: "Front Desk"
+    number: "+15551234567"
+    description: "General inquiries, scheduling"
+  - name: "Dr. Smith"
+    number: "+15551234568"
+    description: "Direct line for urgent dental issues"
+  - name: "Billing"
+    number: "+15551234569"
+    description: "Insurance and payment questions"
+
+faqs:
+  - question: "Do you accept my insurance?"
+    answer: "We accept most major dental insurance plans including Delta Dental, Cigna, Aetna, and MetLife. For other plans, we can verify your coverage when you call."
+  - question: "How do I schedule an appointment?"
+    answer: "I can transfer you to our front desk to schedule, or you can book online at acmedental.com/book."
+  - question: "Where are you located?"
+    answer: "We're at 123 Main Street, Suite 200, Springfield. Right next to the Springfield Mall."
+  - question: "What should I do for a dental emergency?"
+    answer: "For a dental emergency during business hours, I'll transfer you directly to Dr. Smith. After hours, please call 911 for life-threatening emergencies or visit the nearest emergency room."
+
+messages:
+  delivery: "file"
+  file_path: "./messages/acme-dental/"

@@ -3,6 +3,9 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?style=flat-square)](https://www.python.org/downloads/)
 [![OpenAI Realtime API](https://img.shields.io/badge/OpenAI-Realtime%20API-412991?style=flat-square)](https://platform.openai.com/docs/guides/realtime)
 [![LiveKit](https://img.shields.io/badge/LiveKit-Voice%20Agent-FF6B35?style=flat-square)](https://livekit.io/)
+[![Status](https://img.shields.io/badge/status-active%20development-orange?style=flat-square)](#)
+
+> **This project is in active development.** Core functionality works (voice conversations, FAQ answering, call transfers, message taking), but expect breaking changes and rough edges. Contributions welcome.
 
 # AI Receptionist -- Open Source, Self-Hosted, No Compromises
 

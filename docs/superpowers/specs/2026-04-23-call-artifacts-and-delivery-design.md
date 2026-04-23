@@ -239,7 +239,7 @@ receptionist/
 | Component | Responsibility | Depends on |
 |---|---|---|
 | `agent.py` | Loads config, instantiates `Receptionist`, wires lifecycle hooks, starts session | `config`, `lifecycle` |
-| `lifecycle.py` | Owns `CallMetadata` for the active call; subscribes to session events (greeting, tool calls, disconnect); triggers channel dispatch on call-end | `transcript`, `recording`, `messaging` |
+| `lifecycle.py` | Owns `CallMetadata` for the active call; subscribes to session events (`user_input_transcribed`, `conversation_item_added`, `function_tools_executed`, `close`); triggers channel dispatch on call-end | `transcript`, `recording`, `messaging` |
 | `messaging/dispatcher.py` | Takes a `Message` + `MessagesConfig`, awaits file channel synchronously, fires email/webhook as background tasks | `messaging/channels`, `messaging/failures` |
 | `messaging/channels/*` | One per delivery type. Each implements `async def deliver(message, context) -> None`. `context` contains transcript/recording references when applicable | `email`, storage refs |
 | `messaging/failures.py` | Writes failure records to `<file_path>/.failures/`, implements `list-failures` CLI | — |
@@ -248,7 +248,7 @@ receptionist/
 | `email/templates.py` | Pure functions: `build_message_email(msg, context)`, `build_call_end_email(metadata, context)` | — |
 | `recording/egress.py` | `start_recording(room, config) -> RecordingHandle`, `stop_recording(handle) -> RecordingArtifact` | `livekit api` |
 | `recording/storage.py` | Resolves destination (local path or S3 URL), uploads for local→S3 if needed | `aioboto3`, `aiofiles` |
-| `transcript/capture.py` | `TranscriptCapture(session)` — listens to `user_input_transcribed`, `agent_speech_*`, tool invocations; accumulates `TranscriptSegment` list in memory | `livekit AgentSession` |
+| `transcript/capture.py` | `TranscriptCapture(session)` — subscribes to `user_input_transcribed` (caller), `conversation_item_added` (agent chat messages), `function_tools_executed` (tool invocations); accumulates `TranscriptSegment` list in memory. Event names verified against `livekit-agents==1.5.6` | `livekit AgentSession` |
 | `transcript/formatter.py` | `to_json(segments, metadata) -> str`, `to_markdown(segments, metadata) -> str` | — |
 | `transcript/metadata.py` | `CallMetadata` dataclass: `caller_phone`, `start_ts`, `end_ts`, `duration`, `outcome`, `transfer_target`, `message_taken`, `faqs_answered`, `languages_detected`, `recording_failed`, `recording_artifact` | — |
 | `retention/sweeper.py` | Walks configured artifact directories per business, deletes files older than TTL. Skips `.failures/` directories. | `config` |
@@ -286,8 +286,9 @@ receptionist/
 
 3. Conversation loop
    ├─> Caller speaks        -> user_input_transcribed event -> transcript.capture()
-   │                                                        -> metadata.languages_detected.add(detected_lang)
-   ├─> Agent speaks         -> agent_speech event           -> transcript.capture()
+   │                                                        -> metadata.languages_detected.add(event.language)
+   ├─> Agent speaks         -> conversation_item_added event (item.role == "assistant")
+   │                                                        -> transcript.capture()
    └─> Tool invocations:
        ├─> lookup_faq       -> metadata.faqs_answered.append(faq_question)
        ├─> transfer_call    -> metadata.transfer_target = dept_name
@@ -299,7 +300,7 @@ receptionist/
        │                       metadata.outcome = "message_taken" (if not already "transferred")
        └─> get_business_hours -> no metadata change
 
-4. Call end (disconnect event)
+4. Call end (`close` event fires on AgentSession)
    └─> lifecycle.on_call_ended()
        ├─> metadata.end_ts = now
        ├─> metadata.duration = end_ts - start_ts
@@ -578,7 +579,7 @@ Each slice ends with `pytest` green and a commit. No giant WIP branches.
 5. **Webhook channel** — `WebhookChannel` with retry/backoff, env-var headers. Unit tests.
 6. **Transcript capture + formatter** — Accumulate segments, render JSON/Markdown, write on call-end. Unit tests. One integration test.
 7. **Recording** — `recording/storage.py` (local + S3 via aioboto3 + moto tests) + `recording/egress.py` (thin egress wrapper). Storage tests; egress validated manually.
-8. **Lifecycle integration** — Wire disconnect handler in `agent.py`. Plumb `CallMetadata` + `TranscriptCapture` through `Receptionist`. Fire dispatchers on events. This is where it comes together.
+8. **Lifecycle integration** — Wire `close` event handler in `agent.py`. Plumb `CallMetadata` + `TranscriptCapture` through `Receptionist`. Fire dispatchers on events. This is where it comes together.
 9. **Consent preamble** — Update `Receptionist.on_enter()` to speak preamble first. Update `prompts.py` if the system prompt needs the consent text. Unit test the ordering.
 10. **Multi-language** — Add language block to system prompt (`prompts.py`). Validate whitelist codes in `config.py`. Update `example-dental.yaml` with a two-language example.
 11. **Retention sweeper + failures CLI** — Both new module CLIs with tests.

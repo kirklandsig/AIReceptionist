@@ -8,4 +8,7 @@ build/
 .venv/
 venv/
 messages/
+transcripts/
+recordings/
+.worktrees/
 .pytest_cache/

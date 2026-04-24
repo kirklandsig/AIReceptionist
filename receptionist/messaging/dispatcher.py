@@ -76,6 +76,15 @@ class Dispatcher:
         try:
             await channel.deliver(message, context)
             logger.info("Background dispatch via %s succeeded", channel_name)
+        except asyncio.CancelledError:
+            # Loop shutdown cancels the task — not a channel failure. Log and re-raise
+            # so the cancel propagates correctly; do NOT write a .failures/ record.
+            logger.info(
+                "Background dispatch via %s cancelled (loop shutdown)",
+                channel_name,
+                extra={"business_name": self.business_name, "component": f"messaging.channels.{channel_name}"},
+            )
+            raise
         except Exception as e:
             attempts.append({
                 "attempt": 1,

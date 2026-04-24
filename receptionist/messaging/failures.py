@@ -19,13 +19,17 @@ def resolve_failures_dir(channels: list, business_name: str) -> Path:
 
     Path resolution order:
       1. If a FileChannel is configured in `channels`, use `<file_path>/.failures/`.
-      2. Otherwise, use `./messages/<business_name_slug>/.failures/`.
+      2. Otherwise, use `./messages/<business_name_slug>/.failures/` resolved
+         to an ABSOLUTE path — so operators always know where to look even
+         when the agent was started from a non-project cwd.
     """
     for ch in channels:
         if isinstance(ch, FileChannelConfig):
             return Path(ch.file_path) / ".failures"
     slug = re.sub(r"[^a-zA-Z0-9_-]+", "-", business_name).strip("-").lower() or "unknown"
-    return Path("./messages") / slug / ".failures"
+    resolved = (Path.cwd() / "messages" / slug / ".failures").resolve()
+    logger.info("resolve_failures_dir: no FileChannel; using fallback %s", resolved)
+    return resolved
 
 
 async def record_failure(

@@ -15,7 +15,8 @@ from livekit.agents import AgentServer, AgentSession, Agent, RunContext, functio
 from livekit.plugins import openai, noise_cancellation
 
 from receptionist.config import BusinessConfig, load_config
-from receptionist.messages import Message, save_message
+from receptionist.messaging.models import Message, DispatchContext
+from receptionist.messaging.dispatcher import Dispatcher
 from receptionist.prompts import build_system_prompt
 
 load_dotenv(".env.local")
@@ -110,13 +111,17 @@ class Receptionist(Agent):
             message=message,
             business_name=self.config.business.name,
         )
-        await asyncio.to_thread(
-            save_message,
-            msg,
-            delivery=self.config.messages.delivery.value,
-            file_path=self.config.messages.file_path,
-            webhook_url=self.config.messages.webhook_url,
+        dispatcher = Dispatcher(
+            channels=self.config.messages.channels,
+            business_name=self.config.business.name,
+            email_config=self.config.email,
         )
+        try:
+            await dispatcher.dispatch_message(msg, DispatchContext(business_name=self.config.business.name))
+        except Exception as e:
+            logger.error("take_message: synchronous dispatch failed: %s", e)
+            return "I'm having trouble saving messages right now. Would you like me to transfer you to someone instead?"
+
         return f"Message saved from {caller_name}. Let them know their message has been recorded and someone will get back to them."
 
     @function_tool()

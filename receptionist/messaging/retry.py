@@ -48,8 +48,17 @@ async def retry_with_backoff(
             if attempt == policy.max_attempts:
                 logger.info("retry: exhausted %d attempts", attempt)
                 raise
-            logger.info("retry: attempt %d failed (%s), waiting %.2fs", attempt, e, delay)
-            await asyncio.sleep(delay)
+            # If the exception provides `retry_after` (e.g. a 429 response),
+            # honor it over the computed exponential delay. Clamped to a sane
+            # upper bound so a misbehaving server cannot stall us for minutes.
+            server_hint = getattr(e, "retry_after", None)
+            if isinstance(server_hint, (int, float)) and server_hint > 0:
+                wait = min(float(server_hint), 60.0)
+                logger.info("retry: attempt %d failed (%s), honoring retry_after=%.2fs", attempt, e, wait)
+            else:
+                wait = delay
+                logger.info("retry: attempt %d failed (%s), waiting %.2fs", attempt, e, wait)
+            await asyncio.sleep(wait)
             delay *= policy.factor
 
     assert last_exc is not None  # unreachable

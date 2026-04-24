@@ -6,9 +6,12 @@ business:
   timezone: "America/New_York"
 
 voice:
-  voice_id: "coral"
-  # model options: "gpt-realtime" (latest, default), "gpt-4o-realtime-preview" (original Advanced Voice model)
-  # model: "gpt-realtime"
+  voice_id: "marin"              # OpenAI Realtime voice; "marin"/"cedar" are trained for gpt-realtime-1.5
+  model: "gpt-realtime-1.5"      # options: gpt-realtime, gpt-realtime-1.5, gpt-realtime-mini
+
+languages:
+  primary: "en"
+  allowed: ["en", "es"]
 
 greeting: "Thank you for calling Acme Dental, how can I help you today?"
 
@@ -51,6 +54,56 @@ faqs:
   - question: "What should I do for a dental emergency?"
     answer: "For a dental emergency during business hours, I'll transfer you directly to Dr. Smith. After hours, please call 911 for life-threatening emergencies or visit the nearest emergency room."
 
+# Multi-channel message delivery. Remove or comment out any channels you do not need.
 messages:
-  delivery: "file"
-  file_path: "./messages/acme-dental/"
+  channels:
+    - type: "file"
+      file_path: "./messages/acme-dental/"
+    # - type: "email"
+    #   to: ["owner@acmedental.com"]
+    #   include_transcript: true
+    #   include_recording_link: true
+    # - type: "webhook"
+    #   url: "https://hooks.slack.com/services/..."
+    #   headers:
+    #     X-Api-Key: ${SLACK_TOKEN}
+
+# Call recording via LiveKit Egress.
+# recording:
+#   enabled: true
+#   storage:
+#     type: "local"         # or "s3"
+#     local:
+#       path: "./recordings/acme-dental/"
+#   consent_preamble:
+#     enabled: true
+#     text: "This call may be recorded for quality purposes."
+
+# Call transcripts.
+# transcripts:
+#   enabled: true
+#   storage:
+#     type: "local"
+#     path: "./transcripts/acme-dental/"
+#   formats: ["json", "markdown"]
+
+# Email sender (required if any email channel is enabled, or on_call_end trigger is on).
+# email:
+#   from: "receptionist@acmedental.com"
+#   sender:
+#     type: "smtp"
+#     smtp:
+#       host: "smtp.gmail.com"
+#       port: 587
+#       username: ${SMTP_USERNAME}
+#       password: ${SMTP_PASSWORD}
+#       use_tls: true
+#   triggers:
+#     on_message: true
+#     on_call_end: false
+
+# Retention — days after which artifacts are swept. 0 = keep forever.
+retention:
+  recordings_days: 90
+  transcripts_days: 90
+  messages_days: 0

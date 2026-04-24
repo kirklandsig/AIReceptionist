@@ -1,3 +1,4 @@
+# receptionist/agent.py
 from __future__ import annotations
 
 import asyncio
@@ -11,11 +12,16 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from livekit import agents, api, rtc
-from livekit.agents import AgentServer, AgentSession, Agent, RunContext, function_tool, room_io, get_job_context
+from livekit.agents import (
+    AgentServer, AgentSession, Agent, RunContext,
+    function_tool, room_io, get_job_context,
+)
 from livekit.plugins import openai, noise_cancellation
 
 from receptionist.config import BusinessConfig, load_config
-from receptionist.messages import Message, save_message
+from receptionist.lifecycle import CallLifecycle
+from receptionist.messaging.dispatcher import Dispatcher
+from receptionist.messaging.models import DispatchContext, Message
 from receptionist.prompts import build_system_prompt
 
 load_dotenv(".env.local")
@@ -38,11 +44,10 @@ def load_business_config(ctx: agents.JobContext) -> BusinessConfig:
     config_name = metadata.get("config", None)
 
     if config_name:
-        if not re.match(r'^[a-zA-Z0-9_-]+$', config_name):
+        if not re.match(r"^[a-zA-Z0-9_-]+$", config_name):
             raise ValueError(f"Invalid config name in job metadata: {config_name!r}")
         config_path = DEFAULT_CONFIG_DIR / f"{config_name}.yaml"
     else:
-        # Fall back to first YAML file in config directory
         yaml_files = sorted(DEFAULT_CONFIG_DIR.glob("*.yaml"))
         if not yaml_files:
             raise FileNotFoundError(f"No config files found in {DEFAULT_CONFIG_DIR}")
@@ -52,14 +57,60 @@ def load_business_config(ctx: agents.JobContext) -> BusinessConfig:
     return load_config(config_path)
 
 
+def _get_caller_identity(ctx: agents.JobContext) -> str:
+    """Get the SIP caller's participant identity from the room."""
+    for participant in ctx.room.remote_participants.values():
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            return participant.identity
+    logger.warning("No SIP participant found in room %s", ctx.room.name)
+    return ""
+
+
+def _get_caller_phone(ctx: agents.JobContext) -> str | None:
+    """Best-effort extract caller phone number from SIP participant attributes.
+
+    LiveKit SIP participants expose `sip.phoneNumber` in their attributes
+    dict. If absent (older LiveKit versions or non-standard trunk
+    configurations), returns None — caller phone appears as "Unknown"
+    in call-end emails. Not a hard failure.
+    """
+    for participant in ctx.room.remote_participants.values():
+        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+            attrs = getattr(participant, "attributes", {}) or {}
+            phone = attrs.get("sip.phoneNumber")
+            if phone:
+                return phone
+    return None
+
+
 class Receptionist(Agent):
-    def __init__(self, config: BusinessConfig) -> None:
+    def __init__(self, config: BusinessConfig, lifecycle: CallLifecycle) -> None:
         super().__init__(instructions=build_system_prompt(config))
         self.config = config
+        self.lifecycle = lifecycle
 
     async def on_enter(self) -> None:
+        # If recording is enabled with a consent preamble, speak the preamble
+        # FIRST so the caller is notified before the greeting (design §4.2 —
+        # two-party consent jurisdictions).
+        recording = self.config.recording
+        if (
+            recording is not None
+            and recording.enabled
+            and recording.consent_preamble.enabled
+        ):
+            # Use triple quotes so apostrophes/quotes inside the preamble
+            # text don't break the surrounding f-string delimiter.
+            preamble_text = recording.consent_preamble.text
+            await self.session.generate_reply(
+                instructions=f"""Say exactly this, verbatim, before anything else:
+{preamble_text}"""
+            )
+
+        greeting_text = self.config.greeting
         await self.session.generate_reply(
-            instructions=f"Greet the caller with: '{self.config.greeting}'"
+            instructions=f"""Greet the caller with:
+{greeting_text}"""
         )
 
     @function_tool()
@@ -67,12 +118,13 @@ class Receptionist(Agent):
         """Look up the answer to a frequently asked question about the business."""
         for faq in self.config.faqs:
             if question.lower() in faq.question.lower() or faq.question.lower() in question.lower():
+                self.lifecycle.record_faq_answered(faq.question)
                 return faq.answer
         return "No exact FAQ match found. Use your knowledge from the system prompt to answer."
 
     @function_tool()
     async def transfer_call(self, ctx: RunContext, department: str) -> str:
-        """Transfer the caller to a specific department or person. Use the department name from the routing list."""
+        """Transfer the caller to a specific department or person."""
         target = None
         for entry in self.config.routing:
             if entry.name.lower() == department.lower():
@@ -96,27 +148,40 @@ class Receptionist(Agent):
                     transfer_to=f"tel:{target.number}",
                 )
             )
+            self.lifecycle.record_transfer(target.name)
             return f"Call transferred to {target.name}"
         except Exception as e:
             logger.error(f"Failed to transfer call to {target.name}: {e}")
             return f"Sorry, I wasn't able to transfer the call to {target.name}. Please ask the caller to try calling directly."
 
     @function_tool()
-    async def take_message(self, ctx: RunContext, caller_name: str, message: str, callback_number: str) -> str:
-        """Take a message from the caller. Collect their name, message, and callback number."""
+    async def take_message(
+        self, ctx: RunContext, caller_name: str, message: str, callback_number: str
+    ) -> str:
+        """Take a message from the caller."""
         msg = Message(
             caller_name=caller_name,
             callback_number=callback_number,
             message=message,
             business_name=self.config.business.name,
         )
-        await asyncio.to_thread(
-            save_message,
-            msg,
-            delivery=self.config.messages.delivery.value,
-            file_path=self.config.messages.file_path,
-            webhook_url=self.config.messages.webhook_url,
+        dispatcher = Dispatcher(
+            channels=self.config.messages.channels,
+            business_name=self.config.business.name,
+            email_config=self.config.email,
         )
+        try:
+            await dispatcher.dispatch_message(
+                msg, DispatchContext(
+                    business_name=self.config.business.name,
+                    call_id=self.lifecycle.metadata.call_id,
+                ),
+            )
+        except Exception as e:
+            logger.error("take_message: synchronous dispatch failed: %s", e)
+            return "I'm having trouble saving messages right now. Would you like me to transfer you to someone instead?"
+
+        self.lifecycle.record_message_taken()
         return f"Message saved from {caller_name}. Let them know their message has been recorded and someone will get back to them."
 
     @function_tool()
@@ -131,20 +196,9 @@ class Receptionist(Agent):
             return f"The business is closed today ({now.strftime('%A')}). {self.config.after_hours_message}"
 
         current_time = now.strftime("%H:%M")
-        # HH:MM strings compare correctly lexicographically when zero-padded
         if day_hours.open <= current_time <= day_hours.close:
             return f"The business is currently open. Today's hours are {day_hours.open} to {day_hours.close}."
-        else:
-            return f"The business is currently closed. Today's hours are {day_hours.open} to {day_hours.close}. {self.config.after_hours_message}"
-
-
-def _get_caller_identity(ctx: agents.JobContext) -> str:
-    """Get the SIP caller's participant identity from the room."""
-    for participant in ctx.room.remote_participants.values():
-        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-            return participant.identity
-    logger.warning("No SIP participant found in room %s", ctx.room.name)
-    return ""
+        return f"The business is currently closed. Today's hours are {day_hours.open} to {day_hours.close}. {self.config.after_hours_message}"
 
 
 server = AgentServer()
@@ -154,6 +208,12 @@ server = AgentServer()
 async def handle_call(ctx: agents.JobContext):
     config = load_business_config(ctx)
 
+    lifecycle = CallLifecycle(
+        config=config,
+        call_id=ctx.room.name,
+        caller_phone=_get_caller_phone(ctx),
+    )
+
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(
             model=config.voice.model,
@@ -161,9 +221,39 @@ async def handle_call(ctx: agents.JobContext):
         ),
     )
 
+    # Wire transcript capture BEFORE session starts so no events are missed.
+    lifecycle.attach_transcript_capture(session)
+
+    # Register the close handler. `close` fires when the session ends for any
+    # reason. livekit's EventEmitter rejects coroutine handlers (it requires
+    # plain callables), so we schedule the async work via `create_task`.
+    #
+    # Note on lifetime: `AgentSession.start()` below returns shortly after
+    # the session is initialized, NOT after the call ends. The `@rtc_session`
+    # framework keeps the job — and therefore the event loop — alive until
+    # the underlying room actually closes, which is what gives the scheduled
+    # task time to run. Validated manually 2026-04-24: transcript + email
+    # artifacts land after disconnect even though handle_call returned
+    # minutes earlier.
+    def _handle_close(_event) -> None:
+        async def _run() -> None:
+            try:
+                await lifecycle.on_call_ended()
+            except Exception:
+                logger.exception("lifecycle.on_call_ended raised")
+
+        asyncio.create_task(_run())
+
+    session.on("close", _handle_close)
+
+    # Start recording before greeting. The consent preamble (Phase 8) fires
+    # before the greeting; the recording is already live by that point, so
+    # the preamble is captured — which is the correct proof-of-disclosure.
+    await lifecycle.start_recording_if_enabled(ctx.room.name)
+
     await session.start(
         room=ctx.room,
-        agent=Receptionist(config),
+        agent=Receptionist(config, lifecycle),
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=lambda params: (

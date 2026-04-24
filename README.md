@@ -130,6 +130,109 @@ Key sections:
 - `faqs` -- question/answer pairs the receptionist draws from
 - `messages` -- how to store messages (file or webhook)
 
+## Message delivery channels
+
+A business can route messages to one or more destinations simultaneously via `messages.channels`:
+
+```yaml
+messages:
+  channels:
+    - type: "file"
+      file_path: "./messages/<business>/"
+    - type: "email"
+      to: ["owner@example.com"]
+      include_transcript: true
+      include_recording_link: true
+    - type: "webhook"
+      url: "https://hooks.slack.com/services/..."
+      headers:
+        X-Api-Key: ${SLACK_TOKEN}
+```
+
+- **file** -- writes JSON to disk; the most reliable channel and always awaited synchronously
+- **email** -- requires the top-level `email` section; supports SMTP or Resend
+- **webhook** -- POSTs `{"message": ..., "context": ...}` to the URL
+
+Email and webhook run in the background with 3-attempt exponential backoff. Exhausted failures land in `<file_path>/.failures/` and can be inspected with:
+
+```bash
+python -m receptionist.messaging list-failures
+```
+
+## Call recording and transcripts
+
+Enable in a business YAML:
+
+```yaml
+recording:
+  enabled: true
+  storage:
+    type: "local"        # or "s3"
+    local:
+      path: "./recordings/<business>/"
+  consent_preamble:
+    enabled: true
+    text: "This call may be recorded for quality purposes."
+
+transcripts:
+  enabled: true
+  storage:
+    type: "local"
+    path: "./transcripts/<business>/"
+  formats: ["json", "markdown"]
+```
+
+Recording uses LiveKit Egress; credentials for S3 come from `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in the environment. The consent preamble is spoken **before** the greeting -- required for two-party consent states (CA, FL, IL, MD, MA, MT, NV, NH, PA, WA).
+
+## Email delivery
+
+Enable the top-level `email` section when using an email channel or `on_call_end` trigger:
+
+```yaml
+email:
+  from: "receptionist@acmedental.com"
+  sender:
+    type: "smtp"   # or "resend"
+    smtp:
+      host: "smtp.gmail.com"
+      port: 587
+      username: ${SMTP_USERNAME}
+      password: ${SMTP_PASSWORD}
+      use_tls: true
+  triggers:
+    on_message: true    # email when take_message fires
+    on_call_end: false  # email a summary after every call
+```
+
+## Multi-language
+
+```yaml
+languages:
+  primary: "en"
+  allowed: ["en", "es", "fr"]
+```
+
+`gpt-realtime-1.5` auto-detects the caller's language. If the caller speaks one of the allowed languages, the agent responds in that language for the rest of the call. If the caller speaks an un-whitelisted language, the agent politely redirects in `primary`.
+
+## Retention
+
+```yaml
+retention:
+  recordings_days: 90
+  transcripts_days: 90
+  messages_days: 0       # 0 = keep forever
+```
+
+Run on a schedule (cron / Windows Task Scheduler):
+
+```bash
+python -m receptionist.retention sweep
+# or preview
+python -m receptionist.retention sweep --dry-run
+```
+
+The sweeper never touches `.failures/` directories.
+
 ## Multi-Business Setup
 
 One running agent can serve multiple businesses. Each inbound phone number maps to a business config via SIP dispatch rule metadata:

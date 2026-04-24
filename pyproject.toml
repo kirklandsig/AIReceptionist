@@ -32,3 +32,6 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["receptionist"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"

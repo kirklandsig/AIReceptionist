@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import os
 import re
-from enum import Enum
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
@@ -315,12 +314,3 @@ def load_config(path: Path | str) -> BusinessConfig:
     return BusinessConfig.from_yaml_string(text)
 
 
-# ---------------------------------------------------------------------------
-# Back-compat DeliveryMethod enum (still referenced in receptionist/messages.py
-# until the Phase 2 restructure moves that file)
-# ---------------------------------------------------------------------------
-
-# TODO(phase-2): remove with messages.py
-class DeliveryMethod(str, Enum):
-    FILE = "file"
-    WEBHOOK = "webhook"

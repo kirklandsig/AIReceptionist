@@ -38,7 +38,7 @@ AIReceptionist is a **voice-based AI phone receptionist** that answers incoming 
 
 - It is not a chatbot or text-based system (though a web widget channel is planned).
 - It is not a general-purpose voice assistant -- it is scoped to receptionist duties for a specific business.
-- It does not currently record calls or generate transcripts (planned).
+- Call recording and transcripts are supported as of the 2026-04-23 refactor (see addendum at bottom of this document).
 
 ### Core Technology Stack
 

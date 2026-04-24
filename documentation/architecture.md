@@ -94,11 +94,27 @@ If no file channel is configured, the dispatcher falls back to syncing `webhook`
 ### Consent preamble before greeting
 Two-party consent states require caller notification BEFORE recording. Recording starts at call pickup (step 2.6), but the preamble is the first thing the caller hears — and it's captured on the recording, which is correct proof of disclosure.
 
-### Close-event future pattern
-`livekit.rtc.EventEmitter.on()` requires plain (non-async) callbacks. We register a sync handler that schedules async work via `create_task` AND resolves a future. `handle_call` awaits the future with a 30-second timeout before returning. This guarantees finalization completes before the worker tears down the event loop — fixing a latent bug where short calls could lose transcripts and emails.
+### Close-event handler
+`livekit.rtc.EventEmitter.on()` requires plain (non-async) callbacks. We register a sync handler that schedules async work via `asyncio.create_task(_run())`. The `@rtc_session` framework keeps the job — and therefore the event loop — alive until the underlying room actually closes, which is what gives the scheduled task time to run.
+
+An earlier version of `handle_call` also awaited a `close_work_done` future with a 30-second timeout, on the incorrect assumption that `AgentSession.start()` blocked for the call duration. It actually returns after session initialization, so the future-await ran in parallel with the ongoing call and fired a spurious timeout warning on every call longer than 30 seconds. Removed in commit `159f5ba`.
 
 ### Subpackage per capability
 `messaging/`, `email/`, `recording/`, `transcript/`, `retention/` each have one clear purpose and a small mockable surface. `agent.py` stays thin; `lifecycle.py` is the only cross-subpackage coordinator.
+
+## Known upstream limitations
+
+### `CallMetadata.languages_detected` always empty
+
+`CallMetadata.languages_detected` is intended to capture the set of languages the caller used during the call. It is populated in `transcript/capture.py::_on_user_input` from `UserInputTranscribedEvent.language`.
+
+**As of `livekit-plugins-openai==1.5.6`, the OpenAI Realtime transcription path does not populate that field.** The plugin emits `llm.InputTranscriptionCompleted(item_id, transcript, is_final, confidence)` — no language — and the SDK's subsequent `UserInputTranscribedEvent` construction leaves `language=None`. Our handler does the right thing (`if lang: self.metadata.languages_detected.add(lang)`) but `lang` is always `None`, so the set stays empty.
+
+Impact is cosmetic: all consumers (`email/templates.py`, `transcript/formatter.py`) already guard with `if metadata.languages_detected:` so empty sets never leak into user-visible output. The only visible effect is that the JSON transcript metadata contains `"languages_detected": []` instead of the detected set, and the field is omitted from email/Markdown summaries.
+
+The language-switching behavior itself works correctly — the LLM detects and adapts on its own. Only the reporting metadata is missing.
+
+If this becomes a real operational need (e.g., a language-distribution dashboard), a post-hoc detector over the accumulated transcript segments is a small addition. Tracked as issue #5.
 
 ## Testing boundaries
 

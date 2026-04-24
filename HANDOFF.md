@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-03-02
+> **Last updated:** 2026-04-23
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -38,7 +38,7 @@ AIReceptionist is a **voice-based AI phone receptionist** that answers incoming 
 
 - It is not a chatbot or text-based system (though a web widget channel is planned).
 - It is not a general-purpose voice assistant -- it is scoped to receptionist duties for a specific business.
-- It does not currently record calls or generate transcripts (planned).
+- Call recording and transcripts are supported as of the 2026-04-23 refactor (see addendum at bottom of this document).
 
 ### Core Technology Stack
 
@@ -750,3 +750,57 @@ For setup and configuration reference:
 - `README.md`
 - `.env.example`
 - `config/businesses/example-dental.yaml`
+
+---
+
+## Addendum — 2026-04-23: Call artifacts and multi-channel delivery
+
+This addendum summarizes the large refactor landed on the `feat/call-artifacts-and-delivery` branch. Sections 3, 4, 5, 6, 7, 9, 10, 12 above are partly superseded — see `documentation/architecture.md` for the current authoritative architecture.
+
+### Summary of changes
+
+- **Package restructure** into subpackages: `receptionist/messaging/`, `email/`, `recording/`, `transcript/`, `retention/`, plus `lifecycle.py`. The legacy `receptionist/messages.py` has been deleted; its contents moved into `messaging/models.py` and `messaging/channels/file.py`.
+- **New CallLifecycle class** owns per-call state (metadata, transcript capture, recording handle) and fires the call-end fan-out (transcripts, recording stop, optional call-end email).
+- **Multi-channel delivery** — a business's `messages.channels` is a list; file/webhook/email can be enabled simultaneously. Dispatcher awaits file synchronously and fires the rest as background tasks, writing `.failures/` records on exhausted retries.
+- **Email via SMTP or Resend** behind an `EmailSender` protocol.
+- **Call recording** via LiveKit Egress, to local disk or S3 (incl. R2/B2/MinIO via `endpoint_url`).
+- **Transcripts** captured from AgentSession events and written as JSON (source of truth) + Markdown.
+- **Consent preamble** spoken before the greeting when recording is enabled (two-party consent states).
+- **Multi-language** auto-detection via the system prompt; per-business `languages.allowed` whitelist.
+- **Retention sweeper CLI**: `python -m receptionist.retention sweep [--dry-run] [--business <name>]`. Skips `.failures/` directories.
+- **Failures visibility CLI**: `python -m receptionist.messaging list-failures [--business <name>]`.
+- **Env-var interpolation** in YAML (`${VAR}`).
+- **Voice default** changed to `marin`, model default to `gpt-realtime-1.5`.
+
+### Dependencies added
+
+Production: `aiosmtplib>=3.0`, `resend>=2.0`, `httpx>=0.27`, `aioboto3>=13.0`, `aiofiles>=23.0`.
+Dev: `pytest-mock>=3.12`, `respx>=0.21`, `moto>=5.0`.
+Floor bumps: `livekit-agents>=1.5.0`, `livekit-plugins-openai>=1.5.0`.
+
+### Test count
+
+~120 tests across unit + 1 integration. See `tests/MANUAL.md` for live-playground validation that cannot be automated.
+
+### Known issues resolved in this refactor
+
+- Webhook delivery was stubbed — now fully implemented with retry/backoff.
+- No call recording — now supported via LiveKit Egress to local/S3.
+- No call transcripts — now captured and persisted.
+- No email notification for messages — now supported (SMTP or Resend).
+
+### Known issues still open
+
+- Python 3.14 compatibility uncertain (`.python-version` now pins 3.12; deploy on 3.11 or 3.12).
+- `agent_name=""` for dev; production needs `agent_name="receptionist"` + LiveKit dispatch rules.
+- `lookup_faq` uses substring matching — replace with embedding similarity if FAQs >50 per business.
+- No retry CLI for `.failures/` (visibility only).
+- No admin dashboard / web UI.
+- S3 storage for transcripts not supported (local only).
+- No structured JSON logging.
+
+### Reference documents
+
+- Design spec: `docs/superpowers/specs/2026-04-23-call-artifacts-and-delivery-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-04-23-call-artifacts-and-delivery.md`
+- Current architecture: `documentation/architecture.md`

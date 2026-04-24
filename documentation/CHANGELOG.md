@@ -10,20 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Configurable voice model via `voice.model` field in business YAML (defaults to `"gpt-realtime"`)
-- Telnyx recommended as primary SIP provider in deployment documentation
-- AGPL-3.0 license
-- SEO-optimized README with SaaS competitor comparison
-- API key leak detection in pre-commit hook (OpenAI, LiveKit, AWS, GitHub, Stripe)
-- Active development notice and badges in README
-- Donation addresses (BTC, ETH)
-- CLAUDE.md with project instructions and mandatory documentation update rules
-- Git pre-commit hook (`scripts/pre-commit`) that warns on undocumented code changes and runs pytest
-- Hook installer script (`scripts/install-hooks.sh`)
-- This changelog file (`documentation/CHANGELOG.md`)
+- **Multi-channel message delivery**: `messages.channels` list supports `file`, `email`, and `webhook` types enabled simultaneously per business (design spec §2)
+- **Call recording** via LiveKit Egress, stored locally or to S3/R2/B2/MinIO (spec §3)
+- **Call transcripts** in JSON (source of truth) + Markdown, with per-call metadata (caller, outcome, duration, tools invoked, languages detected)
+- **Email delivery** via pluggable senders — SMTP (`aiosmtplib`) or Resend (`httpx`), behind a shared `EmailSender` protocol
+- **Email triggers** — `on_message` (fires when `take_message` succeeds) and `on_call_end` (fires on every call end), toggleable per business
+- **Consent preamble** spoken before the greeting when recording is enabled (configurable text, default-on when recording is on)
+- **Multi-language auto-detection** — per-business `languages.primary` + `languages.allowed` whitelist; `gpt-realtime-1.5` handles detection, polite redirect when caller speaks an unsupported language
+- **Retention sweeper** — `python -m receptionist.retention sweep [--dry-run] [--business <name>]`; configurable TTL per artifact type (`recordings_days`, `transcripts_days`, `messages_days`; 0 = keep forever); skips `.failures/` directories
+- **Failures CLI** — `python -m receptionist.messaging list-failures` surfaces records in each business's `.failures/` directory
+- **Env-var interpolation** in YAML (`${VAR_NAME}` expanded against `os.environ` at load time; missing vars raise `ConfigError` at startup)
+- **Configurable voice** — `voice.voice_id` default changed to `marin` (trained for `gpt-realtime-1.5`)
+- New package structure: `receptionist/messaging/`, `receptionist/email/`, `receptionist/recording/`, `receptionist/transcript/`, `receptionist/retention/`, `receptionist/lifecycle.py`
+- ~50 new unit tests across the new subpackages; 1 integration test (`tests/integration/test_call_flow.py`) for end-to-end message + call-end flows
+- New gitignored artifact directories: `transcripts/`, `recordings/`
+- `.python-version` pinned to `3.12`
 
 ### Changed
-- Agent model is now configurable per-business (was hardcoded to plugin default)
+- **Default voice model**: `gpt-realtime` → `gpt-realtime-1.5` (+7% instruction following, +10% alphanumeric transcription, +5% Big Bench Audio reasoning — same pricing)
+- **`Receptionist`** now takes a `CallLifecycle` parameter; tool methods update per-call metadata (FAQs answered, transfer target, message-taken flag)
+- **`take_message`** routes through the new `Dispatcher` — file channel completes synchronously (durable confirmation), email/webhook run as background tasks with retry/backoff
+- **Legacy `messages.delivery: "file"` config form** is still accepted via a Pydantic `model_validator` that auto-converts it to the new `channels: [...]` list (deprecation warning logged)
+- **`receptionist/messages.py`** removed; its contents moved to `receptionist/messaging/{models,channels/file}.py`
+- **Dependency floor bumps**: `livekit-agents>=1.5.0`, `livekit-plugins-openai>=1.5.0`
+- New production dependencies: `aiosmtplib>=3.0`, `resend>=2.0`, `httpx>=0.27`, `aioboto3>=13.0`, `aiofiles>=23.0`
+- New dev dependencies: `pytest-mock>=3.12`, `respx>=0.21`, `moto>=5.0`
+
+### Security
+- Env-var interpolation avoids storing secrets in YAML files
+- Call ID is sanitized (`[^a-zA-Z0-9_-]` stripped) before use in artifact paths
+- `.failures/` records retain delivery context (no credential leakage — sender auth details stay in logs only)
 
 ---
 

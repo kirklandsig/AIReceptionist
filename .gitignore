@@ -12,3 +12,8 @@ transcripts/
 recordings/
 .worktrees/
 .pytest_cache/
+
+# Private per-business configs — only the public `example-*.yaml` templates
+# are tracked. Any other YAML in config/businesses/ is operator-local.
+config/businesses/*.yaml
+!config/businesses/example-*.yaml

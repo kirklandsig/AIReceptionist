@@ -164,3 +164,20 @@ def test_prompt_single_language_skips_multi_language_block():
     assert "English" in prompt
     assert "Spanish" not in prompt
     assert "French" not in prompt
+
+
+def test_prompt_single_language_redirects_on_foreign_input():
+    """Regression: single-language block must instruct the LLM on how to
+    handle out-of-whitelist input. The earlier terse form ("Speak English.")
+    let gpt-realtime-1.5 wobble — it would respond in Spanish while claiming
+    it only spoke English. The stronger block tells the model explicitly
+    to redirect and NOT mirror the caller's language.
+    """
+    config = BusinessConfig.from_yaml_string(V2_YAML_SINGLE_LANG)
+    prompt = build_system_prompt(config)
+    # Must tell the LLM to stay in primary even on foreign input
+    assert "only" in prompt.lower()
+    # Must include a redirect instruction
+    assert "continue in English" in prompt or "ask them to continue" in prompt.lower()
+    # Must explicitly warn against mirroring the caller's language
+    assert "do not" in prompt.lower() or "don't" in prompt.lower()

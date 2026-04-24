@@ -36,7 +36,16 @@ def _build_language_block(config: BusinessConfig) -> str:
     allowed = [c for c in config.languages.allowed]
 
     if len(allowed) <= 1:
-        return f"LANGUAGE:\nSpeak {primary}."
+        return (
+            f"LANGUAGE:\n"
+            f"Speak {primary} only. Every response must be in {primary}, "
+            f"even if the caller speaks another language. "
+            f"If the caller speaks a language other than {primary}, "
+            f"politely say in {primary} that you can only assist in {primary}, "
+            f"and ask them to continue in {primary}. "
+            f"Do NOT repeat yourself in the caller's language; that would undermine "
+            f"the instruction to speak {primary} only."
+        )
 
     alt_names = [_language_name(c) for c in allowed if c.lower() != config.languages.primary.lower()]
     alt_list = ", ".join(alt_names)

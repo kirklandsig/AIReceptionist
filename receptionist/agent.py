@@ -90,10 +90,27 @@ class Receptionist(Agent):
         self.lifecycle = lifecycle
 
     async def on_enter(self) -> None:
-        # Consent preamble (when enabled) is added in Phase 8. For now, just
-        # speak the greeting.
+        # If recording is enabled with a consent preamble, speak the preamble
+        # FIRST so the caller is notified before the greeting (design §4.2 —
+        # two-party consent jurisdictions).
+        recording = self.config.recording
+        if (
+            recording is not None
+            and recording.enabled
+            and recording.consent_preamble.enabled
+        ):
+            # Use triple quotes so apostrophes/quotes inside the preamble
+            # text don't break the surrounding f-string delimiter.
+            preamble_text = recording.consent_preamble.text
+            await self.session.generate_reply(
+                instructions=f"""Say exactly this, verbatim, before anything else:
+{preamble_text}"""
+            )
+
+        greeting_text = self.config.greeting
         await self.session.generate_reply(
-            instructions=f"Greet the caller with: '{self.config.greeting}'"
+            instructions=f"""Greet the caller with:
+{greeting_text}"""
         )
 
     @function_tool()

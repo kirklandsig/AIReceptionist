@@ -153,3 +153,34 @@ async def test_call_end_without_email_config_does_not_raise(tmp_path, v2_yaml):
     lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
     # Should not raise
     await lifecycle.on_call_ended()
+
+
+def test_handle_call_does_not_block_on_close_event():
+    """Regression test for the 30s timeout bug caught during manual validation.
+
+    `AgentSession.start()` returns after session initialization, NOT after the
+    call ends. An earlier version of handle_call awaited a `close_work_done`
+    future with a 30s timeout AFTER session.start(), which caused a spurious
+    "timeout" warning on every call longer than 30 seconds (because the await
+    ran in parallel with the ongoing call, not after it). The fix: the close
+    handler schedules work via `asyncio.create_task` and that's it — the
+    @rtc_session framework keeps the event loop alive until the session
+    truly closes, giving the task time to run.
+
+    This test scans the agent source for the symptoms of the bad pattern so
+    someone reintroducing it will hit a failing test immediately.
+    """
+    from pathlib import Path
+    agent_src = (Path(__file__).resolve().parents[2] / "receptionist" / "agent.py").read_text(encoding="utf-8")
+
+    # The misleading future pattern must stay out
+    assert "close_work_done" not in agent_src, (
+        "Remove `close_work_done` future — it fires a spurious 30s timeout "
+        "warning because AgentSession.start() returns after init, not after "
+        "call end. See tests/integration/test_call_flow.py for the explanation."
+    )
+    # And the misleading timeout warning string should not reappear
+    assert "Timed out waiting for on_call_ended" not in agent_src, (
+        "Remove the 'Timed out waiting for on_call_ended' warning — it fires "
+        "on every call >30s and alarms operators for no real reason."
+    )

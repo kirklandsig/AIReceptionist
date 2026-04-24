@@ -226,30 +226,29 @@ async def handle_call(ctx: agents.JobContext):
 
     # Register the close handler. `close` fires when the session ends for any
     # reason. livekit's EventEmitter rejects coroutine handlers (it requires
-    # plain callables), so we schedule the async work via create_task — but
-    # we must AWAIT that task before handle_call returns, otherwise the
-    # worker may tear down the event loop while transcript writes and
-    # call-end emails are still in flight. The `close_work_done` future is
-    # resolved once the async work completes (success or failure), and we
-    # await it at the end of handle_call.
-    close_work_done: asyncio.Future[None] = asyncio.get_running_loop().create_future()
-
+    # plain callables), so we schedule the async work via `create_task`.
+    #
+    # Note on lifetime: `AgentSession.start()` below returns shortly after
+    # the session is initialized, NOT after the call ends. The `@rtc_session`
+    # framework keeps the job — and therefore the event loop — alive until
+    # the underlying room actually closes, which is what gives the scheduled
+    # task time to run. Validated manually 2026-04-24: transcript + email
+    # artifacts land after disconnect even though handle_call returned
+    # minutes earlier.
     def _handle_close(_event) -> None:
         async def _run() -> None:
             try:
                 await lifecycle.on_call_ended()
             except Exception:
                 logger.exception("lifecycle.on_call_ended raised")
-            finally:
-                if not close_work_done.done():
-                    close_work_done.set_result(None)
+
         asyncio.create_task(_run())
 
     session.on("close", _handle_close)
 
-    # Start recording before greeting. Phase 8 moves the consent preamble
-    # to fire before the greeting; the recording is already live so the
-    # preamble is on the record, which is correct.
+    # Start recording before greeting. The consent preamble (Phase 8) fires
+    # before the greeting; the recording is already live by that point, so
+    # the preamble is captured — which is the correct proof-of-disclosure.
     await lifecycle.start_recording_if_enabled(ctx.room.name)
 
     await session.start(
@@ -265,18 +264,6 @@ async def handle_call(ctx: agents.JobContext):
             ),
         ),
     )
-
-    # session.start returns when the session ends. Wait for the close
-    # handler's async work to complete before letting handle_call return.
-    # Cap the wait at 30s so a hung disconnect doesn't stall the worker.
-    try:
-        await asyncio.wait_for(close_work_done, timeout=30.0)
-    except asyncio.TimeoutError:
-        logger.warning(
-            "Timed out waiting for on_call_ended to complete (30s) — "
-            "artifacts may not have been written",
-            extra={"call_id": ctx.room.name, "component": "agent.handle_call"},
-        )
 
 
 if __name__ == "__main__":

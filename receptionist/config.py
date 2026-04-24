@@ -320,6 +320,7 @@ def load_config(path: Path | str) -> BusinessConfig:
 # until the Phase 2 restructure moves that file)
 # ---------------------------------------------------------------------------
 
+# TODO(phase-2): remove with messages.py
 class DeliveryMethod(str, Enum):
     FILE = "file"
     WEBHOOK = "webhook"

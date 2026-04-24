@@ -66,8 +66,14 @@ class CallLifecycle:
         self._set_outcome("message_taken")
 
     def _set_outcome(self, outcome: str) -> None:
+        # Explicit membership check prevents silent drops if a future outcome
+        # is added without updating _OUTCOME_PRIORITY.
+        if outcome not in _OUTCOME_PRIORITY:
+            raise ValueError(
+                f"Unknown outcome {outcome!r}; add it to _OUTCOME_PRIORITY"
+            )
         current_prio = _OUTCOME_PRIORITY.get(self.metadata.outcome, 0)
-        new_prio = _OUTCOME_PRIORITY.get(outcome, 0)
+        new_prio = _OUTCOME_PRIORITY[outcome]
         if new_prio > current_prio:
             self.metadata.outcome = outcome
 

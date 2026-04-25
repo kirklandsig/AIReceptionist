@@ -120,9 +120,9 @@ you want to use for appointment booking.
 
 ...your browser opens...
 
-✓ OAuth token saved to secrets/mdasr/google-calendar-oauth.json (permissions: 0600)
-✓ Set auth.type: "oauth" and auth.oauth_token_file: "./secrets/mdasr/google-calendar-oauth.json" in
-  config/businesses/mdasr.yaml
+[OK] OAuth token saved to secrets/mdasr/google-calendar-oauth.json (permissions: 0600)
+[OK] Set auth.type: "oauth" and auth.oauth_token_file: "./secrets/mdasr/google-calendar-oauth.json" in
+     config/businesses/mdasr.yaml
 ```
 
 ### 4. Configure the business YAML

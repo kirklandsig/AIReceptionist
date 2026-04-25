@@ -86,9 +86,12 @@ def _run_setup(business_slug: str) -> int:
     token_file.write_text(creds.to_json(), encoding="utf-8")
     _set_0600(token_file)
 
-    print(f"\n✓ OAuth token saved to {token_file} (permissions: 0600)")
-    print(f"✓ Set auth.type: \"oauth\" and auth.oauth_token_file: \"./{token_file}\" in")
-    print(f"  {config_path}")
+    # ASCII markers — default Windows cp1252 console can't print U+2713 ("✓").
+    # Token write + chmod above already succeeded, so the unicode crash would
+    # have been a confusing post-success failure.
+    print(f"\n[OK] OAuth token saved to {token_file} (permissions: 0600)")
+    print(f"[OK] Set auth.type: \"oauth\" and auth.oauth_token_file: \"./{token_file}\" in")
+    print(f"     {config_path}")
     return 0
 
 

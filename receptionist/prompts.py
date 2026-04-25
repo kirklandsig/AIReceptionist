@@ -61,6 +61,36 @@ def _build_language_block(config: BusinessConfig) -> str:
     )
 
 
+def _build_calendar_block(config: BusinessConfig) -> str:
+    """Build the CALENDAR section of the system prompt, or empty string if disabled."""
+    if config.calendar is None or not config.calendar.enabled:
+        return ""
+    return (
+        "\nCALENDAR (appointment booking):\n"
+        "You can book appointments on the business calendar using two tools:\n"
+        "  1. check_availability(preferred_date, preferred_time) — call this FIRST.\n"
+        "     It returns up to 3 available slots near the caller's preferred time,\n"
+        "     each with a human-readable time AND an iso= string.\n"
+        "  2. book_appointment(caller_name, callback_number, proposed_start_iso, notes) —\n"
+        "     call this AFTER the caller confirms the specific time you offered.\n"
+        "     The proposed_start_iso MUST be copied exactly from a check_availability\n"
+        "     response — you cannot make one up.\n"
+        "\n"
+        "BOOKING CONVENTIONS (follow exactly):\n"
+        "  - Before booking, always say the specific time back to the caller and wait\n"
+        "    for explicit confirmation: \"I'm booking you for Tuesday April 28 at 2 PM.\n"
+        "    Can I confirm?\" Do NOT book without a clear \"yes.\"\n"
+        "  - If check_availability says a time is too soon or too far out, politely\n"
+        "    offer the caller the earliest/latest the tool permitted.\n"
+        "  - If book_appointment says the slot just got taken, offer the alternatives\n"
+        "    the tool returned.\n"
+        "  - If the calendar can't be reached, pivot to take_message: \"I'm having\n"
+        "    trouble with the calendar — can I take your info and have someone call\n"
+        "    back to confirm the time?\"\n"
+        "  - NEVER fabricate a time, confirmation code, or event ID.\n"
+    )
+
+
 def build_system_prompt(config: BusinessConfig) -> str:
     hours_lines = []
     for day_name in [
@@ -82,6 +112,7 @@ def build_system_prompt(config: BusinessConfig) -> str:
     faq_block = "\n\n".join(faq_lines) if faq_lines else "  No FAQs configured."
 
     language_block = _build_language_block(config)
+    calendar_block = _build_calendar_block(config)
 
     return f"""You are the receptionist for {config.business.name}, a {config.business.type}.
 
@@ -100,7 +131,7 @@ DEPARTMENTS YOU CAN TRANSFER TO:
 When a caller asks to be transferred, use the transfer_call tool with the department name.
 When a caller wants to leave a message, use the take_message tool to record their name, message, and callback number.
 When asked about business hours, use the get_business_hours tool.
-
+{calendar_block}
 FREQUENTLY ASKED QUESTIONS:
 {faq_block}
 

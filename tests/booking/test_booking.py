@@ -101,6 +101,36 @@ async def test_book_appointment_detects_race_slot_now_busy():
 
 
 @pytest.mark.asyncio
+async def test_book_appointment_detects_race_with_partial_overlap():
+    """Race detection must catch partial overlap, not just exact match.
+
+    Example: caller is choosing while another booking lands at 14:25-15:00.
+    Our 14:00-14:30 slot is no longer free — book_appointment must detect this.
+    """
+    fake_client = MagicMock()
+    fake_client.free_busy = AsyncMock(return_value=[
+        (
+            datetime(2026, 4, 28, 14, 25, tzinfo=timezone.utc),
+            datetime(2026, 4, 28, 15, 0, tzinfo=timezone.utc),
+        ),
+    ])
+    fake_client.create_event = AsyncMock()
+
+    with pytest.raises(SlotNoLongerAvailableError):
+        await book_appointment(
+            slot=_slot("2026-04-28T14:00:00+00:00", "2026-04-28T14:30:00+00:00"),
+            caller_name="Jane",
+            callback_number="+1",
+            call_id="c",
+            time_zone="UTC",
+            client=fake_client,
+            notes=None,
+        )
+
+    fake_client.create_event.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_book_appointment_no_notes_field_says_none():
     fake_client = MagicMock()
     fake_client.free_busy = AsyncMock(return_value=[])

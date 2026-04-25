@@ -107,3 +107,25 @@ retention:
   recordings_days: 90
   transcripts_days: 90
   messages_days: 0
+
+# Google Calendar integration (appointment booking). Requires setup:
+# 1. Google Cloud: enable Calendar API, create a service account OR OAuth client
+# 2. Share the target calendar with the service account email (for service_account auth)
+# 3. Download credentials to secrets/<business-slug>/
+# 4. For OAuth auth, run `python -m receptionist.booking setup <business-slug>`
+# See documentation/google-calendar-setup.md for step-by-step instructions.
+#
+# calendar:
+#   enabled: true
+#   calendar_id: "primary"                 # or a specific calendar ID
+#   auth:
+#     type: "service_account"              # or "oauth"
+#     service_account_file: "./secrets/example-dental/google-calendar-sa.json"
+#     # OR:
+#     # type: "oauth"
+#     # oauth_token_file: "./secrets/example-dental/google-calendar-oauth.json"
+#   appointment_duration_minutes: 30
+#   buffer_minutes: 15
+#   buffer_placement: "after"              # "before" | "after" | "both"
+#   booking_window_days: 30
+#   earliest_booking_hours_ahead: 2

@@ -13,6 +13,15 @@ receptionist/
 ├── prompts.py               System prompt builder (includes LANGUAGE block)
 ├── lifecycle.py             CallLifecycle: per-call metadata owner, close-event fan-out
 │
+├── booking/                 Google Calendar integration (NEW)
+│   ├── models.py            SlotProposal, BookingResult dataclasses
+│   ├── auth.py              build_credentials (service_account OR OAuth)
+│   ├── client.py            GoogleCalendarClient wrapper (async over sync google-api-python-client)
+│   ├── availability.py      Pure find_slots: business hours + busy intervals -> slots
+│   ├── booking.py           book_appointment with race detection + UNVERIFIED tagging
+│   ├── setup_cli.py         python -m receptionist.booking setup <business>
+│   └── __main__.py          CLI dispatcher
+│
 ├── messaging/               Message delivery
 │   ├── models.py            Message dataclass, DispatchContext
 │   ├── dispatcher.py        Multi-channel fan-out (sync file + background others)
@@ -101,6 +110,22 @@ An earlier version of `handle_call` also awaited a `close_work_done` future with
 
 ### Subpackage per capability
 `messaging/`, `email/`, `recording/`, `transcript/`, `retention/` each have one clear purpose and a small mockable surface. `agent.py` stays thin; `lifecycle.py` is the only cross-subpackage coordinator.
+
+### Calendar integration — session-scoped slot cache
+
+`check_availability` populates `Receptionist._offered_slots: set[str]` with the
+ISO start strings of every slot returned to the LLM. `book_appointment`
+validates its `proposed_start_iso` argument against that set and rejects any
+string that wasn't offered. This makes the "check-before-book" ordering
+architecturally enforceable — the LLM cannot book a time it didn't offer,
+even if it hallucinates. Separately, `book_appointment` does a last-second
+free/busy re-check and raises `SlotNoLongerAvailableError` if the slot was
+taken between offer and book, so the LLM can relay alternatives.
+
+All Google API calls go through `booking/client.py`, which wraps the
+synchronous `google-api-python-client` in `asyncio.to_thread`. This keeps
+the agent's event loop unblocked during Google calls (which can run
+hundreds of milliseconds on first-call auth).
 
 ## Known upstream limitations
 

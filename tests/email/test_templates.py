@@ -24,7 +24,7 @@ def _metadata() -> CallMetadata:
         start_ts="2026-04-23T14:30:00+00:00",
         end_ts="2026-04-23T14:32:00+00:00",
         duration_seconds=120.0,
-        outcome="message_taken",
+        outcomes={"message_taken"},
     )
 
 
@@ -57,3 +57,39 @@ def test_html_body_is_present_and_escapes():
     subject, body_text, body_html = build_message_email(msg, DispatchContext())
     assert "<script>" not in body_html  # escaped
     assert "&lt;script&gt;" in body_html
+
+
+def test_call_end_email_subject_multi_outcome():
+    from receptionist.email.templates import build_call_end_email
+    from receptionist.messaging.models import DispatchContext
+    md = CallMetadata(
+        call_id="r", business_name="Acme", caller_phone="+1",
+        start_ts="2026-04-23T14:30:00+00:00",
+        end_ts="2026-04-23T14:32:00+00:00",
+        duration_seconds=120.0,
+        outcomes={"transferred", "appointment_booked"},
+    )
+    subject, body_text, _ = build_call_end_email(md, DispatchContext())
+    # Rendered alphabetically: appointment_booked first, then transferred
+    assert "Appointment booked + Transferred" in subject
+
+
+def test_build_booking_email_includes_event_link():
+    from receptionist.email.templates import build_booking_email
+    from receptionist.messaging.models import DispatchContext
+    md = CallMetadata(
+        call_id="r", business_name="Acme", caller_phone="+15551112222",
+        appointment_booked=True,
+        appointment_details={
+            "event_id": "evt1",
+            "start_iso": "2026-04-28T14:00:00-04:00",
+            "end_iso": "2026-04-28T14:30:00-04:00",
+            "html_link": "https://calendar.google.com/event?eid=abc",
+        },
+    )
+    subject, body_text, body_html = build_booking_email(md, DispatchContext())
+    assert "appointment booked" in subject.lower()
+    assert "+15551112222" in subject
+    assert "https://calendar.google.com/event?eid=abc" in body_text
+    assert "UNVERIFIED" in body_text or "was NOT verified" in body_text
+    assert "calendar.google.com" in body_html

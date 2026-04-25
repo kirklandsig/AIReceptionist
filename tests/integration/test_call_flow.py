@@ -106,7 +106,7 @@ async def test_call_end_writes_transcript_and_fires_call_end_email(tmp_path, v2_
 
     # Metadata finalized
     assert lifecycle.metadata.end_ts is not None
-    assert lifecycle.metadata.outcome == "hung_up"  # no transfer or message event
+    assert lifecycle.metadata.outcomes == {"hung_up"}  # no transfer or message event
     assert lifecycle.metadata.faqs_answered == ["hours"]
 
     # Call-end email sent

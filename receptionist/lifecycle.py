@@ -1,7 +1,6 @@
 # receptionist/lifecycle.py
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -11,29 +10,19 @@ from receptionist.recording.egress import (
     RecordingArtifact, RecordingHandle, start_recording, stop_recording,
 )
 from receptionist.transcript.capture import TranscriptCapture
-from receptionist.transcript.metadata import CallMetadata
+from receptionist.transcript.metadata import CallMetadata, VALID_OUTCOMES
 from receptionist.transcript.writer import (
     TranscriptWriteResult, write_transcript_files,
 )
 
 logger = logging.getLogger("receptionist")
 
-# Outcome priority (higher wins). Used when a later event would otherwise
-# overwrite a more informative earlier outcome.
-_OUTCOME_PRIORITY = {
-    None: 0,
-    "hung_up": 1,
-    "message_taken": 2,
-    "transferred": 3,
-}
-
 
 class CallLifecycle:
     """Owns per-call state and the disconnect-time fan-out.
 
-    Constructed at call-start. `Receptionist` and `TranscriptCapture` push
-    events into this object; `on_call_ended` reads them, writes artifacts,
-    and fires the call-end email trigger if configured.
+    Multi-outcome capable: a call that both transfers AND books an appointment
+    records both in metadata.outcomes. No priority-based "winner" selection.
     """
 
     def __init__(
@@ -59,23 +48,30 @@ class CallLifecycle:
 
     def record_transfer(self, department_name: str) -> None:
         self.metadata.transfer_target = department_name
-        self._set_outcome("transferred")
+        self._add_outcome("transferred")
 
     def record_message_taken(self) -> None:
         self.metadata.message_taken = True
-        self._set_outcome("message_taken")
+        self._add_outcome("message_taken")
 
-    def _set_outcome(self, outcome: str) -> None:
+    def record_appointment_booked(self, details: dict) -> None:
+        """Called by the book_appointment tool after a successful event.insert.
+
+        `details` must contain: event_id, start_iso, end_iso, html_link.
+        """
+        self.metadata.appointment_booked = True
+        self.metadata.appointment_details = details
+        self._add_outcome("appointment_booked")
+
+    def _add_outcome(self, outcome: str) -> None:
         # Explicit membership check prevents silent drops if a future outcome
-        # is added without updating _OUTCOME_PRIORITY.
-        if outcome not in _OUTCOME_PRIORITY:
+        # is added without updating VALID_OUTCOMES.
+        if outcome not in VALID_OUTCOMES:
             raise ValueError(
-                f"Unknown outcome {outcome!r}; add it to _OUTCOME_PRIORITY"
+                f"Unknown outcome {outcome!r}; add it to VALID_OUTCOMES in "
+                f"receptionist/transcript/metadata.py"
             )
-        current_prio = _OUTCOME_PRIORITY.get(self.metadata.outcome, 0)
-        new_prio = _OUTCOME_PRIORITY[outcome]
-        if new_prio > current_prio:
-            self.metadata.outcome = outcome
+        self.metadata.outcomes.add(outcome)
 
     # --- artifact wiring ---
 
@@ -112,15 +108,19 @@ class CallLifecycle:
                 self.config.transcripts, self.metadata, segments
             )
 
-        if self.config.email and self.config.email.triggers.on_call_end:
-            await self._fire_call_end_email(artifact, transcript_result)
+        # Fan out email triggers
+        if self.config.email:
+            if self.config.email.triggers.on_call_end:
+                await self._fire_call_end_email(artifact, transcript_result)
+            if self.config.email.triggers.on_booking and self.metadata.appointment_booked:
+                await self._fire_booking_email(artifact, transcript_result)
 
     async def _fire_call_end_email(
         self,
         artifact: RecordingArtifact | None,
         transcript_result: TranscriptWriteResult | None,
     ) -> None:
-        """Call-end email goes only to EmailChannel targets (file/webhook ignored at this trigger)."""
+        """Call-end email goes to every EmailChannel target in messages.channels."""
         from receptionist.config import EmailChannel as EmailChannelConfig
         from receptionist.messaging.channels.email import EmailChannel
 
@@ -129,14 +129,7 @@ class CallLifecycle:
             logger.info("on_call_end trigger configured but no email channel in messages.channels")
             return
 
-        context = DispatchContext(
-            transcript_json_path=str(transcript_result.json_path) if transcript_result and transcript_result.json_path else None,
-            transcript_markdown_path=str(transcript_result.markdown_path) if transcript_result and transcript_result.markdown_path else None,
-            recording_url=artifact.url if artifact else None,
-            call_id=self.metadata.call_id,
-            business_name=self.metadata.business_name,
-        )
-
+        context = self._build_dispatch_context(artifact, transcript_result)
         for ch_cfg in email_channels:
             channel = EmailChannel(ch_cfg, self.config.email)
             try:
@@ -150,3 +143,45 @@ class CallLifecycle:
                         "component": "lifecycle.call_end_email",
                     },
                 )
+
+    async def _fire_booking_email(
+        self,
+        artifact: RecordingArtifact | None,
+        transcript_result: TranscriptWriteResult | None,
+    ) -> None:
+        """Booking email — fires only when metadata.appointment_booked is true."""
+        from receptionist.config import EmailChannel as EmailChannelConfig
+        from receptionist.messaging.channels.email import EmailChannel
+
+        email_channels = [c for c in self.config.messages.channels if isinstance(c, EmailChannelConfig)]
+        if not email_channels or self.config.email is None:
+            logger.info("on_booking trigger configured but no email channel in messages.channels")
+            return
+
+        context = self._build_dispatch_context(artifact, transcript_result)
+        for ch_cfg in email_channels:
+            channel = EmailChannel(ch_cfg, self.config.email)
+            try:
+                await channel.deliver_booking(self.metadata, context)
+            except Exception as e:
+                logger.error(
+                    "Booking email failed: %s", e,
+                    extra={
+                        "call_id": self.metadata.call_id,
+                        "business_name": self.metadata.business_name,
+                        "component": "lifecycle.booking_email",
+                    },
+                )
+
+    def _build_dispatch_context(
+        self,
+        artifact: RecordingArtifact | None,
+        transcript_result: TranscriptWriteResult | None,
+    ) -> DispatchContext:
+        return DispatchContext(
+            transcript_json_path=str(transcript_result.json_path) if transcript_result and transcript_result.json_path else None,
+            transcript_markdown_path=str(transcript_result.markdown_path) if transcript_result and transcript_result.markdown_path else None,
+            recording_url=artifact.url if artifact else None,
+            call_id=self.metadata.call_id,
+            business_name=self.metadata.business_name,
+        )

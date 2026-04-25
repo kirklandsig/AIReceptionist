@@ -225,6 +225,7 @@ class EmailSenderConfig(BaseModel):
 class EmailTriggers(BaseModel):
     on_message: bool = True
     on_call_end: bool = False
+    on_booking: bool = False
 
 
 class EmailConfig(BaseModel):

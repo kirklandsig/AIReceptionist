@@ -7,6 +7,27 @@ from receptionist.messaging.models import Message, DispatchContext
 from receptionist.transcript.metadata import CallMetadata
 
 
+# Human-readable display labels for outcome values. Keep in sync with
+# VALID_OUTCOMES in receptionist/transcript/metadata.py.
+_OUTCOME_LABELS = {
+    "hung_up": "Hung up",
+    "message_taken": "Message taken",
+    "transferred": "Transferred",
+    "appointment_booked": "Appointment booked",
+}
+
+
+def _outcomes_display(outcomes) -> str:
+    """Render a set of outcomes as a sorted human-readable string.
+
+    Example: {"transferred", "appointment_booked"} -> "Appointment booked + Transferred"
+    """
+    if not outcomes:
+        return "Unknown"
+    labels = [_OUTCOME_LABELS.get(o, o) for o in sorted(outcomes)]
+    return " + ".join(labels)
+
+
 def build_message_email(
     message: Message, context: DispatchContext
 ) -> tuple[str, str, str]:
@@ -28,7 +49,7 @@ def build_message_email(
     if context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
 
-    def e(s: str | None) -> str:
+    def e(s):
         return html.escape(s or "", quote=True)
 
     body_html = (
@@ -52,13 +73,8 @@ def build_message_email(
 def build_call_end_email(
     metadata: CallMetadata, context: DispatchContext
 ) -> tuple[str, str, str]:
-    outcome_display = {
-        "transferred": "Transferred",
-        "message_taken": "Message taken",
-        "hung_up": "Hung up",
-    }.get(metadata.outcome or "hung_up", metadata.outcome or "unknown")
-
-    subject = f"Call from {metadata.caller_phone or 'Unknown'} — {outcome_display} [{metadata.business_name}]"
+    outcomes_str = _outcomes_display(metadata.outcomes)
+    subject = f"Call from {metadata.caller_phone or 'Unknown'} — {outcomes_str} [{metadata.business_name}]"
 
     duration_str = _format_duration(metadata.duration_seconds)
 
@@ -69,10 +85,15 @@ def build_call_end_email(
         f"Start: {metadata.start_ts}\n"
         f"End: {metadata.end_ts or '(in progress)'}\n"
         f"Duration: {duration_str}\n"
-        f"Outcome: {outcome_display}\n"
+        f"Outcomes: {outcomes_str}\n"
     )
     if metadata.transfer_target:
         body_text += f"Transferred to: {metadata.transfer_target}\n"
+    if metadata.appointment_details:
+        body_text += (
+            f"Appointment: {metadata.appointment_details.get('start_iso', '?')}\n"
+            f"  {metadata.appointment_details.get('html_link', '')}\n"
+        )
     if metadata.faqs_answered:
         body_text += f"FAQs answered: {', '.join(metadata.faqs_answered)}\n"
     if metadata.languages_detected:
@@ -82,7 +103,7 @@ def build_call_end_email(
     if context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
 
-    def e(s) -> str:
+    def e(s):
         return html.escape(str(s) if s is not None else "", quote=True)
 
     body_html = (
@@ -92,7 +113,7 @@ def build_call_end_email(
         f"<tr><td><strong>Start</strong></td><td>{e(metadata.start_ts)}</td></tr>"
         f"<tr><td><strong>End</strong></td><td>{e(metadata.end_ts or '(in progress)')}</td></tr>"
         f"<tr><td><strong>Duration</strong></td><td>{e(duration_str)}</td></tr>"
-        f"<tr><td><strong>Outcome</strong></td><td>{e(outcome_display)}</td></tr>"
+        f"<tr><td><strong>Outcomes</strong></td><td>{e(outcomes_str)}</td></tr>"
         f"</table>"
     )
     if context.recording_url:
@@ -101,7 +122,61 @@ def build_call_end_email(
     return subject, body_text, body_html
 
 
-def _format_duration(seconds: float | None) -> str:
+def build_booking_email(
+    metadata: CallMetadata, context: DispatchContext
+) -> tuple[str, str, str]:
+    """Build email fired by the on_booking trigger. Requires metadata.appointment_details."""
+    details = metadata.appointment_details or {}
+    start_iso = details.get("start_iso", "?")
+    html_link = details.get("html_link", "")
+    caller = metadata.caller_phone or "Unknown"
+
+    subject = f"New appointment booked: {caller} — {start_iso} [{metadata.business_name}]"
+
+    body_text = (
+        f"A new appointment has been booked for {metadata.business_name}.\n"
+        f"\n"
+        f"Caller: {caller}\n"
+        f"Start: {start_iso}\n"
+        f"End: {details.get('end_iso', '?')}\n"
+        f"Event: {html_link}\n"
+        f"Call ID: {metadata.call_id}\n"
+        f"\n"
+        f"Note: The caller's identity was NOT verified. Please confirm by calling "
+        f"back at {caller} before relying on this booking.\n"
+    )
+    if context.transcript_markdown_path:
+        body_text += f"\nCall transcript: {context.transcript_markdown_path}\n"
+    if context.recording_url:
+        body_text += f"Recording: {context.recording_url}\n"
+
+    def e(s):
+        return html.escape(str(s) if s is not None else "", quote=True)
+
+    body_html = (
+        f"<h2>New appointment booked — {e(metadata.business_name)}</h2>"
+        f"<table cellpadding='4'>"
+        f"<tr><td><strong>Caller</strong></td><td>{e(caller)}</td></tr>"
+        f"<tr><td><strong>Start</strong></td><td>{e(start_iso)}</td></tr>"
+        f"<tr><td><strong>End</strong></td><td>{e(details.get('end_iso', '?'))}</td></tr>"
+        f"<tr><td><strong>Call ID</strong></td><td>{e(metadata.call_id)}</td></tr>"
+        f"</table>"
+    )
+    if html_link:
+        body_html += f"<p><a href='{e(html_link)}'>Open in Google Calendar</a></p>"
+    body_html += (
+        f"<p><em>The caller's identity was NOT verified. Please confirm by calling back "
+        f"at {e(caller)} before relying on this booking.</em></p>"
+    )
+    if context.transcript_markdown_path:
+        body_html += f"<p><strong>Transcript:</strong> {e(context.transcript_markdown_path)}</p>"
+    if context.recording_url:
+        body_html += f"<p><strong>Recording:</strong> <a href='{e(context.recording_url)}'>{e(context.recording_url)}</a></p>"
+
+    return subject, body_text, body_html
+
+
+def _format_duration(seconds) -> str:
     if seconds is None:
         return "unknown"
     m, s = divmod(int(seconds), 60)

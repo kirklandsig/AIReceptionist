@@ -33,8 +33,14 @@ logger = logging.getLogger("receptionist")
 DEFAULT_CONFIG_DIR = Path("config/businesses")
 
 
-def _format_friendly_date(dt) -> str:
-    """Cross-platform 'Monday, April 28 at 2:00 PM'."""
+def _format_friendly_date(dt: datetime) -> str:
+    """Cross-platform 'Monday, April 28 at 2:00 PM'.
+
+    Callers must pass a tz-aware datetime — the rendered time has no
+    timezone marker, so a naive datetime would silently lose offset info.
+    `find_slots` produces tz-aware iso strings, so `datetime.fromisoformat`
+    of those is safe.
+    """
     if platform.system() == "Windows":
         return dt.strftime("%A, %B %#d at %#I:%M %p")
     return dt.strftime("%A, %B %-d at %-I:%M %p")
@@ -362,6 +368,9 @@ class Receptionist(Agent):
         """
         from datetime import timedelta
 
+        # Deferred imports so businesses with calendar disabled don't pay the
+        # google-api-python-client import cost on every call. Aliased to _book
+        # to avoid shadowing this method's own name.
         from receptionist.booking.booking import (
             SlotNoLongerAvailableError, book_appointment as _book,
         )
@@ -420,7 +429,13 @@ class Receptionist(Agent):
                 logger.exception("book_appointment: failed to find alternates after race")
                 alternates = []
 
-            # Reset cache to the new set
+            # Reset cache to ONLY the new set. We deliberately discard the
+            # previously-offered slots (some of which may still be free), to
+            # force the LLM through a fresh check_availability if it wants
+            # one of those — the previously-cached slots are stale (>=1
+            # extra round-trip ago) and the safer path is "always re-check
+            # when in doubt." Trade-off: one extra tool call vs. risk of
+            # offering a now-also-stale slot.
             self._offered_slots = {s.start_iso for s in alternates}
             if alternates:
                 formatted = "\n".join(

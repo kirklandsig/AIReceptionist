@@ -17,3 +17,7 @@ recordings/
 # are tracked. Any other YAML in config/businesses/ is operator-local.
 config/businesses/*.yaml
 !config/businesses/example-*.yaml
+
+# Per-business calendar credentials (service-account keys, OAuth tokens, OAuth client JSON)
+secrets/*
+!secrets/.gitkeep

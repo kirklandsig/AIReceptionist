@@ -17,7 +17,7 @@ _OUTCOME_LABELS = {
 }
 
 
-def _outcomes_display(outcomes) -> str:
+def _outcomes_display(outcomes: set[str] | list[str]) -> str:
     """Render a set of outcomes as a sorted human-readable string.
 
     Example: {"transferred", "appointment_booked"} -> "Appointment booked + Transferred"
@@ -49,7 +49,7 @@ def build_message_email(
     if context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
 
-    def e(s):
+    def e(s: str | None) -> str:
         return html.escape(s or "", quote=True)
 
     body_html = (
@@ -103,7 +103,7 @@ def build_call_end_email(
     if context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
 
-    def e(s):
+    def e(s: object) -> str:
         return html.escape(str(s) if s is not None else "", quote=True)
 
     body_html = (
@@ -150,7 +150,7 @@ def build_booking_email(
     if context.recording_url:
         body_text += f"Recording: {context.recording_url}\n"
 
-    def e(s):
+    def e(s: object) -> str:
         return html.escape(str(s) if s is not None else "", quote=True)
 
     body_html = (
@@ -176,7 +176,7 @@ def build_booking_email(
     return subject, body_text, body_html
 
 
-def _format_duration(seconds) -> str:
+def _format_duration(seconds: float | None) -> str:
     if seconds is None:
         return "unknown"
     m, s = divmod(int(seconds), 60)

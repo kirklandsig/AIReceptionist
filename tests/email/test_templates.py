@@ -91,5 +91,20 @@ def test_build_booking_email_includes_event_link():
     assert "appointment booked" in subject.lower()
     assert "+15551112222" in subject
     assert "https://calendar.google.com/event?eid=abc" in body_text
-    assert "UNVERIFIED" in body_text or "was NOT verified" in body_text
+    assert "was NOT verified" in body_text
     assert "calendar.google.com" in body_html
+
+
+def test_outcome_labels_cover_all_valid_outcomes():
+    """Regression: _OUTCOME_LABELS must be kept in sync with VALID_OUTCOMES.
+
+    If a future maintainer adds an outcome to VALID_OUTCOMES but forgets
+    _OUTCOME_LABELS, _outcomes_display silently falls back to the raw
+    outcome string. This test makes that omission a test failure instead.
+    """
+    from receptionist.email.templates import _OUTCOME_LABELS
+    from receptionist.transcript.metadata import VALID_OUTCOMES
+    assert set(_OUTCOME_LABELS.keys()) == VALID_OUTCOMES, (
+        "_OUTCOME_LABELS keys must match VALID_OUTCOMES exactly. "
+        "If you added a new outcome, update both."
+    )

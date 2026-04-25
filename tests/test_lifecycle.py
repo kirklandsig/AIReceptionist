@@ -74,6 +74,33 @@ def test_lifecycle_add_outcome_rejects_unknown(config):
         lifecycle._add_outcome("abducted_by_aliens")
 
 
+def test_lifecycle_add_outcome_does_not_demote(config):
+    """Set semantics: re-adding any outcome (including hung_up) is a no-op
+    that does not 'demote' or remove anything already in outcomes."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_transfer("Front Desk")
+    lifecycle._add_outcome("hung_up")  # add hung_up to a transferred call
+    # transferred must still be present; sets don't displace
+    assert "transferred" in lifecycle.metadata.outcomes
+    assert "hung_up" in lifecycle.metadata.outcomes
+
+
+def test_lifecycle_appointment_booked_bool_mirrors_outcomes(config):
+    """Regression: when record_appointment_booked fires, both the bool flag
+    and the outcomes set must agree. Prevents drift between the two
+    sources of truth (mirror field vs. outcomes membership)."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_appointment_booked({
+        "event_id": "e", "start_iso": "s", "end_iso": "x", "html_link": "u",
+    })
+    # Both signals must be true and consistent
+    assert lifecycle.metadata.appointment_booked is True
+    assert "appointment_booked" in lifecycle.metadata.outcomes
+    assert lifecycle.metadata.appointment_booked == (
+        "appointment_booked" in lifecycle.metadata.outcomes
+    )
+
+
 def test_outcomes_is_a_set_not_a_string(config):
     """Regression guard against reverting to the old priority-based single-outcome shape."""
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)

@@ -199,6 +199,12 @@ class Receptionist(Agent):
             business_name=self.config.business.name,
             email_config=self.config.email,
         )
+        # Dict-backed routing lookup. transfer_call uses case-insensitive
+        # exact match on the department name, so a dict is a clean fit.
+        # NOTE: FAQ matching is bidirectional substring (caller "hours" can
+        # match FAQ "What are your hours?" AND vice versa), which a single
+        # dict can't represent — leave that as a linear scan.
+        self._routing_by_name = {r.name.lower(): r for r in self.config.routing}
 
     def _get_calendar_client(self):
         """Lazily construct and cache the Google Calendar client for this call."""
@@ -267,12 +273,7 @@ class Receptionist(Agent):
     @function_tool()
     async def transfer_call(self, ctx: RunContext, department: str) -> str:
         """Transfer the caller to a specific department or person."""
-        target = None
-        for entry in self.config.routing:
-            if entry.name.lower() == department.lower():
-                target = entry
-                break
-
+        target = self._routing_by_name.get(department.lower())
         if target is None:
             available = ", ".join(e.name for e in self.config.routing)
             return f"Department '{department}' not found. Available departments: {available}"

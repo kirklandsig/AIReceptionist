@@ -202,8 +202,22 @@ The actual transfer is performed using the LiveKit API. The agent calls into Liv
 ```python
 # Simplified pseudocode
 participant = self._get_caller_identity()
-await livekit_api.sip_transfer(participant, target_number)
+uri = config.sip.transfer_uri_template.format(number=target.number)
+await livekit_api.sip_transfer(participant, transfer_to=uri)
 ```
+
+### Transfer URI scheme (`sip.transfer_uri_template`)
+
+The format of the `transfer_to` URI is configurable per-business via the
+`sip.transfer_uri_template` field, with `{number}` substituted at runtime.
+The default — `tel:{number}` — works for Twilio, Telnyx, and most BYOC
+SIP trunks that translate tel-URIs into routable SIP requests.
+
+If your trunk is **Asterisk classic `sip.conf`** (chan_sip), it strictly
+requires a `sip:` URI and rejects tel-URIs. Set the template to
+`sip:{number}` for local DID transfers, or `sip:{number}@your-pbx.example.com`
+for transfers to a remote PBX. See `documentation/configuration-reference.md`
+for the full schema.
 
 ### Error Handling
 

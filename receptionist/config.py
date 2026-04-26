@@ -247,6 +247,37 @@ class RetentionConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# SIP transfer config
+# ---------------------------------------------------------------------------
+
+class SipConfig(BaseModel):
+    """Per-business SIP behavior. Today only the transfer URI scheme is configurable.
+
+    `transfer_uri_template` is the format string the agent uses when telling
+    LiveKit how to dial the routing target during a transfer. It must contain
+    the literal `{number}` placeholder, which is substituted with the routing
+    target's `number` field.
+
+    Defaults to `tel:{number}` which works for Twilio, Telnyx, and most BYOC
+    providers that translate tel-URIs to SIP. For Asterisk classic sip.conf
+    (which rejects tel-URIs), use `sip:{number}` for local DID transfers, or
+    `sip:{number}@your-pbx.example.com` for transfers to a remote SIP PBX.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    transfer_uri_template: str = "tel:{number}"
+
+    @field_validator("transfer_uri_template")
+    @classmethod
+    def _has_number_placeholder(cls, v: str) -> str:
+        if "{number}" not in v:
+            raise ValueError(
+                f"transfer_uri_template must contain '{{number}}' placeholder; got: {v!r}"
+            )
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Calendar — Google Calendar integration
 # ---------------------------------------------------------------------------
 
@@ -321,6 +352,7 @@ class BusinessConfig(BaseModel):
     transcripts: TranscriptsConfig | None = None
     email: EmailConfig | None = None
     calendar: CalendarConfig | None = None
+    sip: SipConfig = Field(default_factory=SipConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
     @model_validator(mode="after")

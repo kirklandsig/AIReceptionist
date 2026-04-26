@@ -123,10 +123,18 @@ def _build_egress_request(
 
 def _egress_filepath(destination: RecordingDestination) -> str:
     if destination.kind == "local":
-        assert destination.local_path is not None
+        if destination.local_path is None:
+            raise ValueError(
+                "RecordingDestination.kind='local' but local_path is None — "
+                "resolve_destination() should have populated it."
+            )
         return str(destination.local_path)
     if destination.kind == "s3":
-        assert destination.s3_key is not None
+        if destination.s3_key is None:
+            raise ValueError(
+                "RecordingDestination.kind='s3' but s3_key is None — "
+                "resolve_destination() should have populated it."
+            )
         return destination.s3_key
     raise ValueError(f"Unknown destination kind: {destination.kind}")
 

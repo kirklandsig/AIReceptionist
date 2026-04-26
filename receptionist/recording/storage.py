@@ -28,13 +28,23 @@ def resolve_destination(
     filename = f"recording_{ts}_{safe_id}.mp4"
 
     if config.type == "local":
-        assert config.local is not None
+        if config.local is None:
+            raise ValueError(
+                "RecordingStorageConfig.type='local' but config.local is None. "
+                "This should be unreachable; the model_validator on "
+                "RecordingStorageConfig requires local to be set when type='local'."
+            )
         return RecordingDestination(
             kind="local",
             local_path=Path(config.local.path) / filename,
         )
     if config.type == "s3":
-        assert config.s3 is not None
+        if config.s3 is None:
+            raise ValueError(
+                "RecordingStorageConfig.type='s3' but config.s3 is None. "
+                "This should be unreachable; the model_validator on "
+                "RecordingStorageConfig requires s3 to be set when type='s3'."
+            )
         prefix = config.s3.prefix or ""
         if prefix and not prefix.endswith("/"):
             prefix += "/"

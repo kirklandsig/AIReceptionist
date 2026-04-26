@@ -61,5 +61,9 @@ async def retry_with_backoff(
             await asyncio.sleep(wait)
             delay *= policy.factor
 
-    assert last_exc is not None  # unreachable
+    if last_exc is None:
+        # Truly unreachable — the only way out of the loop without a return
+        # is via an exception, which sets last_exc. But asserts are stripped
+        # under `python -O`, so make this an explicit raise.
+        raise RuntimeError("retry_with_backoff: max_attempts must be >= 1")
     raise last_exc

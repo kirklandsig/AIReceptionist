@@ -247,3 +247,7 @@ def test_prompt_includes_calendar_block_when_enabled(tmp_path):
     assert "book_appointment" in prompt
     assert "confirm" in prompt.lower()
     assert "fabricate" in prompt.lower() or "never make up" in prompt.lower()
+    # Email-invite instruction: agent must ask, not assume
+    assert "calendar invite" in prompt.lower()
+    assert "caller_email" in prompt
+    assert "never make up an email" in prompt.lower()

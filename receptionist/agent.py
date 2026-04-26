@@ -47,6 +47,12 @@ def _format_friendly_date(dt: datetime) -> str:
     return dt.strftime("%A, %B %-d at %-I:%M %p")
 
 
+# Light email-shape regex — exists to catch obvious caller mishearings ("dot calm",
+# missing @, missing TLD). Google rejects malformed emails server-side too, this
+# is just for a friendlier in-call error message.
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
 _WEEKDAYS = {
     "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
     "friday": 4, "saturday": 5, "sunday": 6,
@@ -398,6 +404,7 @@ class Receptionist(Agent):
         callback_number: str,
         proposed_start_iso: str,
         notes: str | None = None,
+        caller_email: str | None = None,
     ) -> str:
         """Book an appointment at a previously-offered time.
 
@@ -407,6 +414,11 @@ class Receptionist(Agent):
             proposed_start_iso: the exact ISO 8601 start datetime offered by
                 a prior check_availability call. Copy from that response.
             notes: optional free-form note to include in the event description.
+            caller_email: optional email address to send a calendar invite to.
+                When provided, the caller is added as an OPTIONAL attendee and
+                Google sends them the standard invite email with .ics file and
+                accept/decline. Leave None if the caller didn't volunteer an
+                email — never make one up.
         """
         from datetime import timedelta
 
@@ -429,6 +441,18 @@ class Receptionist(Agent):
                 "first — please call check_availability before booking."
             )
 
+        # Light email-shape validation. Google rejects malformed emails too,
+        # but catching obvious mishearings here gives a friendlier error.
+        if caller_email is not None:
+            caller_email = caller_email.strip()
+            if not _EMAIL_RE.match(caller_email):
+                logger.info("book_appointment: invalid caller_email %r", caller_email)
+                return (
+                    "That email address didn't sound quite right. Could you "
+                    "spell it out for me, or should I proceed without sending "
+                    "an email invite?"
+                )
+
         # Reconstruct the matching SlotProposal. We trust start_iso and compute
         # the end from appointment_duration_minutes (slots have uniform duration).
         start = datetime.fromisoformat(proposed_start_iso)
@@ -448,6 +472,7 @@ class Receptionist(Agent):
                 time_zone=self.config.business.timezone,
                 client=client,
                 notes=notes,
+                caller_email=caller_email,
             )
         except SlotNoLongerAvailableError:
             # Slot just got taken. Find fresh alternatives.
@@ -509,8 +534,12 @@ class Receptionist(Agent):
         })
 
         confirmed = datetime.fromisoformat(result.start_iso)
+        invite_msg = (
+            f" I've also emailed a calendar invite to {caller_email}."
+            if caller_email else ""
+        )
         return (
-            f"You're all set for {_format_friendly_date(confirmed)}. "
+            f"You're all set for {_format_friendly_date(confirmed)}.{invite_msg} "
             f"Someone will contact you at {callback_number} if we need to confirm."
         )
 

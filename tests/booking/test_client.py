@@ -139,3 +139,51 @@ async def test_create_event_http_error_propagates(mocker):
             end=datetime(2026, 4, 28, 14, 30, tzinfo=timezone.utc),
             summary="x", description="x", time_zone="UTC",
         )
+
+
+@pytest.mark.asyncio
+async def test_create_event_with_attendee_email_sends_invite(mocker):
+    """When attendee_email is given, attach as optional attendee + sendUpdates=all."""
+    fake_service = _fake_service()
+    mocker.patch("receptionist.booking.client.build", return_value=fake_service)
+    client = GoogleCalendarClient(MagicMock(), calendar_id="primary")
+
+    await client.create_event(
+        start=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 4, 28, 14, 30, tzinfo=timezone.utc),
+        summary="Appointment: Jane Doe",
+        description="...",
+        time_zone="America/New_York",
+        attendee_email="jane@example.com",
+    )
+
+    call_kwargs = fake_service.events.return_value.insert.call_args.kwargs
+    # Google sends the invite email
+    assert call_kwargs["sendUpdates"] == "all"
+    body = call_kwargs["body"]
+    # Caller is added as an OPTIONAL attendee so a decline doesn't make our
+    # event tentative or impact the organizer's free/busy.
+    assert body["attendees"] == [
+        {"email": "jane@example.com", "optional": True, "responseStatus": "needsAction"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_event_no_attendee_email_suppresses_invite(mocker):
+    """No email → sendUpdates=none and no attendees list (default behavior)."""
+    fake_service = _fake_service()
+    mocker.patch("receptionist.booking.client.build", return_value=fake_service)
+    client = GoogleCalendarClient(MagicMock(), calendar_id="primary")
+
+    await client.create_event(
+        start=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+        end=datetime(2026, 4, 28, 14, 30, tzinfo=timezone.utc),
+        summary="Appointment: Jane Doe",
+        description="...",
+        time_zone="America/New_York",
+    )
+
+    call_kwargs = fake_service.events.return_value.insert.call_args.kwargs
+    assert call_kwargs["sendUpdates"] == "none"
+    body = call_kwargs["body"]
+    assert "attendees" not in body

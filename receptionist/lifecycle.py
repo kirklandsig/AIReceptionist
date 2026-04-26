@@ -40,6 +40,26 @@ class CallLifecycle:
         )
         self.transcript_capture: TranscriptCapture | None = None
         self.recording_handle: RecordingHandle | None = None
+        # Pre-build email channel instances if any email triggers are enabled,
+        # so the call-end fan-out doesn't reconstruct them per fire.
+        self._email_channels = self._build_email_channels()
+
+    def _build_email_channels(self) -> list:
+        """Pre-construct EmailChannel instances when email triggers will need them.
+
+        Returns [] when there are no email channels in messages.channels or no
+        top-level email config (the cross-section validator in config.py
+        guarantees those go together when triggers are on).
+        """
+        if self.config.email is None:
+            return []
+        from receptionist.config import EmailChannel as EmailChannelConfig
+        from receptionist.messaging.channels.email import EmailChannel
+        ch_cfgs = [
+            c for c in self.config.messages.channels
+            if isinstance(c, EmailChannelConfig)
+        ]
+        return [EmailChannel(c, self.config.email) for c in ch_cfgs]
 
     # --- tool-path recorders (called by Receptionist methods) ---
 
@@ -121,17 +141,11 @@ class CallLifecycle:
         transcript_result: TranscriptWriteResult | None,
     ) -> None:
         """Call-end email goes to every EmailChannel target in messages.channels."""
-        from receptionist.config import EmailChannel as EmailChannelConfig
-        from receptionist.messaging.channels.email import EmailChannel
-
-        email_channels = [c for c in self.config.messages.channels if isinstance(c, EmailChannelConfig)]
-        if not email_channels or self.config.email is None:
+        if not self._email_channels:
             logger.info("on_call_end trigger configured but no email channel in messages.channels")
             return
-
         context = self._build_dispatch_context(artifact, transcript_result)
-        for ch_cfg in email_channels:
-            channel = EmailChannel(ch_cfg, self.config.email)
+        for channel in self._email_channels:
             try:
                 await channel.deliver_call_end(self.metadata, context)
             except Exception as e:
@@ -150,17 +164,11 @@ class CallLifecycle:
         transcript_result: TranscriptWriteResult | None,
     ) -> None:
         """Booking email — fires only when metadata.appointment_booked is true."""
-        from receptionist.config import EmailChannel as EmailChannelConfig
-        from receptionist.messaging.channels.email import EmailChannel
-
-        email_channels = [c for c in self.config.messages.channels if isinstance(c, EmailChannelConfig)]
-        if not email_channels or self.config.email is None:
+        if not self._email_channels:
             logger.info("on_booking trigger configured but no email channel in messages.channels")
             return
-
         context = self._build_dispatch_context(artifact, transcript_result)
-        for ch_cfg in email_channels:
-            channel = EmailChannel(ch_cfg, self.config.email)
+        for channel in self._email_channels:
             try:
                 await channel.deliver_booking(self.metadata, context)
             except Exception as e:

@@ -187,6 +187,14 @@ class Receptionist(Agent):
         # Lazily-constructed on first calendar tool call; reused for the rest
         # of the call so we don't pay Google's auth cost per tool invocation.
         self._calendar_client = None
+        # Pre-build a single Dispatcher for the call. The constructor runs a
+        # filesystem-walk in resolve_failures_dir(), so reusing it across
+        # take_message invocations matters when callers leave several messages.
+        self._dispatcher = Dispatcher(
+            channels=self.config.messages.channels,
+            business_name=self.config.business.name,
+            email_config=self.config.email,
+        )
 
     def _get_calendar_client(self):
         """Lazily construct and cache the Google Calendar client for this call."""
@@ -283,13 +291,8 @@ class Receptionist(Agent):
             message=message,
             business_name=self.config.business.name,
         )
-        dispatcher = Dispatcher(
-            channels=self.config.messages.channels,
-            business_name=self.config.business.name,
-            email_config=self.config.email,
-        )
         try:
-            await dispatcher.dispatch_message(
+            await self._dispatcher.dispatch_message(
                 msg, DispatchContext(
                     business_name=self.config.business.name,
                     call_id=self.lifecycle.metadata.call_id,

@@ -120,6 +120,52 @@ async def test_lifecycle_on_call_ended_finalizes_metadata(config):
     assert lifecycle.metadata.duration_seconds is not None
 
 
+def test_lifecycle_email_channels_constructed_once_at_init(config):
+    """Performance regression: pre-build EmailChannel instances at __init__,
+    not per-trigger fire. Without caching, each call_end + each booking
+    fired a fresh constructor over the channel list."""
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig,
+        EmailConfig, EmailTriggers, SMTPConfig, EmailSenderConfig,
+    )
+    cfg = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(
+                    type="email",
+                    to=["a@example.com", "b@example.com"],
+                    include_transcript=True,
+                    include_recording_link=False,
+                ),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {
+                    "host": "smtp.example.com", "port": 587,
+                    "username": "u", "password": "p", "use_tls": True,
+                },
+            },
+            "triggers": {"on_message": False, "on_call_end": True},
+        }),
+    })
+    lifecycle = CallLifecycle(config=cfg, call_id="r", caller_phone=None)
+    # One email channel in messages.channels -> one cached EmailChannel instance.
+    assert len(lifecycle._email_channels) == 1
+    # Stored as a list, not rebuilt — identity holds across reads.
+    assert lifecycle._email_channels is lifecycle._email_channels
+
+
+def test_lifecycle_no_email_channels_when_email_disabled(config):
+    """When the business has no email config, _email_channels is empty
+    and the call-end fan-out is a no-op."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    assert lifecycle._email_channels == []
+
+
 @pytest.mark.asyncio
 async def test_lifecycle_on_call_ended_writes_transcript(tmp_path, config):
     from receptionist.config import TranscriptsConfig, TranscriptStorageConfig

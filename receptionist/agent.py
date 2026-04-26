@@ -7,6 +7,7 @@ import logging
 import os
 import platform
 import re
+from collections import deque
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -183,7 +184,10 @@ class Receptionist(Agent):
         # Session-scoped cache of slot ISO strings offered to the caller via
         # check_availability. book_appointment rejects any proposed_start_iso
         # that isn't in this set — prevents the LLM from hallucinating times.
-        self._offered_slots: set[str] = set()
+        # Capped to the last N=3 check_availability calls so a long, chatty
+        # call can't grow the set unbounded. 3 batches × ~3 slots = ~9 ISO
+        # strings; the LLM only ever needs the most recent batch anyway.
+        self._offered_slot_batches: deque[frozenset[str]] = deque(maxlen=3)
         # Lazily-constructed on first calendar tool call; reused for the rest
         # of the call so we don't pay Google's auth cost per tool invocation.
         self._calendar_client = None
@@ -210,6 +214,22 @@ class Receptionist(Agent):
                 creds, calendar_id=self.config.calendar.calendar_id,
             )
         return self._calendar_client
+
+    def _record_offered_slots(self, iso_strings) -> None:
+        """Add a batch of slot ISO strings to the bounded offer cache.
+
+        Older batches age out automatically (deque maxlen=3).
+        """
+        self._offered_slot_batches.append(frozenset(iso_strings))
+
+    def _slot_was_offered(self, iso: str) -> bool:
+        """True if `iso` was offered in any of the last N batches."""
+        return any(iso in batch for batch in self._offered_slot_batches)
+
+    def _reset_offered_slots(self, iso_strings) -> None:
+        """Clear the offer cache and seed it with this batch (used after race recovery)."""
+        self._offered_slot_batches.clear()
+        self._record_offered_slots(iso_strings)
 
     async def on_enter(self) -> None:
         # If recording is enabled with a consent preamble, speak the preamble
@@ -420,9 +440,9 @@ class Receptionist(Agent):
                 f"Would you like me to take a message so someone can offer alternatives?"
             )
 
-        # Cache the ISO strings so book_appointment can validate them
-        for slot in slots:
-            self._offered_slots.add(slot.start_iso)
+        # Cache the ISO strings so book_appointment can validate them.
+        # Bounded to last 3 batches (deque maxlen=3) — older batches age out.
+        self._record_offered_slots(s.start_iso for s in slots)
 
         # Format a caller-friendly response. The LLM takes this and speaks it.
         formatted = []
@@ -477,7 +497,7 @@ class Receptionist(Agent):
             return "Calendar booking is not enabled for this business."
 
         # Enforce "must check before book" — slot must have been offered
-        if proposed_start_iso not in self._offered_slots:
+        if not self._slot_was_offered(proposed_start_iso):
             return (
                 "I need to verify that time is still available. Let me check "
                 "first — please call check_availability before booking."
@@ -554,7 +574,7 @@ class Receptionist(Agent):
             # extra round-trip ago) and the safer path is "always re-check
             # when in doubt." Trade-off: one extra tool call vs. risk of
             # offering a now-also-stale slot.
-            self._offered_slots = {s.start_iso for s in alternates}
+            self._reset_offered_slots(s.start_iso for s in alternates)
             if alternates:
                 formatted = "\n".join(
                     f"- {_format_friendly_date(datetime.fromisoformat(s.start_iso))}  [iso={s.start_iso}]"

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import platform
 import re
 from datetime import datetime
@@ -46,6 +47,42 @@ def _format_friendly_date(dt: datetime) -> str:
     return dt.strftime("%A, %B %-d at %-I:%M %p")
 
 
+_WEEKDAYS = {
+    "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+    "friday": 4, "saturday": 5, "sunday": 6,
+}
+
+
+def _resolve_relative_date(preferred_date: str, now: datetime) -> str:
+    """Convert relative-date phrases into absolute dates dateutil can parse.
+
+    Handles: "today" / "tonight", "tomorrow", "next <weekday>", "this <weekday>".
+    Falls through unchanged for absolute dates ("April 28") and bare weekday
+    names ("Monday") — dateutil handles those.
+    """
+    from datetime import timedelta
+
+    s = preferred_date.strip().lower()
+    if s in {"today", "tonight"}:
+        return now.strftime("%B %d %Y")
+    if s == "tomorrow":
+        return (now + timedelta(days=1)).strftime("%B %d %Y")
+
+    # "next Monday" → 7+ days out; "this Monday" → soonest occurrence (today counts)
+    for prefix in ("next ", "this "):
+        if s.startswith(prefix):
+            wd = s[len(prefix):]
+            if wd in _WEEKDAYS:
+                target = _WEEKDAYS[wd]
+                days_ahead = (target - now.weekday()) % 7
+                if prefix == "next " and days_ahead < 7:
+                    days_ahead += 7
+                target_dt = now + timedelta(days=days_ahead)
+                return target_dt.strftime("%B %d %Y")
+
+    return preferred_date
+
+
 def load_business_config(ctx: agents.JobContext) -> BusinessConfig:
     """Load business config based on job metadata or default to first config found."""
     metadata = {}
@@ -55,11 +92,11 @@ def load_business_config(ctx: agents.JobContext) -> BusinessConfig:
         except json.JSONDecodeError:
             logger.warning("Failed to parse job metadata as JSON")
 
-    config_name = metadata.get("config", None)
+    config_name = metadata.get("config", None) or os.environ.get("RECEPTIONIST_CONFIG")
 
     if config_name:
         if not re.match(r"^[a-zA-Z0-9_-]+$", config_name):
-            raise ValueError(f"Invalid config name in job metadata: {config_name!r}")
+            raise ValueError(f"Invalid config name: {config_name!r}")
         config_path = DEFAULT_CONFIG_DIR / f"{config_name}.yaml"
     else:
         yaml_files = sorted(DEFAULT_CONFIG_DIR.glob("*.yaml"))
@@ -264,6 +301,11 @@ class Receptionist(Agent):
 
         tz = ZoneInfo(self.config.business.timezone)
         now = datetime.now(tz)
+
+        # Resolve relative-date words ("today", "tomorrow", "next Monday") that
+        # dateutil.parser doesn't understand on its own. Bare weekday names ("Monday")
+        # and absolute dates ("April 28") fall through to the parser unchanged.
+        preferred_date = _resolve_relative_date(preferred_date, now)
 
         # Parse caller's natural-language date + time into a tz-aware datetime
         try:

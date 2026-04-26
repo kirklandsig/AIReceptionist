@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-04-23
+> **Last updated:** 2026-04-26
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -859,3 +859,45 @@ Unit tests per subpackage module (~35 new tests). One integration test
 - Implementation plan: `docs/superpowers/plans/2026-04-24-google-calendar-integration.md`
 - Setup guide: `documentation/google-calendar-setup.md`
 - Current architecture: `documentation/architecture.md`
+
+### Live-validation findings (2026-04-26 — merged as PR #7, commit `7352469`)
+
+Validated end-to-end against a personal gmail Google Calendar via the
+LiveKit playground. The live test surfaced five real issues, all fixed
+before merge:
+
+1. **`calendar.events` scope alone is insufficient for `freeBusy.query`.**
+   Google treats freeBusy as a calendar-level operation. Added
+   `calendar.freebusy` to the scope set. Existing OAuth tokens issued
+   for the single-scope set must be re-minted via the setup CLI.
+2. **Setup CLI U+2713 ("✓") crashed on default Windows cp1252 console.**
+   Replaced with `[OK]`. The crash was post-success (token + chmod
+   already done), masking the prior success.
+3. **`dateutil.parser` doesn't understand "tomorrow" / "next Monday".**
+   Added `_resolve_relative_date()` that normalizes those phrases to
+   absolute dates before parsing. The CALENDAR prompt already advertised
+   relative-date support; the parser silently rejected them.
+4. **Caller invite needed.** Added an optional `caller_email` parameter
+   to `book_appointment`. When provided, caller is added as an OPTIONAL
+   Google attendee (so a decline does not affect the organizer's
+   free/busy) and Google sends them the standard `.ics` invite.
+5. **Phone + email read-back discipline.** The agent was booking before
+   confirming the callback number and email letter-by-letter.
+   CALENDAR prompt now requires digit-by-digit phone read-back and
+   letter-by-letter email read-back, both with explicit "yes"
+   confirmation, BEFORE the booking goes through.
+
+Also during validation: added `RECEPTIONIST_CONFIG` env var so
+`python -m receptionist.agent dev` can pick a non-default business
+config without needing job metadata. The previous fallback (first YAML
+alphabetically) silently picked `example-dental.yaml`, leading to
+"calendar not configured" errors when running a fresh test config.
+
+**Google quirk worth knowing:** when the attendee email's domain is
+unroutable, Google silently drops the attendee from the persisted
+event. The booking still succeeds; staff just don't see the attendee
+on the event. Verified by API re-fetch. Not a code bug — the readback
+discipline (#5) is our mitigation.
+
+**Final tally:** 198 tests passing, 2 Windows-skipped POSIX-permission
+checks (intentional). Manual gate complete.

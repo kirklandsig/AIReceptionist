@@ -533,6 +533,62 @@ def test_sip_transfer_uri_rejects_extra_fields():
         SipConfig(transfer_uri_template="tel:{number}", garbage="field")
 
 
+def test_webhook_channel_rejects_file_scheme():
+    """Hard reject anything that's not http or https."""
+    from receptionist.config import WebhookChannel
+    with pytest.raises(ValidationError, match="scheme must be http"):
+        WebhookChannel(type="webhook", url="file:///etc/passwd")
+
+
+@pytest.mark.parametrize("scheme", ["data", "javascript", "gopher", "ftp"])
+def test_webhook_channel_rejects_dangerous_schemes(scheme):
+    from receptionist.config import WebhookChannel
+    url = f"{scheme}://example.com/x"
+    with pytest.raises(ValidationError, match="scheme must be http"):
+        WebhookChannel(type="webhook", url=url)
+
+
+def test_webhook_channel_rejects_url_without_host():
+    from receptionist.config import WebhookChannel
+    with pytest.raises(ValidationError, match="no host"):
+        WebhookChannel(type="webhook", url="http://")
+
+
+@pytest.mark.parametrize("host_in_url", [
+    "127.0.0.1",
+    "10.0.0.5",
+    "192.168.1.1",
+    "169.254.169.254",  # AWS metadata service
+    "[::1]",  # IPv6 loopback (URL-form requires brackets)
+])
+def test_webhook_channel_warns_on_private_or_loopback_ip(host_in_url, caplog):
+    """These pass validation (legitimate in dev) but log a warning so prod
+    misconfigurations are visible at startup.
+    """
+    from receptionist.config import WebhookChannel
+    url = f"http://{host_in_url}/hook"
+    with caplog.at_level("WARNING", logger="receptionist"):
+        cfg = WebhookChannel(type="webhook", url=url)
+    assert cfg.url == url
+    assert any("loopback/private/link-local" in r.message for r in caplog.records)
+
+
+def test_webhook_channel_warns_on_localhost_hostname(caplog):
+    from receptionist.config import WebhookChannel
+    with caplog.at_level("WARNING", logger="receptionist"):
+        WebhookChannel(type="webhook", url="http://localhost:9000/hook")
+    assert any("localhost" in r.message.lower() for r in caplog.records)
+
+
+def test_webhook_channel_quiet_on_public_host(caplog):
+    """Real public webhooks should not log warnings."""
+    from receptionist.config import WebhookChannel
+    with caplog.at_level("WARNING", logger="receptionist"):
+        WebhookChannel(type="webhook", url="https://hooks.slack.com/services/xyz")
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == []
+
+
 def test_business_config_default_sip_when_omitted():
     """Backwards compat: configs without a `sip:` section get the default tel: template."""
     from receptionist.config import BusinessConfig

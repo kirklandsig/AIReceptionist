@@ -1,13 +1,18 @@
 # receptionist/config.py
 from __future__ import annotations
 
+import ipaddress
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Annotated, Literal, Union
+from urllib.parse import urlparse
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+logger = logging.getLogger("receptionist")
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +114,50 @@ class WebhookChannel(BaseModel):
     type: Literal["webhook"]
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url_safe(cls, v: str) -> str:
+        """Reject non-http(s) schemes and warn (not reject) on private/loopback hosts.
+
+        - Hard reject: file://, data:, javascript:, gopher:, etc. We only ever
+          want webhooks to leave via HTTP(S).
+        - Soft warn: loopback (127.0.0.0/8, ::1), private (10/8, 172.16/12,
+          192.168/16, fc00::/7), link-local (169.254/16, fe80::/10). These are
+          legitimate in dev (ngrok forwards, internal Slack relays) but a
+          common foot-gun in prod (e.g. AWS metadata at 169.254.169.254).
+        """
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(
+                f"Webhook URL scheme must be http or https; got {parsed.scheme!r} in {v!r}. "
+                f"file://, data:, javascript: and other schemes are rejected."
+            )
+        if not parsed.hostname:
+            raise ValueError(f"Webhook URL has no host: {v!r}")
+
+        # IP-literal check (don't try to resolve DNS at config-load time)
+        try:
+            ip = ipaddress.ip_address(parsed.hostname)
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                logger.warning(
+                    "Webhook URL %r points at a loopback/private/link-local "
+                    "address (%s). Fine in dev (ngrok / internal relays); in "
+                    "production this can leak data to the AWS metadata "
+                    "endpoint or other internal services.",
+                    v, ip,
+                )
+        except ValueError:
+            # Hostname is a domain — can't classify without DNS. Catch the
+            # most common literal foot-guns by name.
+            host = parsed.hostname.lower()
+            if host in ("localhost",) or host.endswith(".localhost"):
+                logger.warning(
+                    "Webhook URL %r targets localhost. Fine in dev; in "
+                    "production this likely indicates a misconfiguration.",
+                    v,
+                )
+        return v
 
 
 MessageChannel = Annotated[

@@ -8,10 +8,11 @@ import os
 import platform
 import re
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from dateutil import parser as dateparser
 from dotenv import load_dotenv
 
 from livekit import agents, api, rtc
@@ -21,6 +22,8 @@ from livekit.agents import (
 )
 from livekit.plugins import openai, noise_cancellation
 
+from receptionist.booking.availability import find_slots
+from receptionist.booking.models import SlotProposal
 from receptionist.config import BusinessConfig, load_config
 from receptionist.lifecycle import CallLifecycle
 from receptionist.messaging.dispatcher import Dispatcher
@@ -102,8 +105,6 @@ def _resolve_relative_date(preferred_date: str, now: datetime) -> str:
     Falls through unchanged for absolute dates ("April 28") and bare weekday
     names ("Monday") — dateutil handles those.
     """
-    from datetime import timedelta
-
     s = preferred_date.strip().lower()
     if s in {"today", "tonight"}:
         return now.strftime("%B %d %Y")
@@ -356,10 +357,9 @@ class Receptionist(Agent):
                 "tomorrow", "next Monday", etc.
             preferred_time: a natural-language time like "2pm", "14:00", "afternoon".
         """
-        from datetime import timedelta
-        from dateutil import parser as dateparser
-
-        from receptionist.booking.availability import find_slots
+        # CalendarAuthError lives in booking/auth.py which transitively imports
+        # google-auth — keep it lazy so calendar-disabled businesses don't pay
+        # the import cost.
         from receptionist.booking.auth import CalendarAuthError
 
         if self.config.calendar is None or not self.config.calendar.enabled:
@@ -483,16 +483,13 @@ class Receptionist(Agent):
                 accept/decline. Leave None if the caller didn't volunteer an
                 email — never make one up.
         """
-        from datetime import timedelta
-
-        # Deferred imports so businesses with calendar disabled don't pay the
-        # google-api-python-client import cost on every call. Aliased to _book
-        # to avoid shadowing this method's own name.
+        # booking.booking imports booking.client which pulls google-api-
+        # python-client at module load (~50MB). Keep it lazy so businesses
+        # with calendar disabled don't pay that import cost. Aliased to
+        # _book to avoid shadowing this method's own name.
         from receptionist.booking.booking import (
             SlotNoLongerAvailableError, book_appointment as _book,
         )
-        from receptionist.booking.models import SlotProposal
-        from receptionist.booking.availability import find_slots
 
         if self.config.calendar is None or not self.config.calendar.enabled:
             return "Calendar booking is not enabled for this business."

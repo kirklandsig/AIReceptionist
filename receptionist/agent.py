@@ -53,6 +53,41 @@ def _format_friendly_date(dt: datetime) -> str:
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 
+# Caps on caller-supplied free-text fields. The LLM faithfully passes through
+# whatever the caller said, so without these caps a 30-minute rant becomes a
+# 30,000-character "message" — which bloats storage, slows email rendering,
+# and (for calendar event descriptions) hits Google's 8KB limit. Truncate +
+# log rather than reject: the call should keep flowing; staff can read the
+# log if they need the full version.
+# RFC 5321 caps email addresses at 254 chars. The other limits are operator-
+# friendly: room for a long name or a verbose voicemail without being a vector.
+_TRUNCATE_LIMITS = {
+    "caller_name": 200,
+    "callback_number": 50,
+    "message": 4000,
+    "notes": 1000,
+    "caller_email": 254,
+}
+
+
+def _cap(field: str, value: str | None, *, call_id: str | None = None) -> str | None:
+    """Truncate `value` to _TRUNCATE_LIMITS[field] chars, logging when it does.
+
+    Returns None unchanged. Treats whitespace as content (the caller said it).
+    """
+    if value is None:
+        return None
+    limit = _TRUNCATE_LIMITS[field]
+    if len(value) <= limit:
+        return value
+    extra = {"call_id": call_id, "component": "agent.input_caps"} if call_id else {}
+    logger.info(
+        "Truncated overlong %s: %d chars -> %d", field, len(value), limit,
+        extra=extra,
+    )
+    return value[:limit]
+
+
 _WEEKDAYS = {
     "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
     "friday": 4, "saturday": 5, "sunday": 6,
@@ -238,6 +273,10 @@ class Receptionist(Agent):
         self, ctx: RunContext, caller_name: str, message: str, callback_number: str
     ) -> str:
         """Take a message from the caller."""
+        call_id = self.lifecycle.metadata.call_id
+        caller_name = _cap("caller_name", caller_name, call_id=call_id) or ""
+        message = _cap("message", message, call_id=call_id) or ""
+        callback_number = _cap("callback_number", callback_number, call_id=call_id) or ""
         msg = Message(
             caller_name=caller_name,
             callback_number=callback_number,
@@ -440,6 +479,15 @@ class Receptionist(Agent):
                 "I need to verify that time is still available. Let me check "
                 "first — please call check_availability before booking."
             )
+
+        # Cap caller free-text fields to avoid bloating the calendar event
+        # description and email body. Long input is truncated, not rejected,
+        # so the booking still flows; the truncation is logged.
+        call_id = self.lifecycle.metadata.call_id
+        caller_name = _cap("caller_name", caller_name, call_id=call_id) or ""
+        callback_number = _cap("callback_number", callback_number, call_id=call_id) or ""
+        notes = _cap("notes", notes, call_id=call_id)
+        caller_email = _cap("caller_email", caller_email, call_id=call_id)
 
         # Light email-shape validation. Google rejects malformed emails too,
         # but catching obvious mishearings here gives a friendlier error.

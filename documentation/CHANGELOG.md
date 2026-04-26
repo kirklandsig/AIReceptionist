@@ -22,6 +22,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (pure), booking (with race detection), and setup CLI modules.
 - **`SlotProposal` + `BookingResult` dataclasses** for calendar types.
 - **Setup CLI** at `python -m receptionist.booking setup <business-slug>`.
+- **Optional caller-email calendar invite**: `book_appointment` accepts a
+  `caller_email` parameter. When provided, the caller is added as an
+  OPTIONAL Google attendee and Google sends them the standard
+  invitation (with `.ics`, accept/decline, "Add to my calendar").
+  Optional attendees do not impact the organizer's free/busy view if
+  they decline.
+- **`RECEPTIONIST_CONFIG` env var** lets `python -m receptionist.agent dev`
+  pick a non-default business config without job metadata.
+- **Relative-date resolver** in `check_availability`: "today",
+  "tomorrow", "tonight", "next Monday", "this Friday" all resolve to
+  absolute dates before parsing. Bare weekday names and absolute dates
+  fall through unchanged.
 - **Multi-channel message delivery**: `messages.channels` list supports `file`, `email`, and `webhook` types enabled simultaneously per business (design spec §2)
 - **Call recording** via LiveKit Egress, stored locally or to S3/R2/B2/MinIO (spec §3)
 - **Call transcripts** in JSON (source of truth) + Markdown, with per-call metadata (caller, outcome, duration, tools invoked, languages detected)
@@ -63,14 +75,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Dependency floor bumps**: `livekit-agents>=1.5.0`, `livekit-plugins-openai>=1.5.0`
 - New production dependencies: `aiosmtplib>=3.0`, `resend>=2.0`, `httpx>=0.27`, `aioboto3>=13.0`, `aiofiles>=23.0`
 - New dev dependencies: `pytest-mock>=3.12`, `respx>=0.21`, `moto>=5.0`
+- **CALENDAR prompt block**: agent now reads back the callback number
+  digit-by-digit and (when the caller volunteers an email) reads it
+  back letter-by-letter, awaiting an explicit "yes" before booking.
+  Prevents mishearings from being committed to a real calendar event.
+- **`book_appointment` signature**: gains optional `caller_email: str | None`
+  parameter (default `None` keeps the prior no-attendee behavior).
+
+### Fixed
+- **OAuth scope**: added `https://www.googleapis.com/auth/calendar.freebusy`
+  alongside `calendar.events`. The events scope alone is insufficient for
+  `freeBusy.query` (Google treats freeBusy as a calendar-level operation,
+  not an events-level one). Existing OAuth tokens issued for the
+  single-scope set must be re-minted via `python -m receptionist.booking
+  setup <business>`.
+- **Setup CLI Unicode crash**: replaced `✓` markers with `[OK]`. Default
+  Windows `cp1252` console can't render U+2713 — would crash AFTER a
+  successful token write/chmod, masking the prior success.
+- **Relative-date parsing**: `dateutil.parser` doesn't understand "today"
+  / "tomorrow" / "next Monday" — `check_availability` would return
+  "couldn't parse that date" for caller phrasings the prompt advertised
+  as supported. Added `_resolve_relative_date()` that normalizes those
+  phrases before parsing.
 
 ### Security
 - OAuth token files enforced to `0600` permissions on Unix at agent startup
   (no-op on Windows).
 - Calendar events tagged `[via AI receptionist / UNVERIFIED]` permanently
   so staff see the caller's identity was not verified.
-- `sendUpdates="none"` on all `events.insert` calls — no side-channel
-  notifications from Google.
+- `sendUpdates="none"` on `events.insert` when no caller email is
+  provided — no side-channel notifications from Google. When the
+  caller volunteers an email, `sendUpdates="all"` and the caller is
+  added as an OPTIONAL attendee so they get the standard invite.
 - Calendar credentials are per-business, isolated in `secrets/<business>/`.
 - Env-var interpolation avoids storing secrets in YAML files
 - Call ID is sanitized (`[^a-zA-Z0-9_-]` stripped) before use in artifact paths

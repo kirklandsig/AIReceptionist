@@ -12,7 +12,10 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 logger = logging.getLogger("receptionist")
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.freebusy",
+]
 DEFAULT_CONFIG_DIR = Path("config/businesses")
 
 

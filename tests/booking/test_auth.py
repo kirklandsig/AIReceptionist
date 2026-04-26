@@ -15,9 +15,17 @@ from receptionist.booking.auth import (
 from receptionist.config import OAuthAuth, ServiceAccountAuth
 
 
-def test_scopes_is_events_only():
-    """Least-privilege: only calendar.events scope, not full calendar."""
-    assert SCOPES == ["https://www.googleapis.com/auth/calendar.events"]
+def test_scopes_are_least_privilege():
+    """Least-privilege: only the two narrow scopes we need, not full calendar.
+
+    - calendar.events: required for events.insert / events.list
+    - calendar.freebusy: required for freeBusy.query (events scope alone is
+      not sufficient — Google treats freeBusy as a calendar-level op).
+    """
+    assert SCOPES == [
+        "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.freebusy",
+    ]
 
 
 def test_build_credentials_service_account(tmp_path):

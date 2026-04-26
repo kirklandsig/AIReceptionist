@@ -15,7 +15,13 @@ from receptionist.config import CalendarAuth, OAuthAuth, ServiceAccountAuth
 logger = logging.getLogger("receptionist")
 
 # Least-privilege: we read free/busy and create events. Not full calendar.
-SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+# - calendar.events: create/edit events on calendars we have access to
+# - calendar.freebusy: query free/busy on calendars (events scope alone is
+#   not sufficient — Google treats freeBusy as a calendar-level op).
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.freebusy",
+]
 
 
 class CalendarAuthError(Exception):

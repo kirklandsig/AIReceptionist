@@ -183,10 +183,11 @@ python -m receptionist.booking setup <business-slug>
 
 ### The agent can see availability but can't book
 
-Usually a scope issue. The project uses the narrow
-`https://www.googleapis.com/auth/calendar.events` scope. If you accidentally
-ran setup with a wider or narrower scope, the token may not have the right
-permissions. Delete the token file and re-run setup.
+Usually a scope issue. The project uses two narrow scopes:
+`https://www.googleapis.com/auth/calendar.events` (create/edit events) and
+`https://www.googleapis.com/auth/calendar.freebusy` (read availability). If
+you accidentally ran setup with different scopes, the token may not have the
+right permissions. Delete the token file and re-run setup.
 
 ## Rotating credentials
 

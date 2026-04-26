@@ -1,8 +1,11 @@
 # receptionist/transcript/metadata.py
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+logger = logging.getLogger("receptionist")
 
 
 # Valid outcome labels. Membership-checked in lifecycle._add_outcome to prevent
@@ -42,8 +45,13 @@ class CallMetadata:
             start = datetime.fromisoformat(self.start_ts)
             end = datetime.fromisoformat(self.end_ts)
             self.duration_seconds = (end - start).total_seconds()
-        except ValueError:
-            pass
+        except ValueError as e:
+            logger.warning(
+                "CallMetadata.mark_finalized: could not compute duration "
+                "from start_ts=%r end_ts=%r: %s",
+                self.start_ts, self.end_ts, e,
+                extra={"call_id": self.call_id, "component": "transcript.metadata"},
+            )
 
     def to_dict(self) -> dict:
         return {

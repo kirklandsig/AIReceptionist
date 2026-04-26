@@ -27,6 +27,7 @@ async def book_appointment(
     time_zone: str,
     client: GoogleCalendarClient,
     notes: str | None,
+    caller_email: str | None = None,
 ) -> BookingResult:
     """Book the given slot on the calendar.
 
@@ -34,6 +35,10 @@ async def book_appointment(
     between check_availability and this call. On race, raises
     SlotNoLongerAvailableError; the tool handler turns that into an LLM-facing
     message offering alternatives.
+
+    When caller_email is given, the caller is added as an OPTIONAL attendee
+    and Google sends them the standard calendar invitation. Optional attendees
+    do not affect the organizer's free/busy if they decline.
     """
     start = datetime.fromisoformat(slot.start_iso)
     end = datetime.fromisoformat(slot.end_iso)
@@ -56,6 +61,7 @@ async def book_appointment(
         "[via AI receptionist / UNVERIFIED]",
         f"Caller: {caller_name}",
         f"Callback: {callback_number}",
+        f"Email: {caller_email or '(none)'}",
         f"Booked: {booked_at}",
         f"Call ID: {call_id}",
         f"Notes: {notes or '(none)'}",
@@ -70,6 +76,7 @@ async def book_appointment(
         summary=summary,
         description=description,
         time_zone=time_zone,
+        attendee_email=caller_email,
     )
 
     logger.info(

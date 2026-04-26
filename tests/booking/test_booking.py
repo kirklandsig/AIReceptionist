@@ -167,3 +167,48 @@ async def test_book_appointment_description_includes_booked_timestamp():
     )
     description = fake_client.create_event.call_args.kwargs["description"]
     assert "Booked:" in description
+
+
+@pytest.mark.asyncio
+async def test_book_appointment_threads_caller_email_to_client():
+    """When caller_email is given, it propagates to client.create_event."""
+    fake_client = MagicMock()
+    fake_client.free_busy = AsyncMock(return_value=[])
+    fake_client.create_event = AsyncMock(return_value={"id": "e", "htmlLink": "u"})
+
+    await book_appointment(
+        slot=_slot(),
+        caller_name="Jane",
+        callback_number="+1",
+        call_id="c",
+        time_zone="UTC",
+        client=fake_client,
+        notes=None,
+        caller_email="jane@example.com",
+    )
+
+    kwargs = fake_client.create_event.call_args.kwargs
+    assert kwargs["attendee_email"] == "jane@example.com"
+    # Description should also record the email for audit
+    assert "Email: jane@example.com" in kwargs["description"]
+
+
+@pytest.mark.asyncio
+async def test_book_appointment_no_email_records_none_in_description():
+    fake_client = MagicMock()
+    fake_client.free_busy = AsyncMock(return_value=[])
+    fake_client.create_event = AsyncMock(return_value={"id": "e", "htmlLink": "u"})
+
+    await book_appointment(
+        slot=_slot(),
+        caller_name="Jane",
+        callback_number="+1",
+        call_id="c",
+        time_zone="UTC",
+        client=fake_client,
+        notes=None,
+    )
+
+    kwargs = fake_client.create_event.call_args.kwargs
+    assert kwargs["attendee_email"] is None
+    assert "Email: (none)" in kwargs["description"]

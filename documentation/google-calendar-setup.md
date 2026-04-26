@@ -215,9 +215,13 @@ others).
   number** in the event description
 - Events are tagged `[via AI receptionist / UNVERIFIED]` — staff viewing
   the event can see at a glance that the caller's identity was NOT verified
-- The agent sets `sendUpdates=none` on every booking, so Google does NOT
-  send calendar notifications to organizers. If you want to confirm bookings
-  with staff, enable the `on_booking` email trigger on the business's
-  `email.triggers` config
+- If the caller volunteers an **email address**, they're added as an
+  **optional attendee** and Google sends them the standard calendar
+  invitation (with `.ics`, accept/decline, and "Add to my calendar"). If
+  they decline, the event in the organizer's calendar is unaffected
+  because optional attendees don't impact free/busy. If no email is
+  given, `sendUpdates=none` is used and no email is sent
+- For staff-side notifications (separate from caller invites), enable the
+  `on_booking` email trigger on the business's `email.triggers` config
 - Call IDs (LiveKit room names) are included in event descriptions so staff
   can cross-reference events with call transcripts

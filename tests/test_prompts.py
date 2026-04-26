@@ -250,4 +250,9 @@ def test_prompt_includes_calendar_block_when_enabled(tmp_path):
     # Email-invite instruction: agent must ask, not assume
     assert "calendar invite" in prompt.lower()
     assert "caller_email" in prompt
-    assert "never make up an email" in prompt.lower()
+    # "never make up" + "email address" — wrapped across lines in the prompt
+    assert "never make up" in prompt.lower()
+    assert "email address" in prompt.lower()
+    # Phone + email read-back discipline (digit-by-digit and letter-by-letter)
+    assert "digit-by-digit" in prompt.lower() or "digit by digit" in prompt.lower()
+    assert "spell out" in prompt.lower() or "letter-by-letter" in prompt.lower()

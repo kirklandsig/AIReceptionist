@@ -281,8 +281,11 @@ calendar:
 When enabled, the agent gets two new tools:
 - **`check_availability(preferred_date, preferred_time)`** — queries the
   calendar and returns up to 3 slots near the requested time
-- **`book_appointment(caller_name, callback_number, proposed_start_iso, notes?)`** —
-  books one of the offered slots
+- **`book_appointment(caller_name, callback_number, proposed_start_iso, notes?, caller_email?)`** —
+  books one of the offered slots. When `caller_email` is provided, the caller
+  is added as an OPTIONAL Google attendee and Google sends them the standard
+  `.ics` invite. Optional attendees don't impact the organizer's free/busy
+  if they decline.
 
 The agent always says the proposed time back to the caller and waits for
 "yes" before booking. Events are tagged UNVERIFIED so staff know the
@@ -293,6 +296,25 @@ both auth paths (service account for Workspace, OAuth for any account).
 
 Optional: set `email.triggers.on_booking: true` to email staff whenever a
 booking lands (uses the existing email channel).
+
+## SIP transfer URI (Asterisk + non-standard PBX)
+
+By default, transfer-to-DID uses `tel:{number}`, which works for Twilio,
+Telnyx, and most BYOC SIP trunks that translate tel-URIs to SIP. If your
+trunk is **Asterisk classic `sip.conf`** (chan_sip, not pjsip), it rejects
+tel-URIs — you'll see transfers fail. Add a `sip:` block to your business
+config to override the URI scheme:
+
+```yaml
+sip:
+  transfer_uri_template: "sip:{number}"          # local DID lookup on Asterisk
+  # transfer_uri_template: "sip:{number}@asterisk.local"  # remote PBX
+```
+
+The default (`tel:{number}`) is preserved for everyone else; the field is
+only needed when your trunk doesn't accept tel-URIs.
+
+Credit to @trinicomcom (issue #6) for surfacing this.
 
 ---
 

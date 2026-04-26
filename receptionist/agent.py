@@ -224,7 +224,7 @@ class Receptionist(Agent):
                 api.TransferSIPParticipantRequest(
                     room_name=job_ctx.room.name,
                     participant_identity=_get_caller_identity(job_ctx),
-                    transfer_to=f"tel:{target.number}",
+                    transfer_to=self.config.sip.transfer_uri_template.format(number=target.number),
                 )
             )
             self.lifecycle.record_transfer(target.name)

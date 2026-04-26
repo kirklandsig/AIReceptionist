@@ -108,6 +108,14 @@ retention:
   transcripts_days: 90
   messages_days: 0
 
+# SIP transfer behavior. Default works for Twilio, Telnyx, and most BYOC providers
+# that translate tel-URIs to SIP. For Asterisk classic sip.conf (which rejects
+# tel-URIs), uncomment the appropriate sip: form below.
+# sip:
+#   transfer_uri_template: "tel:{number}"            # default — Twilio/Telnyx/most BYOC
+#   # transfer_uri_template: "sip:{number}"          # Asterisk classic sip.conf (DID lookup)
+#   # transfer_uri_template: "sip:{number}@asterisk.local"  # remote SIP PBX
+
 # Google Calendar integration (appointment booking). Requires setup:
 # 1. Google Cloud: enable Calendar API, create a service account OR OAuth client
 # 2. Share the target calendar with the service account email (for service_account auth)

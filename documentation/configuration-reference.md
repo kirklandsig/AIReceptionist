@@ -442,6 +442,36 @@ The `MessagesConfig` model enforces these rules:
 
 ---
 
+### sip
+
+Per-business SIP transfer behavior. The whole section is optional;
+omitting it gets the default (`tel:{number}`) which works for Twilio,
+Telnyx, and most BYOC SIP trunks.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `transfer_uri_template` | string | No | `"tel:{number}"` | URI format string used by `transfer_call`. Must contain the literal `{number}` placeholder. |
+
+**When to override the default:**
+
+- **Asterisk classic `sip.conf` (chan_sip)** rejects tel-URIs. Use
+  `sip:{number}` for transfers to local DIDs, or
+  `sip:{number}@your-pbx.example.com` for transfers to a remote PBX.
+- **Other custom SIP gateways** that need a specific URI form.
+
+The agent substitutes the `routing.*.number` value into `{number}` at
+runtime. The validator rejects templates that don't contain `{number}`
+(would otherwise silently dial the literal template string).
+
+**Example (Asterisk):**
+
+```yaml
+sip:
+  transfer_uri_template: "sip:{number}"
+```
+
+---
+
 ## Validation Rules
 
 The following validation rules are enforced by the Pydantic models in `config.py`:

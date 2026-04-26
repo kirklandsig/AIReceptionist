@@ -83,6 +83,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter (default `None` keeps the prior no-attendee behavior).
 
 ### Fixed
+- **SIP transfer URI configurable** (issue #6, reported by @trinicomcom):
+  the `transfer_call` tool used to hardcode `tel:{number}` for the
+  LiveKit SIP transfer URI. That works for Twilio/Telnyx/most BYOC, but
+  Asterisk classic `sip.conf` (chan_sip) rejects tel-URIs and the
+  transfer would fail. Added a `sip.transfer_uri_template` field
+  (default `"tel:{number}"`, validators require `{number}` placeholder)
+  so Asterisk users can set `"sip:{number}"` or
+  `"sip:{number}@your-pbx"`. Default behavior is unchanged for everyone
+  on Twilio/Telnyx/BYOC.
 - **OAuth scope**: added `https://www.googleapis.com/auth/calendar.freebusy`
   alongside `calendar.events`. The events scope alone is insufficient for
   `freeBusy.query` (Google treats freeBusy as a calendar-level operation,

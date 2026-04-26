@@ -1,5 +1,6 @@
 import pytest
 from pathlib import Path
+from pydantic import ValidationError
 from receptionist.config import BusinessConfig, load_config
 
 
@@ -492,3 +493,71 @@ def test_buffer_placement_validator_accepts_valid():
         buffer_placement="both",
     )
     assert cfg.buffer_placement == "both"
+
+
+# ---- SIP transfer URI tests (issue #6) ----
+
+def test_sip_transfer_uri_default_is_tel():
+    """Default keeps existing behavior — tel:{number} for Twilio/Telnyx/most BYOC."""
+    from receptionist.config import SipConfig
+    cfg = SipConfig()
+    assert cfg.transfer_uri_template == "tel:{number}"
+    assert cfg.transfer_uri_template.format(number="+15551234567") == "tel:+15551234567"
+
+
+def test_sip_transfer_uri_accepts_sip_scheme_for_asterisk():
+    """Asterisk classic sip.conf rejects tel-URIs; sip:{number} is the workaround."""
+    from receptionist.config import SipConfig
+    cfg = SipConfig(transfer_uri_template="sip:{number}")
+    assert cfg.transfer_uri_template.format(number="2001") == "sip:2001"
+
+
+def test_sip_transfer_uri_accepts_full_uri_with_host():
+    """Full sip:user@host form for transfers to a remote SIP PBX."""
+    from receptionist.config import SipConfig
+    cfg = SipConfig(transfer_uri_template="sip:{number}@asterisk.local")
+    assert cfg.transfer_uri_template.format(number="2001") == "sip:2001@asterisk.local"
+
+
+def test_sip_transfer_uri_rejects_template_without_number_placeholder():
+    """Misconfigured template without {number} would silently dial the literal string."""
+    from receptionist.config import SipConfig
+    with pytest.raises(ValidationError, match="number.*placeholder"):
+        SipConfig(transfer_uri_template="tel:5551234567")  # forgot {number}
+
+
+def test_sip_transfer_uri_rejects_extra_fields():
+    """Extra fields in the sip section should fail loudly so typos don't pass silently."""
+    from receptionist.config import SipConfig
+    with pytest.raises(ValidationError):
+        SipConfig(transfer_uri_template="tel:{number}", garbage="field")
+
+
+def test_business_config_default_sip_when_omitted():
+    """Backwards compat: configs without a `sip:` section get the default tel: template."""
+    from receptionist.config import BusinessConfig
+    yaml_text = """
+business:
+  name: "Test"
+  type: "office"
+  timezone: "America/New_York"
+greeting: "Hi"
+personality: "friendly"
+hours:
+  monday:    { open: "09:00", close: "17:00" }
+  tuesday:   closed
+  wednesday: closed
+  thursday:  closed
+  friday:    closed
+  saturday:  closed
+  sunday:    closed
+after_hours_message: "We are closed."
+routing: []
+faqs: []
+messages:
+  channels:
+    - type: "file"
+      file_path: "./messages/test/"
+"""
+    cfg = BusinessConfig.from_yaml_string(yaml_text)
+    assert cfg.sip.transfer_uri_template == "tel:{number}"

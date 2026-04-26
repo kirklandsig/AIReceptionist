@@ -75,6 +75,30 @@ messages: { channels: [{type: "file", file_path: "./m/"}] }
     assert token_file.read_text(encoding="utf-8") == '{"token": "abc"}'
 
 
+@pytest.mark.parametrize("evil_slug", [
+    "../../etc/passwd",
+    "../etc",
+    "../../",
+    "biz/with/slash",
+    "biz with space",
+    "biz;rm -rf /",
+    "biz\x00null",
+    "..\\..\\Windows",
+])
+def test_main_setup_rejects_traversal_in_business_slug(evil_slug, tmp_path, monkeypatch, capsys):
+    """The setup CLI must refuse business slugs with anything beyond [a-zA-Z0-9_-].
+
+    Without this guard, `python -m receptionist.booking setup ../../etc/passwd`
+    would resolve into config/businesses/../../etc/passwd.yaml. Admin-only,
+    but the validation matches the agent's job-metadata regex.
+    """
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["setup", evil_slug])
+    captured = capsys.readouterr()
+    assert "Invalid business slug" in captured.err
+
+
 def test_main_setup_missing_oauth_client_json_helpful_error(tmp_path, monkeypatch, capsys):
     """If business config exists but the operator hasn't placed the OAuth
     client JSON yet, the CLI prints actionable guidance."""

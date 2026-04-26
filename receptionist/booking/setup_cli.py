@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import stat
 import sys
 from pathlib import Path
@@ -17,6 +18,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.freebusy",
 ]
 DEFAULT_CONFIG_DIR = Path("config/businesses")
+
+# Same shape as agent.py's RECEPTIONIST_CONFIG / job-metadata validation.
+# Without it, `python -m receptionist.booking setup ../../etc/passwd` would
+# resolve as a path against config/businesses/ — admin-only command but
+# trivial to lock down.
+_VALID_BUSINESS_SLUG = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 def _configure_logging(verbose: bool) -> None:
@@ -43,6 +50,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command != "setup":
         parser.error(f"Unknown command: {args.command}")
+        return 2
+
+    if not _VALID_BUSINESS_SLUG.match(args.business):
+        parser.error(
+            f"Invalid business slug: {args.business!r}. "
+            f"Must match {_VALID_BUSINESS_SLUG.pattern} (alphanumerics, dash, underscore)."
+        )
         return 2
 
     return _run_setup(args.business)

@@ -181,3 +181,78 @@ def test_prompt_single_language_redirects_on_foreign_input():
     assert "continue in English" in prompt or "ask them to continue" in prompt.lower()
     # Must explicitly warn against mirroring the caller's language
     assert "do not" in prompt.lower() or "don't" in prompt.lower()
+
+
+# ---- calendar block tests ----
+
+
+CALENDAR_YAML = """
+business: { name: "Test Dental", type: "dental office", timezone: "America/New_York" }
+voice: { voice_id: "marin" }
+languages: { primary: "en", allowed: ["en"] }
+greeting: "Thank you for calling Test Dental."
+personality: "You are a friendly receptionist."
+hours:
+  monday: { open: "09:00", close: "17:00" }
+  tuesday: closed
+  wednesday: closed
+  thursday: closed
+  friday: closed
+  saturday: closed
+  sunday: closed
+after_hours_message: "We are currently closed."
+routing: []
+faqs: []
+messages:
+  channels:
+    - type: "file"
+      file_path: "./messages/test/"
+calendar:
+  enabled: false
+  auth:
+    type: "service_account"
+    service_account_file: "/tmp/fake.json"
+  appointment_duration_minutes: 30
+  buffer_minutes: 15
+  buffer_placement: "after"
+  booking_window_days: 30
+  earliest_booking_hours_ahead: 2
+"""
+
+
+def test_prompt_omits_calendar_block_when_calendar_disabled():
+    """When calendar.enabled is False, the prompt does NOT include the CALENDAR section."""
+    config = BusinessConfig.from_yaml_string(CALENDAR_YAML)
+    prompt = build_system_prompt(config)
+    assert "CALENDAR" not in prompt
+    assert "check_availability" not in prompt
+    assert "book_appointment" not in prompt
+
+
+def test_prompt_includes_calendar_block_when_enabled(tmp_path):
+    """When calendar.enabled is True and the auth file exists, prompt includes CALENDAR section."""
+    sa_file = tmp_path / "sa.json"
+    sa_file.write_text("{}", encoding="utf-8")
+    yaml_text = CALENDAR_YAML.replace(
+        "enabled: false",
+        "enabled: true",
+    ).replace(
+        "/tmp/fake.json",
+        str(sa_file).replace("\\", "/"),  # forward slashes for YAML compat on Windows
+    )
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    prompt = build_system_prompt(config)
+    assert "CALENDAR" in prompt
+    assert "check_availability" in prompt
+    assert "book_appointment" in prompt
+    assert "confirm" in prompt.lower()
+    assert "fabricate" in prompt.lower() or "never make up" in prompt.lower()
+    # Email-invite instruction: agent must ask, not assume
+    assert "calendar invite" in prompt.lower()
+    assert "caller_email" in prompt
+    # "never make up" + "email address" — wrapped across lines in the prompt
+    assert "never make up" in prompt.lower()
+    assert "email address" in prompt.lower()
+    # Phone + email read-back discipline (digit-by-digit and letter-by-letter)
+    assert "digit-by-digit" in prompt.lower() or "digit by digit" in prompt.lower()
+    assert "spell out" in prompt.lower() or "letter-by-letter" in prompt.lower()

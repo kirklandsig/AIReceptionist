@@ -1,14 +1,16 @@
 # tests/transcript/test_metadata.py
 from __future__ import annotations
 
-from receptionist.transcript.metadata import CallMetadata
+from receptionist.transcript.metadata import CallMetadata, VALID_OUTCOMES
 
 
 def test_metadata_defaults():
     md = CallMetadata(call_id="room-1", business_name="Acme")
     assert md.start_ts
     assert md.end_ts is None
-    assert md.outcome is None
+    assert md.outcomes == set()
+    assert md.appointment_booked is False
+    assert md.appointment_details is None
     assert md.faqs_answered == []
     assert md.languages_detected == set()
 
@@ -17,15 +19,25 @@ def test_metadata_finalize_sets_end_and_hung_up():
     md = CallMetadata(call_id="room-1", business_name="Acme")
     md.mark_finalized()
     assert md.end_ts is not None
-    assert md.outcome == "hung_up"
+    assert md.outcomes == {"hung_up"}
     assert md.duration_seconds is not None
     assert md.duration_seconds >= 0
 
 
-def test_metadata_finalize_preserves_existing_outcome():
-    md = CallMetadata(call_id="room-1", business_name="Acme", outcome="transferred")
+def test_metadata_finalize_preserves_existing_outcomes():
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.outcomes.add("transferred")
     md.mark_finalized()
-    assert md.outcome == "transferred"
+    assert md.outcomes == {"transferred"}  # hung_up NOT added when outcomes non-empty
+
+
+def test_metadata_multi_outcome():
+    """A call can be both transferred AND have an appointment booked."""
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.outcomes.add("transferred")
+    md.outcomes.add("appointment_booked")
+    md.mark_finalized()
+    assert md.outcomes == {"transferred", "appointment_booked"}
 
 
 def test_metadata_duration_computed_from_iso_timestamps():
@@ -38,6 +50,14 @@ def test_metadata_duration_computed_from_iso_timestamps():
     assert md.duration_seconds == 150.0
 
 
+def test_metadata_to_dict_outcomes_sorted_list():
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.outcomes.add("transferred")
+    md.outcomes.add("appointment_booked")
+    d = md.to_dict()
+    assert d["outcomes"] == ["appointment_booked", "transferred"]  # alphabetically sorted
+
+
 def test_metadata_to_dict_sorts_languages():
     md = CallMetadata(
         call_id="room-1", business_name="Acme",
@@ -48,3 +68,19 @@ def test_metadata_to_dict_sorts_languages():
     assert d["languages_detected"] == ["en", "es"]
     assert d["faqs_answered"] == ["Where are you located?"]
     assert d["call_id"] == "room-1"
+
+
+def test_metadata_to_dict_includes_new_fields():
+    md = CallMetadata(
+        call_id="room-1", business_name="Acme",
+        appointment_booked=True,
+        appointment_details={"event_id": "abc", "start_iso": "2026-04-24T14:00:00-04:00"},
+    )
+    d = md.to_dict()
+    assert d["appointment_booked"] is True
+    assert d["appointment_details"]["event_id"] == "abc"
+
+
+def test_valid_outcomes_is_expected_set():
+    """Regression: ensure the allowed outcome vocabulary matches the design spec."""
+    assert VALID_OUTCOMES == {"hung_up", "message_taken", "transferred", "appointment_booked"}

@@ -7,7 +7,11 @@ from receptionist.config import EmailChannel as EmailChannelConfig, EmailConfig
 from receptionist.email.sender import EmailSendError, EmailSender
 from receptionist.email.smtp import SMTPSender
 from receptionist.email.resend import ResendSender
-from receptionist.email.templates import build_message_email, build_call_end_email
+from receptionist.email.templates import (
+    build_booking_email,
+    build_call_end_email,
+    build_message_email,
+)
 from receptionist.messaging.models import Message, DispatchContext
 from receptionist.messaging.retry import retry_with_backoff, RetryPolicy
 from receptionist.transcript.metadata import CallMetadata
@@ -45,6 +49,12 @@ class EmailChannel:
         self, metadata: CallMetadata, context: DispatchContext
     ) -> None:
         subject, body_text, body_html = build_call_end_email(metadata, context)
+        await self._send_with_retry(subject, body_text, body_html)
+
+    async def deliver_booking(
+        self, metadata: CallMetadata, context: DispatchContext
+    ) -> None:
+        subject, body_text, body_html = build_booking_email(metadata, context)
         await self._send_with_retry(subject, body_text, body_html)
 
     async def _send_with_retry(self, subject: str, body_text: str, body_html: str) -> None:

@@ -225,6 +225,7 @@ class EmailSenderConfig(BaseModel):
 class EmailTriggers(BaseModel):
     on_message: bool = True
     on_call_end: bool = False
+    on_booking: bool = False
 
 
 class EmailConfig(BaseModel):
@@ -246,6 +247,62 @@ class RetentionConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Calendar — Google Calendar integration
+# ---------------------------------------------------------------------------
+
+class ServiceAccountAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["service_account"]
+    service_account_file: str
+
+
+class OAuthAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["oauth"]
+    oauth_token_file: str
+
+
+CalendarAuth = Annotated[
+    Union[ServiceAccountAuth, OAuthAuth],
+    Field(discriminator="type"),
+]
+
+
+class CalendarConfig(BaseModel):
+    enabled: bool
+    calendar_id: str = "primary"
+    auth: CalendarAuth
+    appointment_duration_minutes: int = Field(default=30, gt=0)
+    buffer_minutes: int = Field(default=15, ge=0)
+    buffer_placement: Literal["before", "after", "both"] = "after"
+    booking_window_days: int = Field(default=30, gt=0)
+    earliest_booking_hours_ahead: int = Field(default=2, ge=0)
+
+    @model_validator(mode="after")
+    def validate_auth_file_exists(self) -> CalendarConfig:
+        """If enabled, require the configured auth file to exist on disk.
+
+        Fail fast at agent startup, not at first call.
+        """
+        if not self.enabled:
+            return self
+        path_str = (
+            self.auth.service_account_file
+            if isinstance(self.auth, ServiceAccountAuth)
+            else self.auth.oauth_token_file
+        )
+        path = Path(path_str)
+        if not path.exists():
+            raise ValueError(
+                f"calendar auth file not found: {path_str}. "
+                f"Did you run `python -m receptionist.booking setup <business-slug>`?"
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Top-level
 # ---------------------------------------------------------------------------
 
@@ -263,16 +320,29 @@ class BusinessConfig(BaseModel):
     recording: RecordingConfig | None = None
     transcripts: TranscriptsConfig | None = None
     email: EmailConfig | None = None
+    calendar: CalendarConfig | None = None
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
     @model_validator(mode="after")
     def validate_cross_section(self) -> BusinessConfig:
         needs_email = any(c.type == "email" for c in self.messages.channels)
-        if self.email and self.email.triggers.on_call_end:
-            needs_email = True
+        if self.email:
+            if self.email.triggers.on_call_end:
+                needs_email = True
+            if self.email.triggers.on_booking:
+                needs_email = True
         if needs_email and self.email is None:
             raise ValueError(
-                "email channel or on_call_end trigger is configured but no top-level `email` section is present"
+                "email channel or on_call_end/on_booking trigger is configured but "
+                "no top-level `email` section is present"
+            )
+        # NEW: on_booking trigger requires calendar enabled
+        if self.email and self.email.triggers.on_booking and (
+            self.calendar is None or not self.calendar.enabled
+        ):
+            raise ValueError(
+                "email.triggers.on_booking is true but calendar is not enabled. "
+                "Enable calendar or disable the on_booking trigger."
             )
         return self
 

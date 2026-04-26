@@ -347,3 +347,148 @@ messages:
 """
     with pytest.raises(Exception, match="email"):
         BusinessConfig.from_yaml_string(yaml_text)
+
+
+# ---- calendar config tests ----
+
+
+def _calendar_yaml_fragment(auth_block: str) -> str:
+    """Returns a full v2 YAML with calendar enabled and the given auth block."""
+    return f"""
+business: {{ name: "X", type: "x", timezone: "America/New_York" }}
+voice: {{ voice_id: "marin" }}
+languages: {{ primary: "en", allowed: ["en"] }}
+greeting: "Hi"
+personality: "Nice"
+hours: {{ monday: closed, tuesday: closed, wednesday: closed, thursday: closed, friday: closed, saturday: closed, sunday: closed }}
+after_hours_message: "Closed"
+routing: []
+faqs: []
+messages: {{ channels: [{{type: "file", file_path: "./m/"}}] }}
+calendar:
+  enabled: true
+  calendar_id: "primary"
+  {auth_block}
+  appointment_duration_minutes: 30
+  buffer_minutes: 15
+  buffer_placement: "after"
+  booking_window_days: 30
+  earliest_booking_hours_ahead: 2
+"""
+
+
+def _yaml_safe(p) -> str:
+    """Convert a Path/str to a YAML-double-quote-safe form (forward slashes)."""
+    return str(p).replace("\\", "/")
+
+
+def test_calendar_service_account_auth_requires_file(tmp_path):
+    """calendar.enabled=True + service_account auth: file must exist."""
+    nonexistent = tmp_path / "sa.json"
+    yaml_text = _calendar_yaml_fragment(
+        f"auth: {{ type: \"service_account\", service_account_file: \"{_yaml_safe(nonexistent)}\" }}"
+    )
+    with pytest.raises(Exception, match="calendar auth file not found"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_calendar_service_account_auth_with_existing_file(tmp_path):
+    sa_file = tmp_path / "sa.json"
+    sa_file.write_text('{"dummy": "content"}', encoding="utf-8")
+    yaml_text = _calendar_yaml_fragment(
+        f"auth: {{ type: \"service_account\", service_account_file: \"{_yaml_safe(sa_file)}\" }}"
+    )
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.calendar.enabled is True
+    assert config.calendar.auth.type == "service_account"
+    assert config.calendar.auth.service_account_file == _yaml_safe(sa_file)
+    assert config.calendar.buffer_placement == "after"
+
+
+def test_calendar_oauth_auth_with_existing_file(tmp_path):
+    token_file = tmp_path / "oauth.json"
+    token_file.write_text('{"token": "x"}', encoding="utf-8")
+    yaml_text = _calendar_yaml_fragment(
+        f"auth: {{ type: \"oauth\", oauth_token_file: \"{_yaml_safe(token_file)}\" }}"
+    )
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.calendar.auth.type == "oauth"
+
+
+def test_calendar_extra_fields_rejected(tmp_path):
+    """ConfigDict(extra=forbid) on auth variants: extra fields cause ValidationError."""
+    sa_file = tmp_path / "sa.json"
+    sa_file.write_text("{}", encoding="utf-8")
+    yaml_text = _calendar_yaml_fragment(
+        f"auth: {{ type: \"service_account\", "
+        f"service_account_file: \"{_yaml_safe(sa_file)}\", "
+        f"oauth_token_file: \"/fake/path\" }}"
+    )
+    with pytest.raises(Exception):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_calendar_disabled_skips_file_check():
+    """If calendar.enabled is False, auth file existence is not checked."""
+    yaml_text = """
+business: { name: "X", type: "x", timezone: "America/New_York" }
+voice: { voice_id: "marin" }
+languages: { primary: "en", allowed: ["en"] }
+greeting: "Hi"
+personality: "Nice"
+hours: { monday: closed, tuesday: closed, wednesday: closed, thursday: closed, friday: closed, saturday: closed, sunday: closed }
+after_hours_message: "Closed"
+routing: []
+faqs: []
+messages: { channels: [{type: "file", file_path: "./m/"}] }
+calendar:
+  enabled: false
+  auth:
+    type: "service_account"
+    service_account_file: "/does/not/exist/sa.json"
+"""
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.calendar.enabled is False
+
+
+def test_on_booking_trigger_requires_calendar_enabled(tmp_path):
+    sa_file = tmp_path / "sa.json"
+    sa_file.write_text("{}", encoding="utf-8")
+    yaml_text = f"""
+business: {{ name: "X", type: "x", timezone: "America/New_York" }}
+voice: {{ voice_id: "marin" }}
+languages: {{ primary: "en", allowed: ["en"] }}
+greeting: "Hi"
+personality: "Nice"
+hours: {{ monday: closed, tuesday: closed, wednesday: closed, thursday: closed, friday: closed, saturday: closed, sunday: closed }}
+after_hours_message: "Closed"
+routing: []
+faqs: []
+messages:
+  channels:
+    - type: "file"
+      file_path: "./m/"
+    - type: "email"
+      to: ["a@b.c"]
+email:
+  from: "noreply@example.com"
+  sender:
+    type: "smtp"
+    smtp: {{ host: "h", port: 587, username: "u", password: "p", use_tls: true }}
+  triggers:
+    on_booking: true
+# NO calendar section — validation should fail
+"""
+    with pytest.raises(Exception, match="on_booking"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_buffer_placement_validator_accepts_valid():
+    from receptionist.config import CalendarConfig, ServiceAccountAuth
+    cfg = CalendarConfig(
+        enabled=False,
+        calendar_id="primary",
+        auth=ServiceAccountAuth(type="service_account", service_account_file="/tmp/sa.json"),
+        buffer_placement="both",
+    )
+    assert cfg.buffer_placement == "both"

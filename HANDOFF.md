@@ -803,4 +803,59 @@ Floor bumps: `livekit-agents>=1.5.0`, `livekit-plugins-openai>=1.5.0`.
 
 - Design spec: `docs/superpowers/specs/2026-04-23-call-artifacts-and-delivery-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-04-23-call-artifacts-and-delivery.md`
+
+---
+
+## Addendum — 2026-04-24: Google Calendar integration (issue #3)
+
+Adds in-call appointment booking via Google Calendar. See
+`documentation/architecture.md` for the authoritative architecture post-
+this-change; this addendum summarizes what shipped.
+
+### Summary
+- Two new function tools on `Receptionist`: `check_availability` and
+  `book_appointment`.
+- New `receptionist/booking/` subpackage (auth, client wrapper,
+  pure availability logic, booking with race detection, setup CLI).
+- Both service account and OAuth 2.0 auth paths supported. Setup CLI
+  (`python -m receptionist.booking setup <business>`) walks a business
+  owner through the OAuth browser consent flow.
+- New `on_booking` email trigger using the existing EmailChannel
+  dispatcher — notifies staff when an appointment lands.
+- Session-scoped slot cache (`Receptionist._offered_slots`) enforces
+  "check-before-book" architecturally — the LLM cannot book a slot it
+  wasn't offered.
+- UNVERIFIED tag in event descriptions: staff see the caller's identity
+  was not verified.
+
+### BREAKING change bundled with this work
+`CallMetadata.outcome: str | None` → `CallMetadata.outcomes: set[str]`.
+Calls with multiple outcomes (e.g. transfer + book) now retain both.
+Email subjects render as "Transferred + Appointment booked" when applicable.
+`_OUTCOME_PRIORITY` dict deleted; `_add_outcome` replaces `_set_outcome`.
+
+### Dependencies
+Added: `google-api-python-client>=2.140`, `google-auth>=2.32`,
+`google-auth-oauthlib>=1.2`, `python-dateutil>=2.9`. All Apache 2.0.
+
+### Test coverage
+Unit tests per subpackage module (~35 new tests). One integration test
+(`tests/integration/test_booking_flow.py`) covering record_appointment_booked
+→ on_call_ended → on_booking email fan-out. Browser OAuth flow is manual-only
+(`tests/MANUAL.md` section).
+
+### Known limitations in v1 (tracked for follow-ups)
+- No cancellations (go via `take_message` for now)
+- No rescheduling
+- No recurring appointments
+- No multi-provider round-robin
+- No SMS confirmation / caller verification
+- No payment integration
+- No Outlook / Microsoft 365 / Apple Calendar
+- No reminders (would need an SMS provider)
+
+### Reference documents
+- Design spec: `docs/superpowers/specs/2026-04-24-google-calendar-integration-design.md`
+- Implementation plan: `docs/superpowers/plans/2026-04-24-google-calendar-integration.md`
+- Setup guide: `documentation/google-calendar-setup.md`
 - Current architecture: `documentation/architecture.md`

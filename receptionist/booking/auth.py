@@ -77,10 +77,30 @@ def _build_oauth(auth: OAuthAuth):
     return creds
 
 
+_WINDOWS_ACL_WARNED: set[str] = set()
+
+
 def _check_token_permissions(path: Path) -> None:
-    """Reject OAuth token files with world/group-readable permissions on Unix."""
+    """Reject OAuth token files with world/group-readable permissions on Unix.
+
+    On Windows, POSIX mode bits don't apply and stdlib has no NTFS-ACL
+    inspection without an external lib (pywin32). Instead of silently
+    no-op'ing, log a one-shot warning per token path so operators are
+    nudged to put the file somewhere only their user account can read
+    (e.g. %USERPROFILE%\\.aireceptionist\\secrets\\, not C:\\temp\\).
+    """
     if sys.platform == "win32":
-        return  # Windows doesn't have POSIX mode bits
+        key = str(path.resolve())
+        if key not in _WINDOWS_ACL_WARNED:
+            _WINDOWS_ACL_WARNED.add(key)
+            logger.warning(
+                "Windows: OAuth token ACL not enforced for %s. "
+                "stdlib can't inspect NTFS ACLs; ensure the token file lives "
+                "in a user-only directory (e.g. under %%USERPROFILE%%) and "
+                "is not on a shared drive.",
+                path,
+            )
+        return
     mode = path.stat().st_mode
     # Bits we care about: group + other read/write/exec. Owner bits are fine.
     if mode & (stat.S_IRWXG | stat.S_IRWXO):

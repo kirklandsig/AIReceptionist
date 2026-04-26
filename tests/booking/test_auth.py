@@ -140,3 +140,28 @@ def test_build_credentials_oauth_accepts_0600(tmp_path):
     ):
         auth = OAuthAuth(type="oauth", oauth_token_file=str(token_file))
         build_credentials(auth)
+
+
+def test_windows_oauth_token_logs_acl_warning_once(tmp_path, caplog):
+    """On Windows, _check_token_permissions can't enforce POSIX bits, so it
+    instead logs a one-shot warning per token path nudging the operator to
+    keep the file in a user-only directory.
+    """
+    import receptionist.booking.auth as auth_mod
+    token_file = tmp_path / "oauth.json"
+    token_file.write_text('{"refresh_token": "r"}', encoding="utf-8")
+
+    # Reset the warned-set so this test is order-independent
+    auth_mod._WINDOWS_ACL_WARNED.clear()
+
+    with patch.object(auth_mod.sys, "platform", "win32"), \
+         patch("receptionist.booking.auth.Credentials.from_authorized_user_file",
+               return_value=MagicMock(valid=True)):
+        with caplog.at_level("WARNING", logger="receptionist"):
+            auth = OAuthAuth(type="oauth", oauth_token_file=str(token_file))
+            build_credentials(auth)
+            # Second call shouldn't double-log (one-shot per resolved path)
+            build_credentials(auth)
+
+    warnings = [r for r in caplog.records if "ACL not enforced" in r.message]
+    assert len(warnings) == 1, f"expected exactly one ACL warning, got {len(warnings)}"

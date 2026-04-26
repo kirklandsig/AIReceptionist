@@ -131,53 +131,47 @@ class CallLifecycle:
         # Fan out email triggers
         if self.config.email:
             if self.config.email.triggers.on_call_end:
-                await self._fire_call_end_email(artifact, transcript_result)
+                await self._fire_email_trigger(
+                    "call_end", lambda ch, ctx: ch.deliver_call_end(self.metadata, ctx),
+                    artifact, transcript_result,
+                )
             if self.config.email.triggers.on_booking and self.metadata.appointment_booked:
-                await self._fire_booking_email(artifact, transcript_result)
-
-    async def _fire_call_end_email(
-        self,
-        artifact: RecordingArtifact | None,
-        transcript_result: TranscriptWriteResult | None,
-    ) -> None:
-        """Call-end email goes to every EmailChannel target in messages.channels."""
-        if not self._email_channels:
-            logger.info("on_call_end trigger configured but no email channel in messages.channels")
-            return
-        context = self._build_dispatch_context(artifact, transcript_result)
-        for channel in self._email_channels:
-            try:
-                await channel.deliver_call_end(self.metadata, context)
-            except Exception as e:
-                logger.error(
-                    "Call-end email failed: %s", e,
-                    extra={
-                        "call_id": self.metadata.call_id,
-                        "business_name": self.metadata.business_name,
-                        "component": "lifecycle.call_end_email",
-                    },
+                await self._fire_email_trigger(
+                    "booking", lambda ch, ctx: ch.deliver_booking(self.metadata, ctx),
+                    artifact, transcript_result,
                 )
 
-    async def _fire_booking_email(
+    async def _fire_email_trigger(
         self,
+        trigger_name: str,
+        deliver: Any,  # callable: (EmailChannel, DispatchContext) -> Awaitable[None]
         artifact: RecordingArtifact | None,
         transcript_result: TranscriptWriteResult | None,
     ) -> None:
-        """Booking email — fires only when metadata.appointment_booked is true."""
+        """Fan out one trigger across the cached email channels.
+
+        `trigger_name` is used in the no-channels log line and component label.
+        `deliver` is the bound EmailChannel method to call (deliver_call_end
+        or deliver_booking) — kept as a callable so this helper doesn't need
+        to know which one fires.
+        """
         if not self._email_channels:
-            logger.info("on_booking trigger configured but no email channel in messages.channels")
+            logger.info(
+                "on_%s trigger configured but no email channel in messages.channels",
+                trigger_name,
+            )
             return
         context = self._build_dispatch_context(artifact, transcript_result)
         for channel in self._email_channels:
             try:
-                await channel.deliver_booking(self.metadata, context)
+                await deliver(channel, context)
             except Exception as e:
                 logger.error(
-                    "Booking email failed: %s", e,
+                    "%s email failed: %s", trigger_name.replace("_", "-").capitalize(), e,
                     extra={
                         "call_id": self.metadata.call_id,
                         "business_name": self.metadata.business_name,
-                        "component": "lifecycle.booking_email",
+                        "component": f"lifecycle.{trigger_name}_email",
                     },
                 )
 

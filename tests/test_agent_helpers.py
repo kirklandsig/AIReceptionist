@@ -60,3 +60,75 @@ def test_resolve_passthrough_for_bare_weekday(sun_apr_26_2026):
 def test_resolve_case_insensitive(sun_apr_26_2026):
     assert _resolve_relative_date("TOMORROW", sun_apr_26_2026) == "April 27 2026"
     assert _resolve_relative_date("Next Monday", sun_apr_26_2026) == "May 04 2026"
+
+
+# ---- _offered_slot_batches eviction tests (memory cap) ----
+
+def _bare_receptionist():
+    """Construct a Receptionist with the minimum scaffolding to exercise the
+    slot-cache helpers. Avoids the LiveKit Agent superclass init by
+    instantiating the helpers off a SimpleNamespace stand-in.
+    """
+    from collections import deque
+    from types import SimpleNamespace
+    from receptionist.agent import Receptionist
+    obj = SimpleNamespace()
+    obj._offered_slot_batches = deque(maxlen=3)
+    # Bind the methods to the namespace so we can call them directly
+    obj._record_offered_slots = Receptionist._record_offered_slots.__get__(obj)
+    obj._slot_was_offered = Receptionist._slot_was_offered.__get__(obj)
+    obj._reset_offered_slots = Receptionist._reset_offered_slots.__get__(obj)
+    return obj
+
+
+def test_offered_slots_basic_record_and_lookup():
+    r = _bare_receptionist()
+    r._record_offered_slots(["2026-04-28T10:00:00-04:00", "2026-04-28T11:00:00-04:00"])
+    assert r._slot_was_offered("2026-04-28T10:00:00-04:00")
+    assert r._slot_was_offered("2026-04-28T11:00:00-04:00")
+    assert not r._slot_was_offered("2026-04-28T15:00:00-04:00")
+
+
+def test_offered_slots_evicts_oldest_batch_after_three_check_availability_calls():
+    """deque(maxlen=3): the 4th batch evicts the 1st. Slots from the 1st
+    batch are no longer recognized; book_appointment would refuse them."""
+    r = _bare_receptionist()
+    r._record_offered_slots(["batch1-a", "batch1-b"])
+    r._record_offered_slots(["batch2-a", "batch2-b"])
+    r._record_offered_slots(["batch3-a"])
+    # 3 batches in cache, all still recognized
+    assert r._slot_was_offered("batch1-a")
+    assert r._slot_was_offered("batch2-a")
+    assert r._slot_was_offered("batch3-a")
+    # 4th batch evicts batch1
+    r._record_offered_slots(["batch4-a"])
+    assert not r._slot_was_offered("batch1-a")
+    assert not r._slot_was_offered("batch1-b")
+    assert r._slot_was_offered("batch2-a")  # still around
+    assert r._slot_was_offered("batch4-a")
+
+
+def test_offered_slots_reset_clears_and_seeds():
+    """After race recovery: reset wipes prior batches and seeds with the
+    fresh alternates only — old slots, even recent ones, are gone."""
+    r = _bare_receptionist()
+    r._record_offered_slots(["pre-1", "pre-2"])
+    r._record_offered_slots(["pre-3"])
+    r._reset_offered_slots(["fresh-a", "fresh-b"])
+    assert not r._slot_was_offered("pre-1")
+    assert not r._slot_was_offered("pre-3")
+    assert r._slot_was_offered("fresh-a")
+    assert r._slot_was_offered("fresh-b")
+
+
+def test_offered_slots_size_bounded_under_long_call():
+    """Memory cap regression: 100 batches must not grow the cache past 3."""
+    r = _bare_receptionist()
+    for i in range(100):
+        r._record_offered_slots([f"slot-{i}-{j}" for j in range(3)])
+    assert len(r._offered_slot_batches) == 3
+    # Only the last 3 batches are still queryable
+    assert r._slot_was_offered("slot-99-0")
+    assert r._slot_was_offered("slot-97-2")
+    assert not r._slot_was_offered("slot-50-0")
+    assert not r._slot_was_offered("slot-0-0")

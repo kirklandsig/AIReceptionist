@@ -901,3 +901,53 @@ discipline (#5) is our mitigation.
 
 **Final tally:** 198 tests passing, 2 Windows-skipped POSIX-permission
 checks (intentional). Manual gate complete.
+
+---
+
+## Addendum — 2026-04-26: Pre-distribution security audit + perf pass
+
+After PR #7 merged, ran a full security-and-optimization sweep before
+opening the project up to broader use. 11 commits landed on `main`
+between `7352469` and `939de92`. 256 tests passing (+58 from the start
+of the pass).
+
+### Security findings + fixes
+- **Setup CLI path-traversal**: `python -m receptionist.booking setup
+  ../../etc/passwd` previously resolved into a config path. Validator
+  added matching the rest of the codebase's `^[a-zA-Z0-9_-]+$`.
+- **Webhook URL schemes + private hosts**: `WebhookChannel.url` now
+  rejects non-http(s) schemes at config load and warns on loopback /
+  private / link-local hosts (AWS metadata endpoint, localhost, etc.).
+- **Caller-supplied text caps**: `take_message` and `book_appointment`
+  truncate caller free-text fields with logging. Prevents storage
+  bloat and Google's 8KB event description ceiling from being hit.
+- **Windows OAuth ACL**: was a silent no-op; now logs a one-shot
+  WARNING per token path nudging operators toward user-only dirs.
+- **`assert` -> explicit raise** in `recording/storage`, `recording/
+  egress`, `messaging/retry` — survives `python -O`.
+- **`CallMetadata.mark_finalized()`**: now logs WARNING instead of
+  swallowing `ValueError` on duration parsing.
+
+### Performance findings + fixes
+- **Cached per-call**: `Dispatcher` (was rebuilt per `take_message`),
+  `EmailChannel` instances (were rebuilt per email trigger).
+- **`_offered_slots` bounded**: replaced unbounded `set[str]` with a
+  `deque[frozenset[str]]` of `maxlen=3`. Memory-safe on long calls.
+- **Routing lookup O(1)**: dict-by-lowercased-name built at
+  `Receptionist.__init__`. FAQ matching deliberately stays linear
+  (bidirectional substring match doesn't fit a single dict).
+- **Lightweight imports hoisted** out of the deferred path; only the
+  `googleapiclient`-pulling chain still loads lazily.
+
+### Verified false alarms (didn't act on)
+- `.env` "tracked in git": NOT tracked, IS gitignored. Surveyor saw
+  the on-disk file and assumed.
+- `livekit-agents`/`google-auth` "version floor risk": speculative
+  without a CVE lookup; floors are recent.
+
+### Out of scope, left as future work
+- Test gaps in SIP transfer error paths, OAuth refresh failures,
+  recording egress failures.
+- Splitting the long `check_availability`/`book_appointment` methods.
+
+**Plan file**: `C:\Users\MDASR\.claude\plans\stateful-floating-fiddle.md`

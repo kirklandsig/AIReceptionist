@@ -63,8 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - System prompt (`prompts.py`) gains a CALENDAR section when
   `config.calendar.enabled: true` — describes the two tools, the
   verbal-confirmation convention, and the no-fabrication hard rule.
-- `Receptionist.__init__` gains `_offered_slots: set[str]` session cache +
-  lazily-constructed `_calendar_client`.
+- `Receptionist.__init__` gains a bounded `_offered_slot_batches:
+  deque[frozenset[str]]` (maxlen=3) session cache, a cached
+  `_dispatcher` for take_message, and a `_routing_by_name` dict for
+  case-insensitive O(1) department lookup. `_calendar_client` is still
+  lazily constructed on first calendar tool call.
 - New artifact directory: `secrets/<business>/` (gitignored) for calendar
   credentials — service account JSON keys and OAuth token files.
 - **Default voice model**: `gpt-realtime` → `gpt-realtime-1.5` (+7% instruction following, +10% alphanumeric transcription, +5% Big Bench Audio reasoning — same pricing)
@@ -106,6 +109,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "couldn't parse that date" for caller phrasings the prompt advertised
   as supported. Added `_resolve_relative_date()` that normalizes those
   phrases before parsing.
+- **Setup CLI now validates `business_slug`** with the same
+  `^[a-zA-Z0-9_-]+$` regex used elsewhere. `python -m receptionist.booking
+  setup ../../etc/passwd` previously would have resolved into a path
+  traversal attempt; now rejected by argparse with a clear error.
+- **`take_message` and `book_appointment` cap caller-supplied free-text**
+  fields (caller_name 200, callback_number 50, message 4000, notes
+  1000, caller_email 254). Truncation logged at INFO; staff can pull
+  the original from logs if needed. Prevents storage bloat and
+  Google's 8KB calendar event description ceiling from being hit.
+- **Webhook URL safety**: `WebhookChannel.url` now hard-rejects schemes
+  other than `http`/`https` at config load (no more `file://`,
+  `data:`, etc.) and warns when the host is loopback / private /
+  link-local (legitimate in dev but a common SSRF foot-gun in prod —
+  e.g. AWS metadata endpoint at `169.254.169.254`).
+- **Production code asserts replaced with explicit raises**:
+  `recording/storage.py`, `recording/egress.py`, `messaging/retry.py`
+  used `assert x is not None` patterns that are stripped under
+  `python -O`. Now raise `ValueError`/`RuntimeError` so optimized-mode
+  failures are debuggable.
+- **`CallMetadata.mark_finalized()`** now logs at WARNING when
+  `start_ts`/`end_ts` parsing fails instead of silently leaving
+  `duration_seconds` at `None`.
+- **Windows OAuth token ACL**: `_check_token_permissions` previously
+  returned silently on Windows. Now logs a one-shot WARNING per token
+  path nudging operators to put the file in a user-only directory
+  (stdlib has no NTFS-ACL inspection without `pywin32`, so a hard
+  guard would require an extra dep).
+
+### Performance
+- **`Dispatcher` and `EmailChannel` instances cached per call** instead
+  of reconstructed per `take_message` / per email trigger. Saves
+  filesystem walk + dict iteration on every invocation.
+- **`_offered_slots` is now bounded** — replaced unbounded `set[str]`
+  with `deque[frozenset[str]]` of `maxlen=3`. Prevents the cache from
+  growing without limit on long, chatty calls. Behavior unchanged at
+  the LLM level (only the most recent batch ever matters in practice).
+- **Routing lookup is now O(1)** via dict-by-lowercased-name built at
+  `Receptionist.__init__`. FAQ matching deliberately stays linear (its
+  bidirectional substring match doesn't fit a single dict).
+- **Lightweight imports hoisted** out of `check_availability` and
+  `book_appointment`. The `googleapiclient`-pulling chain stays
+  deferred so calendar-disabled businesses still skip the ~50MB import
+  cost.
 
 ### Security
 - OAuth token files enforced to `0600` permissions on Unix at agent startup

@@ -68,3 +68,94 @@ Each checkbox should be checked off in the PR description or release notes; unch
 - Python 3.14 may print compatibility warnings (use 3.11/3.12 for production)
 - `sip.phoneNumber` attribute may be absent on non-standard SIP trunks → caller appears as "Unknown" in emails (not a bug; documented fallback)
 - `S3` storage for transcripts is NOT supported (local only)
+
+---
+
+## Calendar integration (issue #3)
+
+Requires a test Google Workspace calendar or a personal gmail.com calendar
+set aside for testing. Do NOT test against a production firm calendar.
+
+### Setup
+
+- [ ] **Service account setup:**
+  - Create service account in Google Cloud Console
+  - Download JSON key
+  - Share test calendar with service account email
+  - Place key at `secrets/<test-business>/google-calendar-sa.json`
+  - Agent starts cleanly: `python -m receptionist.agent dev`
+
+- [ ] **OAuth setup:**
+  - Create OAuth client (Desktop app) in Google Cloud Console
+  - Download client JSON
+  - Place at `secrets/<test-business>/google-calendar-oauth-client.json`
+  - Run: `python -m receptionist.booking setup <test-business>`
+  - Browser opens, consent flow completes
+  - Token file written at `secrets/<test-business>/google-calendar-oauth.json`
+  - Verify permissions are `0600` on Unix: `ls -la secrets/<test-business>/google-calendar-oauth.json`
+  - Agent starts cleanly
+
+### Happy path
+
+- [ ] Place a call, ask "Can I book an appointment for Tuesday at 2 PM?"
+- [ ] Agent speaks back: "I found these available times..." with 1-3 options
+- [ ] Caller picks one: "2 PM works"
+- [ ] Agent confirms: "I'm booking you for <Tuesday> at 2:00 PM — can I confirm?"
+- [ ] Caller says yes
+- [ ] Agent says "You're all set" + confirms callback number
+- [ ] Event appears on the configured Google Calendar
+- [ ] Event summary: "Appointment: <caller name>"
+- [ ] Event description contains: "[via AI receptionist / UNVERIFIED]", caller
+      name, callback number, booked-at timestamp, call ID, Notes line
+
+### Race condition
+
+- [ ] On a fresh window, open Google Calendar UI manually
+- [ ] During a call, get to step "agent offers 3 slots"
+- [ ] While the agent is waiting for caller confirmation, manually create a
+      conflicting event on the calendar at one of the offered slots
+- [ ] Caller confirms that slot
+- [ ] Agent says "Unfortunately that slot just got taken — here are the
+      nearest alternatives" and lists new options
+- [ ] Caller picks a new one → books successfully
+
+### Constraints
+
+- [ ] Ask for a time less than `earliest_booking_hours_ahead` from now:
+      agent politely declines with the earliest-allowed time
+- [ ] Ask for a time outside business hours (e.g. Sunday): agent offers a
+      nearby weekday slot
+- [ ] Ask for a time beyond `booking_window_days`: agent politely declines
+
+### Multi-outcome
+
+- [ ] During a call, book an appointment AND ask to be transferred
+- [ ] After disconnect, check `transcripts/<business>/*.json`:
+      `metadata.outcomes` is `["appointment_booked", "transferred"]`
+      (sorted list)
+
+### on_booking email trigger
+
+- [ ] Enable `email.triggers.on_booking: true` in the test business YAML
+      (also ensure the `email:` section is populated)
+- [ ] Place a booking call end-to-end
+- [ ] Staff inbox receives "New appointment booked: +1555... — <time>"
+      email with the Google Calendar event link and UNVERIFIED disclaimer
+- [ ] Also enable `email.triggers.on_call_end: true` — verify BOTH emails
+      arrive (booking + call summary)
+
+### Error paths
+
+- [ ] Delete `secrets/<business>/google-calendar-sa.json` while agent is
+      running. Place a call, ask for availability. Agent should pivot to
+      "Can I take a message about your preferred time?" (calendar auth
+      error handled gracefully).
+- [ ] Block outbound HTTPS to Google. Ask for availability. Agent pivots
+      to take_message.
+- [ ] Revoke the service account's calendar sharing. Ask for availability.
+      Agent pivots to take_message (403 error path).
+
+### Cleanup
+
+- [ ] Delete the test events from Google Calendar after validation
+- [ ] Remove the test business config + secrets if desired

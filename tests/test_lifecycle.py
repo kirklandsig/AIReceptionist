@@ -29,33 +29,86 @@ def test_lifecycle_record_faq_populates_metadata(config):
     assert lifecycle.metadata.faqs_answered == ["hours", "insurance"]
 
 
-def test_lifecycle_record_transfer_sets_outcome(config):
+def test_lifecycle_record_transfer_adds_outcome(config):
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
     lifecycle.record_transfer("Front Desk")
     assert lifecycle.metadata.transfer_target == "Front Desk"
-    assert lifecycle.metadata.outcome == "transferred"
+    assert "transferred" in lifecycle.metadata.outcomes
 
 
-def test_lifecycle_record_message_taken_sets_outcome(config):
+def test_lifecycle_record_message_taken_adds_outcome(config):
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
     lifecycle.record_message_taken()
     assert lifecycle.metadata.message_taken is True
-    assert lifecycle.metadata.outcome == "message_taken"
+    assert "message_taken" in lifecycle.metadata.outcomes
 
 
-def test_lifecycle_transfer_overrides_message(config):
-    """If both fire (edge case), transferred wins (higher priority outcome)."""
+def test_lifecycle_record_appointment_booked_adds_outcome(config):
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
-    lifecycle.record_message_taken()
-    lifecycle.record_transfer("Front Desk")
-    assert lifecycle.metadata.outcome == "transferred"
+    details = {
+        "event_id": "evt123",
+        "start_iso": "2026-04-28T14:00:00-04:00",
+        "end_iso": "2026-04-28T14:30:00-04:00",
+        "html_link": "https://calendar.google.com/event?eid=abc",
+    }
+    lifecycle.record_appointment_booked(details)
+    assert lifecycle.metadata.appointment_booked is True
+    assert lifecycle.metadata.appointment_details == details
+    assert "appointment_booked" in lifecycle.metadata.outcomes
 
 
-def test_lifecycle_message_does_not_override_transfer(config):
+def test_lifecycle_multi_outcome_transfer_and_booking(config):
+    """A call can be both transferred AND book an appointment. Both outcomes recorded."""
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
     lifecycle.record_transfer("Front Desk")
+    lifecycle.record_appointment_booked({
+        "event_id": "e", "start_iso": "t1", "end_iso": "t2", "html_link": "url",
+    })
+    assert lifecycle.metadata.outcomes == {"transferred", "appointment_booked"}
+
+
+def test_lifecycle_add_outcome_rejects_unknown(config):
+    """Regression: _add_outcome must raise on outcomes not in VALID_OUTCOMES."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    with pytest.raises(ValueError, match="Unknown outcome"):
+        lifecycle._add_outcome("abducted_by_aliens")
+
+
+def test_lifecycle_add_outcome_does_not_demote(config):
+    """Set semantics: re-adding any outcome (including hung_up) is a no-op
+    that does not 'demote' or remove anything already in outcomes."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_transfer("Front Desk")
+    lifecycle._add_outcome("hung_up")  # add hung_up to a transferred call
+    # transferred must still be present; sets don't displace
+    assert "transferred" in lifecycle.metadata.outcomes
+    assert "hung_up" in lifecycle.metadata.outcomes
+
+
+def test_lifecycle_appointment_booked_bool_mirrors_outcomes(config):
+    """Regression: when record_appointment_booked fires, both the bool flag
+    and the outcomes set must agree. Prevents drift between the two
+    sources of truth (mirror field vs. outcomes membership)."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_appointment_booked({
+        "event_id": "e", "start_iso": "s", "end_iso": "x", "html_link": "u",
+    })
+    # Both signals must be true and consistent
+    assert lifecycle.metadata.appointment_booked is True
+    assert "appointment_booked" in lifecycle.metadata.outcomes
+    assert lifecycle.metadata.appointment_booked == (
+        "appointment_booked" in lifecycle.metadata.outcomes
+    )
+
+
+def test_outcomes_is_a_set_not_a_string(config):
+    """Regression guard against reverting to the old priority-based single-outcome shape."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    assert isinstance(lifecycle.metadata.outcomes, set)
+    # Must support multi-element population
+    lifecycle.record_transfer("Front Desk")
     lifecycle.record_message_taken()
-    assert lifecycle.metadata.outcome == "transferred"
+    assert len(lifecycle.metadata.outcomes) == 2
 
 
 @pytest.mark.asyncio
@@ -63,13 +116,12 @@ async def test_lifecycle_on_call_ended_finalizes_metadata(config):
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
     await lifecycle.on_call_ended()
     assert lifecycle.metadata.end_ts is not None
-    assert lifecycle.metadata.outcome == "hung_up"  # no earlier event
+    assert lifecycle.metadata.outcomes == {"hung_up"}
     assert lifecycle.metadata.duration_seconds is not None
 
 
 @pytest.mark.asyncio
 async def test_lifecycle_on_call_ended_writes_transcript(tmp_path, config):
-    # Override transcripts to enabled + point at tmp_path
     from receptionist.config import TranscriptsConfig, TranscriptStorageConfig
     config = config.model_copy(update={
         "transcripts": TranscriptsConfig(

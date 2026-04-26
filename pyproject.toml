@@ -19,6 +19,10 @@ dependencies = [
     "httpx>=0.27",
     "aioboto3>=13.0",
     "aiofiles>=23.0",
+    "google-api-python-client>=2.140",
+    "google-auth>=2.32",
+    "google-auth-oauthlib>=1.2",
+    "python-dateutil>=2.9",
 ]
 
 [project.optional-dependencies]

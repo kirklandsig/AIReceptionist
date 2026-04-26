@@ -259,6 +259,41 @@ You pay OpenAI directly for Realtime API usage. There is no platform fee, no mar
 
 Compare that to a SaaS AI receptionist at $300-500/month that sounds worse and gives you zero control. At higher call volumes the per-minute model costs more, but you get dramatically better quality and full ownership of the system. For most small-to-medium businesses, the cost is comparable or lower -- and the experience for your callers is not even close.
 
+## Appointment booking (Google Calendar)
+
+Each business can optionally enable Google Calendar integration for in-call
+booking:
+
+```yaml
+calendar:
+  enabled: true
+  calendar_id: "primary"
+  auth:
+    type: "service_account"  # or "oauth"
+    service_account_file: "./secrets/<business>/google-calendar-sa.json"
+  appointment_duration_minutes: 30
+  buffer_minutes: 15
+  buffer_placement: "after"
+  booking_window_days: 30
+  earliest_booking_hours_ahead: 2
+```
+
+When enabled, the agent gets two new tools:
+- **`check_availability(preferred_date, preferred_time)`** — queries the
+  calendar and returns up to 3 slots near the requested time
+- **`book_appointment(caller_name, callback_number, proposed_start_iso, notes?)`** —
+  books one of the offered slots
+
+The agent always says the proposed time back to the caller and waits for
+"yes" before booking. Events are tagged UNVERIFIED so staff know the
+caller's identity wasn't verified.
+
+See `documentation/google-calendar-setup.md` for step-by-step setup of
+both auth paths (service account for Workspace, OAuth for any account).
+
+Optional: set `email.triggers.on_booking: true` to email staff whenever a
+booking lands (uses the existing email channel).
+
 ---
 
 ## Alternatives This Replaces

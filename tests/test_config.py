@@ -617,3 +617,107 @@ messages:
 """
     cfg = BusinessConfig.from_yaml_string(yaml_text)
     assert cfg.sip.transfer_uri_template == "tel:{number}"
+
+
+# ---- ConfigError + friendly YAML error tests (issue #8) ----
+
+# Minimal YAML that loads cleanly when the SECTION marker has correct indent.
+# Used by the indent-trap tests below — they slot in different SECTION lines
+# at column 0 (correct) or column 1 (the trap).
+_BASE_YAML = """\
+business:
+  name: "Test"
+  type: "office"
+  timezone: "America/New_York"
+voice:
+  voice_id: "marin"
+languages:
+  primary: "en"
+  allowed: ["en"]
+greeting: "Hi"
+personality: "Be nice."
+hours:
+  monday: closed
+  tuesday: closed
+  wednesday: closed
+  thursday: closed
+  friday: closed
+  saturday: closed
+  sunday: closed
+after_hours_message: "Closed."
+routing: []
+faqs: []
+messages:
+  channels:
+    - type: "file"
+      file_path: "./m/"
+{section}"""
+
+
+@pytest.mark.parametrize("section_name,section_body", [
+    ("sip", '  transfer_uri_template: "sip:{number}"'),
+    ("retention", '  recordings_days: 0'),
+])
+def test_config_error_on_leading_space_indent_trap(section_name, section_body):
+    """The exact issue #8 shape: user uncommented '# sip:' but left a
+    leading space, getting ' sip:' at column 1. YAML reads that as
+    nesting under messages, then fails. The friendly error must point
+    the operator at the actual cause."""
+    from receptionist.config import BusinessConfig, ConfigError
+    bad_section = f" {section_name}:\n{section_body}\n"
+    yaml_text = _BASE_YAML.format(section=bad_section)
+    with pytest.raises(ConfigError) as excinfo:
+        BusinessConfig.from_yaml_string(yaml_text)
+    msg = str(excinfo.value)
+    # Friendly explanation present
+    assert "indentation" in msg.lower()
+    assert section_name in msg
+    assert "column 0" in msg
+    # Original yaml error chained for debug context
+    assert "Original yaml error:" in msg
+
+
+def test_config_error_chains_underlying_yaml_error():
+    """ConfigError is raised `from` the original YAMLError so debugging
+    tools can still walk the cause chain."""
+    import yaml
+    from receptionist.config import BusinessConfig, ConfigError
+    bad_yaml = _BASE_YAML.format(section=' sip:\n  transfer_uri_template: "x{number}"\n')
+    with pytest.raises(ConfigError) as excinfo:
+        BusinessConfig.from_yaml_string(bad_yaml)
+    assert isinstance(excinfo.value.__cause__, yaml.YAMLError)
+
+
+def test_config_error_correct_indent_loads_fine():
+    """Sanity check: column-0 sip: still parses without complaint."""
+    from receptionist.config import BusinessConfig
+    yaml_text = _BASE_YAML.format(
+        section='sip:\n  transfer_uri_template: "sip:{number}"\n'
+    )
+    cfg = BusinessConfig.from_yaml_string(yaml_text)
+    assert cfg.sip.transfer_uri_template == "sip:{number}"
+
+
+def test_config_error_falls_back_for_non_indent_yaml_errors():
+    """Other YAML syntax errors (mismatched braces, bad mapping) should
+    still produce a ConfigError but use the fallback message — we don't
+    want to claim every error is an indent issue."""
+    from receptionist.config import BusinessConfig, ConfigError
+    # Tab character in indent is a YAML error but not the indent-trap shape
+    bad = "business:\n\tname: oops\n"
+    with pytest.raises(ConfigError) as excinfo:
+        BusinessConfig.from_yaml_string(bad)
+    msg = str(excinfo.value)
+    # Generic fallback message, NOT the indent-trap-specific one
+    assert "indentation error" not in msg
+    assert "Config YAML" in msg
+
+
+def test_config_error_handles_yaml_error_without_problem_mark():
+    """Constructor-style YAML errors don't carry a problem_mark; helper
+    must still produce *some* message rather than crashing."""
+    import yaml
+    from receptionist.config import _friendly_yaml_error
+    e = yaml.YAMLError("synthetic error with no mark")
+    msg = _friendly_yaml_error(e, "anything")
+    assert "synthetic error" in msg

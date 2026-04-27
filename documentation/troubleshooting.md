@@ -41,6 +41,30 @@ business:
   name: "My Business"      # Two spaces
 ```
 
+### `expected <block end>, but found '<block mapping start>'`
+
+**Symptom**: Agent crashes at config load with a `ConfigError` mentioning
+"indentation error" or, on older versions, the cryptic raw `yaml.parser.
+ParserError: expected <block end>, but found '<block mapping start>'`.
+
+**Cause**: A top-level section (e.g. `sip:`, `recording:`, `calendar:`)
+has a leading space, so YAML reads it as nested under the previous block.
+Most commonly this happens when uncommenting a `# section:` example block
+by removing only the `#` and leaving the trailing space.
+
+```yaml
+# Wrong — one leading space, parser sees this as nested under `messages:`
+ sip:
+  transfer_uri_template: "sip:{number}"
+
+# Correct — column 0
+sip:
+  transfer_uri_template: "sip:{number}"
+```
+
+**Solution**: When uncommenting an example block, remove BOTH the leading
+`#` AND the space that follows it.
+
 ### "Invalid time format" on hours fields
 
 **Symptom**: Validation error mentioning `open` or `close` time fields.

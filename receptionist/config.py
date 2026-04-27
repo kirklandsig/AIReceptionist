@@ -15,6 +15,14 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 logger = logging.getLogger("receptionist")
 
 
+class ConfigError(Exception):
+    """Raised when a business config YAML can't be parsed or doesn't validate.
+
+    Wraps both yaml.YAMLError (parse-time) and pydantic.ValidationError
+    (schema-time) so callers don't need to catch both.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Existing unchanged-ish models
 # ---------------------------------------------------------------------------
@@ -429,9 +437,60 @@ class BusinessConfig(BaseModel):
 
     @classmethod
     def from_yaml_string(cls, yaml_string: str) -> BusinessConfig:
-        data = yaml.safe_load(yaml_string)
+        try:
+            data = yaml.safe_load(yaml_string)
+        except yaml.YAMLError as e:
+            raise ConfigError(_friendly_yaml_error(e, yaml_string)) from e
         data = _interpolate_env_vars(data)
         return cls.model_validate(data)
+
+
+# ---------------------------------------------------------------------------
+# YAML error helpers
+# ---------------------------------------------------------------------------
+
+# Matches a key like " sip:" or "  recording:" — leading whitespace + plain
+# identifier + colon at end-of-line. Used to detect the most common config
+# pitfall: uncommenting a "# section:" block by removing only "#", leaving
+# the line indented by one space. YAML then sees the section as nested under
+# the previous block and the parser error points at the "wrong" line.
+_LEADING_WS_KEY_RE = re.compile(r"^\s+([a-z_][a-z0-9_]*)\s*:\s*(?:#.*)?$", re.IGNORECASE)
+
+
+def _friendly_yaml_error(e: yaml.YAMLError, source: str) -> str:
+    """Translate a yaml parse error into something an operator can act on.
+
+    Catches the indentation trap from uncommenting "# section:" blocks where
+    the user left a leading space. Falls back to a clear-but-generic message
+    that still includes the underlying yaml position.
+    """
+    base = str(e)
+    mark = getattr(e, "problem_mark", None)
+    if mark is None:
+        return f"Config YAML failed to parse:\n{base}"
+
+    lineno = mark.line + 1  # mark uses 0-based; humans want 1-based
+    col = mark.column + 1
+    lines = source.splitlines()
+    offending_line = lines[mark.line] if 0 <= mark.line < len(lines) else ""
+
+    # Detect the specific "I uncommented and left a leading space" trap so we
+    # can give an actionable hint rather than the cryptic raw yaml message.
+    m = _LEADING_WS_KEY_RE.match(offending_line)
+    if (
+        m is not None
+        and "block end" in (getattr(e, "problem", "") or "")
+    ):
+        key = m.group(1)
+        return (
+            f"Config YAML indentation error at line {lineno}: '{offending_line.strip()}' "
+            f"is indented with {col - 1} space(s) but appears to be a top-level "
+            f"section. If you just uncommented a '# {key}:' example block, "
+            f"remove BOTH the leading '#' AND the space after it so '{key}:' "
+            f"starts at column 0.\n\n"
+            f"Original yaml error:\n{base}"
+        )
+    return f"Config YAML failed to parse at line {lineno}, column {col}:\n{base}"
 
 
 # ---------------------------------------------------------------------------

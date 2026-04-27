@@ -86,6 +86,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter (default `None` keeps the prior no-attendee behavior).
 
 ### Fixed
+- **Friendlier YAML error for the "uncommented with leading space" trap**
+  (issue #8, reported by @trinicomcom): leaving a single space before
+  a top-level section (e.g. ` sip:` instead of `sip:`) used to produce
+  the cryptic `expected <block end>, but found '<block mapping start>'`
+  parser error pointing at the wrong line. `BusinessConfig.from_yaml_string`
+  now wraps `yaml.YAMLError` in a new `ConfigError` and detects this
+  exact pattern, producing a message that names the offending section
+  and explains how to fix it. The original yaml error is still chained
+  via `raise ... from e` for debugging. Example YAML config and the
+  troubleshooting doc updated with explicit "remove BOTH the # AND the
+  space" guidance above each commented section.
 - **SIP transfer URI configurable** (issue #6, reported by @trinicomcom):
   the `transfer_call` tool used to hardcode `tel:{number}` for the
   LiveKit SIP transfer URI. That works for Twilio/Telnyx/most BYOC, but

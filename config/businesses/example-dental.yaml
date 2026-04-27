@@ -1,4 +1,20 @@
 # config/businesses/example-dental.yaml
+#
+# YAML INDENTATION TIP — read before uncommenting any "# section:" block:
+#   Top-level keys (business, voice, hours, recording, sip, calendar, etc.)
+#   MUST start at column 0. When uncommenting a commented example, remove
+#   BOTH the leading "#" AND the space that follows it; otherwise YAML
+#   sees the section as nested under the previous block and you'll get a
+#   cryptic "expected <block end>, but found '<block mapping start>'"
+#   error at config load.
+#
+#   Wrong (one leading space → parser error):
+#       sip:
+#         transfer_uri_template: "sip:{number}"
+#
+#   Right (column 0 → loads cleanly):
+#     sip:
+#       transfer_uri_template: "sip:{number}"
 
 business:
   name: "Acme Dental"
@@ -69,6 +85,7 @@ messages:
     #     X-Api-Key: ${SLACK_TOKEN}
 
 # Call recording via LiveKit Egress.
+# To enable: remove the "# " from each line below — both the # and the space.
 # recording:
 #   enabled: true
 #   storage:
@@ -80,6 +97,7 @@ messages:
 #     text: "This call may be recorded for quality purposes."
 
 # Call transcripts.
+# To enable: remove the "# " from each line below — both the # and the space.
 # transcripts:
 #   enabled: true
 #   storage:
@@ -88,6 +106,7 @@ messages:
 #   formats: ["json", "markdown"]
 
 # Email sender (required if any email channel is enabled, or on_call_end trigger is on).
+# To enable: remove the "# " from each line below — both the # and the space.
 # email:
 #   from: "receptionist@acmedental.com"
 #   sender:
@@ -111,6 +130,7 @@ retention:
 # SIP transfer behavior. Default works for Twilio, Telnyx, and most BYOC providers
 # that translate tel-URIs to SIP. For Asterisk classic sip.conf (which rejects
 # tel-URIs), uncomment the appropriate sip: form below.
+# To enable: remove the "# " from each line below — both the # and the space.
 # sip:
 #   transfer_uri_template: "tel:{number}"            # default — Twilio/Telnyx/most BYOC
 #   # transfer_uri_template: "sip:{number}"          # Asterisk classic sip.conf (DID lookup)
@@ -122,6 +142,7 @@ retention:
 # 3. Download credentials to secrets/<business-slug>/
 # 4. For OAuth auth, run `python -m receptionist.booking setup <business-slug>`
 # See documentation/google-calendar-setup.md for step-by-step instructions.
+# To enable: remove the "# " from each line below — both the # and the space.
 #
 # calendar:
 #   enabled: true

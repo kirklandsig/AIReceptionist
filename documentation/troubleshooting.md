@@ -233,6 +233,26 @@ LIVEKIT_URL=wss://...cloud  # Correct
 4. Check LiveKit logs for SIP REFER/transfer errors.
 5. Some SIP trunk configurations require explicit outbound/termination setup separate from inbound/origination.
 
+### Caller shows as `Unknown` in call-end email or transcript
+
+**Symptom**: A real phone call has CallerID, but call-end emails or
+transcript headers show `Caller: Unknown`.
+
+**Cause**: Current versions capture `sip.phoneNumber` when the SIP
+participant connects. If `Unknown` still appears, the SIP trunk may not be
+passing CallerID through to LiveKit as the `sip.phoneNumber` participant
+attribute.
+
+**Solution**:
+1. Pull the latest `main` branch. Older versions read caller attributes
+   before the SIP participant had joined the room, which made `Unknown`
+   deterministic on some setups.
+2. Check the LiveKit room participant attributes for the SIP caller and
+   confirm `sip.phoneNumber` is present.
+3. If using BYOC/Asterisk, verify your trunk is forwarding caller ID into
+   LiveKit. Some SIP setups need explicit caller-ID mapping or header
+   forwarding.
+
 ### One-way audio (caller hears agent but agent does not hear caller, or vice versa)
 
 **Symptom**: Audio flows in only one direction.

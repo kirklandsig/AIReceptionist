@@ -63,6 +63,10 @@ class CallLifecycle:
 
     # --- tool-path recorders (called by Receptionist methods) ---
 
+    def set_caller_phone(self, phone: str) -> None:
+        if phone and self.metadata.caller_phone is None:
+            self.metadata.caller_phone = phone
+
     def record_faq_answered(self, question: str) -> None:
         self.metadata.faqs_answered.append(question)
 

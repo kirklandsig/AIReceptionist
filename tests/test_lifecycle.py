@@ -22,6 +22,18 @@ def test_lifecycle_constructs_metadata_with_call_id(config):
     assert lifecycle.metadata.caller_phone == "+15551112222"
 
 
+def test_lifecycle_set_caller_phone_when_missing(config):
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone=None)
+    lifecycle.set_caller_phone("+15551112222")
+    assert lifecycle.metadata.caller_phone == "+15551112222"
+
+
+def test_lifecycle_set_caller_phone_does_not_overwrite_existing(config):
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone="+15550000000")
+    lifecycle.set_caller_phone("+15551112222")
+    assert lifecycle.metadata.caller_phone == "+15550000000"
+
+
 def test_lifecycle_record_faq_populates_metadata(config):
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
     lifecycle.record_faq_answered("hours")

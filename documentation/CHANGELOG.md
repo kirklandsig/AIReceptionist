@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter (default `None` keeps the prior no-attendee behavior).
 
 ### Fixed
+- **CallerID capture race** (issue #9, reported by @trinicomcom): call-end
+  emails and transcripts could show `Caller: Unknown` because
+  `sip.phoneNumber` was read before the SIP participant had joined the
+  LiveKit room. The agent now also captures the caller phone when
+  LiveKit emits `participant_connected` for the SIP participant.
 - **Friendlier YAML error for the "uncommented with leading space" trap**
   (issue #8, reported by @trinicomcom): leaving a single space before
   a top-level section (e.g. ` sip:` instead of `sip:`) used to produce

@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from livekit import rtc
 
-from receptionist.agent import _resolve_relative_date
+from receptionist.agent import (
+    _capture_caller_phone_from_participant,
+    _get_sip_participant_phone,
+    _resolve_relative_date,
+)
+from receptionist.lifecycle import CallLifecycle
 
 
 @pytest.fixture
@@ -60,6 +67,47 @@ def test_resolve_passthrough_for_bare_weekday(sun_apr_26_2026):
 def test_resolve_case_insensitive(sun_apr_26_2026):
     assert _resolve_relative_date("TOMORROW", sun_apr_26_2026) == "April 27 2026"
     assert _resolve_relative_date("Next Monday", sun_apr_26_2026) == "May 04 2026"
+
+
+def _participant(kind, attrs=None):
+    return SimpleNamespace(kind=kind, attributes=attrs or {})
+
+
+def test_get_sip_participant_phone_reads_sip_attribute():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        {"sip.phoneNumber": "+15551112222"},
+    )
+    assert _get_sip_participant_phone(participant) == "+15551112222"
+
+
+def test_get_sip_participant_phone_ignores_non_sip_participant():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+        {"sip.phoneNumber": "+15551112222"},
+    )
+    assert _get_sip_participant_phone(participant) is None
+
+
+def test_capture_caller_phone_from_connected_sip_participant(v2_yaml):
+    from receptionist.config import BusinessConfig
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone=None)
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        {"sip.phoneNumber": "+15551112222"},
+    )
+    _capture_caller_phone_from_participant(lifecycle, participant)
+    assert lifecycle.metadata.caller_phone == "+15551112222"
+
+
+def test_capture_caller_phone_from_sip_participant_without_phone_is_noop(v2_yaml):
+    from receptionist.config import BusinessConfig
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone=None)
+    participant = _participant(rtc.ParticipantKind.PARTICIPANT_KIND_SIP)
+    _capture_caller_phone_from_participant(lifecycle, participant)
+    assert lifecycle.metadata.caller_phone is None
 
 
 # ---- _offered_slot_batches eviction tests (memory cap) ----

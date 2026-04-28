@@ -980,3 +980,22 @@ their setup hits real-world configurations that don't match our
 example-author assumptions. Worth noting for future docs reviews —
 example YAML pitfalls are easy to miss if you only test the
 copy-paste-as-is path.
+
+---
+
+## Addendum — 2026-04-28: Issue #9 (CallerID capture race)
+
+@trinicomcom reported that real calls showed `Caller: Unknown` in the
+call-end email and transcript header. Root cause: `handle_call` created
+`CallLifecycle` from `_get_caller_phone(ctx)` before the SIP participant
+had necessarily joined the LiveKit room, so `sip.phoneNumber` could be
+absent at that early snapshot and remain `None` for the whole call.
+
+Fixed by keeping the early best-effort read but also subscribing to
+`ctx.room.on("participant_connected", ...)`; when the connected participant
+is SIP and has the `sip.phoneNumber` attribute, `CallLifecycle.set_caller_phone`
+fills `metadata.caller_phone` if it was still missing. The setter is
+first-write-wins so a valid early value is not overwritten later.
+
+Troubleshooting docs now explain that persistent `Unknown` after this fix
+means the SIP trunk likely is not providing `sip.phoneNumber` to LiveKit.

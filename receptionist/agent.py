@@ -169,12 +169,26 @@ def _get_caller_phone(ctx: agents.JobContext) -> str | None:
     in call-end emails. Not a hard failure.
     """
     for participant in ctx.room.remote_participants.values():
-        if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-            attrs = getattr(participant, "attributes", {}) or {}
-            phone = attrs.get("sip.phoneNumber")
-            if phone:
-                return phone
+        phone = _get_sip_participant_phone(participant)
+        if phone:
+            return phone
     return None
+
+
+def _get_sip_participant_phone(participant: rtc.RemoteParticipant) -> str | None:
+    if participant.kind != rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
+        return None
+    attrs = getattr(participant, "attributes", {}) or {}
+    phone = attrs.get("sip.phoneNumber")
+    return phone or None
+
+
+def _capture_caller_phone_from_participant(
+    lifecycle: CallLifecycle, participant: rtc.RemoteParticipant,
+) -> None:
+    phone = _get_sip_participant_phone(participant)
+    if phone:
+        lifecycle.set_caller_phone(phone)
 
 
 class Receptionist(Agent):
@@ -625,6 +639,11 @@ async def handle_call(ctx: agents.JobContext):
         call_id=ctx.room.name,
         caller_phone=_get_caller_phone(ctx),
     )
+
+    def _handle_participant_connected(participant: rtc.RemoteParticipant) -> None:
+        _capture_caller_phone_from_participant(lifecycle, participant)
+
+    ctx.room.on("participant_connected", _handle_participant_connected)
 
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(

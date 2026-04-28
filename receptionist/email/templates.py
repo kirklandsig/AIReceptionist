@@ -17,14 +17,21 @@ _OUTCOME_LABELS = {
 }
 
 
-def _outcomes_display(outcomes: set[str] | list[str]) -> str:
+def _outcomes_display(
+    outcomes: set[str] | list[str], *, transfer_target: str | None = None,
+) -> str:
     """Render a set of outcomes as a sorted human-readable string.
 
     Example: {"transferred", "appointment_booked"} -> "Appointment booked + Transferred"
     """
     if not outcomes:
         return "Unknown"
-    labels = [_OUTCOME_LABELS.get(o, o) for o in sorted(outcomes)]
+    labels = []
+    for outcome in sorted(outcomes):
+        if outcome == "transferred" and transfer_target:
+            labels.append(f"Transferred to {transfer_target}")
+        else:
+            labels.append(_OUTCOME_LABELS.get(outcome, outcome))
     return " + ".join(labels)
 
 
@@ -74,7 +81,10 @@ def build_call_end_email(
     metadata: CallMetadata, context: DispatchContext
 ) -> tuple[str, str, str]:
     outcomes_str = _outcomes_display(metadata.outcomes)
-    subject = f"Call from {metadata.caller_phone or 'Unknown'} — {outcomes_str} [{metadata.business_name}]"
+    subject_outcomes = _outcomes_display(
+        metadata.outcomes, transfer_target=metadata.transfer_target,
+    )
+    subject = f"Call from {metadata.caller_phone or 'Unknown'} — {subject_outcomes} [{metadata.business_name}]"
 
     duration_str = _format_duration(metadata.duration_seconds)
 
@@ -98,7 +108,9 @@ def build_call_end_email(
         body_text += f"FAQs answered: {', '.join(metadata.faqs_answered)}\n"
     if metadata.languages_detected:
         body_text += f"Languages: {', '.join(sorted(metadata.languages_detected))}\n"
-    if context.recording_url:
+    if metadata.recording_failed:
+        body_text += f"\nRecording: failed\n"
+    elif context.recording_url:
         body_text += f"\nRecording: {context.recording_url}\n"
     if context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
@@ -114,10 +126,27 @@ def build_call_end_email(
         f"<tr><td><strong>End</strong></td><td>{e(metadata.end_ts or '(in progress)')}</td></tr>"
         f"<tr><td><strong>Duration</strong></td><td>{e(duration_str)}</td></tr>"
         f"<tr><td><strong>Outcomes</strong></td><td>{e(outcomes_str)}</td></tr>"
-        f"</table>"
     )
-    if context.recording_url:
+    if metadata.transfer_target:
+        body_html += f"<tr><td><strong>Transferred to</strong></td><td>{e(metadata.transfer_target)}</td></tr>"
+    if metadata.appointment_details:
+        start_iso = metadata.appointment_details.get("start_iso", "?")
+        html_link = metadata.appointment_details.get("html_link", "")
+        appointment = e(start_iso)
+        if html_link:
+            appointment += f"<br><a href='{e(html_link)}'>{e(html_link)}</a>"
+        body_html += f"<tr><td><strong>Appointment</strong></td><td>{appointment}</td></tr>"
+    if metadata.faqs_answered:
+        body_html += f"<tr><td><strong>FAQs answered</strong></td><td>{e(', '.join(metadata.faqs_answered))}</td></tr>"
+    if metadata.languages_detected:
+        body_html += f"<tr><td><strong>Languages</strong></td><td>{e(', '.join(sorted(metadata.languages_detected)))}</td></tr>"
+    body_html += f"</table>"
+    if metadata.recording_failed:
+        body_html += f"<p><strong>Recording:</strong> failed</p>"
+    elif context.recording_url:
         body_html += f"<p><strong>Recording:</strong> <a href='{e(context.recording_url)}'>{e(context.recording_url)}</a></p>"
+    if context.transcript_markdown_path:
+        body_html += f"<p><strong>Transcript:</strong> {e(context.transcript_markdown_path)}</p>"
 
     return subject, body_text, body_html
 

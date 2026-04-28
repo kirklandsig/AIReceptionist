@@ -39,8 +39,12 @@ def to_markdown(segments: Sequence[TranscriptSegment], metadata: CallMetadata) -
         lines.append(f"- Duration: {int(metadata.duration_seconds)}s")
     if metadata.outcomes:
         lines.append(f"- Outcomes: {', '.join(sorted(metadata.outcomes))}")
+    if metadata.transfer_target:
+        lines.append(f"- Transferred to: {metadata.transfer_target}")
     if metadata.appointment_details:
         lines.append(f"- Appointment: {metadata.appointment_details.get('start_iso', '?')}")
+    if metadata.recording_failed:
+        lines.append("- Recording: failed")
     if metadata.languages_detected:
         lines.append(f"- Languages: {', '.join(sorted(metadata.languages_detected))}")
     if metadata.faqs_answered:

@@ -183,8 +183,13 @@ async def transfer_call(self, department: str) -> str
 3. If a match is found:
    a. The agent announces the transfer to the caller (e.g., "Let me transfer you to Scheduling.").
    b. The agent calls the LiveKit SIP transfer API with the matched phone number.
-   c. The SIP transfer is initiated (the caller is connected to the target number).
+   c. The matched routing entry name is recorded on call metadata as the transfer target.
+   d. The SIP transfer is initiated (the caller is connected to the target number).
 4. If no match is found, the tool returns available departments.
+
+Successful transfer targets appear in call-end artifacts: the email subject,
+HTML email body, plain-text email body, Markdown transcript header, and JSON
+metadata all identify the matched routing entry name.
 
 ### Matching Behavior
 

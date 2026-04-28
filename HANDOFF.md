@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-04-26
+> **Last updated:** 2026-04-28
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -951,3 +951,32 @@ of the pass).
 - Splitting the long `check_availability`/`book_appointment` methods.
 
 **Plan file**: `C:\Users\MDASR\.claude\plans\stateful-floating-fiddle.md`
+
+---
+
+## Addendum — 2026-04-27/28: Issue #8 (YAML indent trap)
+
+@trinicomcom hit a `yaml.parser.ParserError: expected <block end>, but
+found '<block mapping start>'` after uncommenting the new `# sip:`
+example block in `example-dental.yaml`. They removed the `#` but left
+the trailing space, so YAML read ` sip:` (column 1) as nested under
+the previous block. Fixed in `e20955b` three ways:
+
+1. `BusinessConfig.from_yaml_string` now wraps `yaml.YAMLError` in a
+   new `ConfigError` and detects the leading-whitespace-on-a-top-
+   level-key pattern specifically. Operators get an actionable message
+   naming the section + explaining the fix; the original yaml error is
+   chained via `raise ... from e` for debugging.
+2. `config/businesses/example-dental.yaml` got a top-of-file
+   indentation tip + a one-line "remove BOTH the # AND the space"
+   reminder above each of the five commented example sections.
+3. `documentation/troubleshooting.md` got a new entry under "Invalid
+   YAML / configuration validation errors".
+
+Tests: 256 -> 262 (+6), all green.
+
+This is the same shape of UX trap as issue #6 (also @trinicomcom):
+their setup hits real-world configurations that don't match our
+example-author assumptions. Worth noting for future docs reviews —
+example YAML pitfalls are easy to miss if you only test the
+copy-paste-as-is path.

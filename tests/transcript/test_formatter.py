@@ -54,6 +54,28 @@ def test_to_markdown_shows_tool_arguments_and_output():
     assert "Yes, we accept Cigna." in out
 
 
+def test_to_markdown_shows_transfer_target_when_present():
+    md = _metadata()
+    md.outcomes = {"transferred"}
+    md.transfer_target = "Agent Smith"
+    out = to_markdown([], md)
+    assert "- Transferred to: Agent Smith" in out
+
+
+def test_to_markdown_omits_transfer_target_when_absent():
+    md = _metadata()
+    md.outcomes = {"transferred"}
+    out = to_markdown([], md)
+    assert "- Transferred to:" not in out
+
+
+def test_to_markdown_shows_recording_failed():
+    md = _metadata()
+    md.recording_failed = True
+    out = to_markdown([], md)
+    assert "- Recording: failed" in out
+
+
 def test_to_json_empty_segments():
     out = to_json([], _metadata())
     data = json.loads(out)

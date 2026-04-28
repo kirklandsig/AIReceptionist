@@ -74,6 +74,76 @@ def test_call_end_email_subject_multi_outcome():
     assert "Appointment booked + Transferred" in subject
 
 
+def test_call_end_email_subject_includes_transfer_target():
+    md = CallMetadata(
+        call_id="r", business_name="Acme", caller_phone="+1",
+        start_ts="2026-04-23T14:30:00+00:00",
+        outcomes={"transferred"},
+        transfer_target="Agent Smith",
+    )
+    subject, _, _ = build_call_end_email(md, DispatchContext())
+    assert "Transferred to Agent Smith" in subject
+
+
+def test_call_end_email_subject_multi_outcome_includes_transfer_target():
+    md = CallMetadata(
+        call_id="r", business_name="Acme", caller_phone="+1",
+        start_ts="2026-04-23T14:30:00+00:00",
+        outcomes={"transferred", "appointment_booked"},
+        transfer_target="Agent Smith",
+    )
+    subject, _, _ = build_call_end_email(md, DispatchContext())
+    assert "Appointment booked + Transferred to Agent Smith" in subject
+
+
+def test_call_end_email_html_includes_transfer_target():
+    md = _metadata()
+    md.outcomes = {"transferred"}
+    md.transfer_target = "Agent Smith"
+    _, body_text, body_html = build_call_end_email(md, DispatchContext())
+    assert "Transferred to: Agent Smith" in body_text
+    assert "Transferred to" in body_html
+    assert "Agent Smith" in body_html
+
+
+def test_call_end_email_html_matches_text_summary_fields():
+    md = _metadata()
+    md.appointment_details = {
+        "event_id": "evt1",
+        "start_iso": "2026-04-28T14:00:00-04:00",
+        "end_iso": "2026-04-28T14:30:00-04:00",
+        "html_link": "https://calendar.google.com/event?eid=abc",
+    }
+    md.faqs_answered = ["Where are you located?", "Do you take Cigna?"]
+    md.languages_detected = {"es", "en"}
+    context = DispatchContext(transcript_markdown_path="transcripts/room-1.md")
+    _, body_text, body_html = build_call_end_email(md, context)
+    assert "Appointment:" in body_text
+    assert "FAQs answered:" in body_text
+    assert "Languages: en, es" in body_text
+    assert "Transcript: transcripts/room-1.md" in body_text
+    assert "Appointment" in body_html
+    assert "calendar.google.com" in body_html
+    assert "FAQs answered" in body_html
+    assert "Where are you located?, Do you take Cigna?" in body_html
+    assert "Languages" in body_html
+    assert "en, es" in body_html
+    assert "Transcript" in body_html
+    assert "transcripts/room-1.md" in body_html
+
+
+def test_call_end_email_marks_recording_failed():
+    md = _metadata()
+    md.recording_failed = True
+    _, body_text, body_html = build_call_end_email(
+        md, DispatchContext(recording_url="recordings/room-1.mp3"),
+    )
+    assert "Recording: failed" in body_text
+    assert "Recording:</strong> failed" in body_html
+    assert "recordings/room-1.mp3" not in body_text
+    assert "recordings/room-1.mp3" not in body_html
+
+
 def test_build_booking_email_includes_event_link():
     from receptionist.email.templates import build_booking_email
     from receptionist.messaging.models import DispatchContext

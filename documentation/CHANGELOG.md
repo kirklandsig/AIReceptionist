@@ -91,6 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sip.phoneNumber` was read before the SIP participant had joined the
   LiveKit room. The agent now also captures the caller phone when
   LiveKit emits `participant_connected` for the SIP participant.
+- **Transfer target visibility** (issue #9, reported by @trinicomcom):
+  call-end email subjects, HTML email bodies, and Markdown transcript
+  headers now show the matched transfer destination (for example,
+  `Transferred to Agent Smith`). The value was already stored in JSON
+  transcript metadata and the plain-text email body, but the HTML email
+  body omitted it, so most mail clients hid it.
+- **Call-end HTML email parity**: appointment details, FAQs answered,
+  languages detected, transcript path, and recording-failed status now
+  render in the HTML body to match the plain-text call-end email body.
 - **Friendlier YAML error for the "uncommented with leading space" trap**
   (issue #8, reported by @trinicomcom): leaving a single space before
   a top-level section (e.g. ` sip:` instead of `sip:`) used to produce

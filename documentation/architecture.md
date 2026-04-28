@@ -79,7 +79,7 @@ receptionist/
 - Agent speaks → `conversation_item_added` (item.role=="assistant") → segment appended
 - Tool invocations → `function_tools_executed` → tool segments appended
   - `lookup_faq` → `lifecycle.record_faq_answered(question)`
-  - `transfer_call` → `lifecycle.record_transfer(department)` → outcome="transferred"
+  - `transfer_call` → `lifecycle.record_transfer(department)` → `transfer_target` + outcome="transferred"
   - `take_message` → `Dispatcher.dispatch_message(...)` (sync file + background email/webhook) → `lifecycle.record_message_taken()` → outcome="message_taken"
   - `get_business_hours` → no metadata change
 

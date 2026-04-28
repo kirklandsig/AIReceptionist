@@ -983,7 +983,7 @@ copy-paste-as-is path.
 
 ---
 
-## Addendum — 2026-04-28: Issue #9 (CallerID capture race)
+## Addendum — 2026-04-28: Issue #9 (CallerID race + transfer visibility)
 
 @trinicomcom reported that real calls showed `Caller: Unknown` in the
 call-end email and transcript header. Root cause: `handle_call` created
@@ -999,3 +999,16 @@ first-write-wins so a valid early value is not overwritten later.
 
 Troubleshooting docs now explain that persistent `Unknown` after this fix
 means the SIP trunk likely is not providing `sip.phoneNumber` to LiveKit.
+
+Same issue also surfaced a display-layer gap in transfer summaries.
+`transfer_call` already called `lifecycle.record_transfer(target.name)`, so
+`metadata.transfer_target` was present in JSON metadata and in the
+plain-text call-end email body. The HTML call-end email body omitted it,
+and most mail clients render the HTML alternative, so operators saw only
+`Outcomes: Transferred` with no destination.
+
+Fixed by rendering the transfer target in the call-end email subject, HTML
+email table, and Markdown transcript header. While touching the template,
+the HTML call-end email body was brought to parity with the text body for
+appointment details, FAQs answered, languages detected, transcript path,
+and recording-failed status.

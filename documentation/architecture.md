@@ -64,7 +64,7 @@ receptionist/
 
 ### 2. Session initialization
 1. `load_business_config(ctx)` picks a YAML based on `job.metadata["config"]` (or first YAML as fallback)
-2. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from the SIP participant's `sip.phoneNumber` attribute when available, and filled later from the `participant_connected` event if the SIP participant had not joined yet
+2. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from SIP participant metadata when available (`sip.phoneNumber`, `sip.fromUser`, `sip.from`, or `sip_<digits>` identity fallback), and filled later from the `participant_connected` event if the SIP participant had not joined yet
 3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id)`
 4. `lifecycle.attach_transcript_capture(session)` subscribes to `user_input_transcribed`, `conversation_item_added`, `function_tools_executed` events
 5. `session.on("close", _handle_close)` registered — schedules `lifecycle.on_call_ended()` and resolves a future

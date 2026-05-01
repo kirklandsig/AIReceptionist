@@ -55,6 +55,11 @@ def _format_friendly_date(dt: datetime) -> str:
 # missing @, missing TLD). Google rejects malformed emails server-side too, this
 # is just for a friendlier in-call error message.
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+_SIP_PHONE_RE = re.compile(r"^\+?\d{7,15}$")
+_SIP_URI_PHONE_RE = re.compile(
+    r"(?:^|[<\s])sip:(\+?\d{7,15})(?:@|[>;\s]|$)", re.IGNORECASE,
+)
+_SIP_IDENTITY_PHONE_RE = re.compile(r"^sip_(\+?\d{7,15})$", re.IGNORECASE)
 
 
 # Caps on caller-supplied free-text fields. The LLM faithfully passes through
@@ -161,13 +166,7 @@ def _get_caller_identity(ctx: agents.JobContext) -> str:
 
 
 def _get_caller_phone(ctx: agents.JobContext) -> str | None:
-    """Best-effort extract caller phone number from SIP participant attributes.
-
-    LiveKit SIP participants expose `sip.phoneNumber` in their attributes
-    dict. If absent (older LiveKit versions or non-standard trunk
-    configurations), returns None — caller phone appears as "Unknown"
-    in call-end emails. Not a hard failure.
-    """
+    """Best-effort extract caller phone number from SIP participant metadata."""
     for participant in ctx.room.remote_participants.values():
         phone = _get_sip_participant_phone(participant)
         if phone:
@@ -180,7 +179,34 @@ def _get_sip_participant_phone(participant: rtc.RemoteParticipant) -> str | None
         return None
     attrs = getattr(participant, "attributes", {}) or {}
     phone = attrs.get("sip.phoneNumber")
-    return phone or None
+    if phone:
+        return phone
+    for attr_name in ("sip.fromUser", "sip.from"):
+        phone = _normalize_sip_phone(attrs.get(attr_name))
+        if phone:
+            return phone
+    return _get_sip_phone_from_identity(getattr(participant, "identity", ""))
+
+
+def _normalize_sip_phone(value: str | None) -> str | None:
+    if not value:
+        return None
+    value = value.strip()
+    if _SIP_PHONE_RE.fullmatch(value):
+        return value if value.startswith("+") else f"+{value}"
+    match = _SIP_URI_PHONE_RE.search(value)
+    if match:
+        phone = match.group(1)
+        return phone if phone.startswith("+") else f"+{phone}"
+    return None
+
+
+def _get_sip_phone_from_identity(identity: str) -> str | None:
+    match = _SIP_IDENTITY_PHONE_RE.fullmatch(identity.strip())
+    if not match:
+        return None
+    phone = match.group(1)
+    return phone if phone.startswith("+") else f"+{phone}"
 
 
 def _capture_caller_phone_from_participant(
@@ -644,6 +670,8 @@ async def handle_call(ctx: agents.JobContext):
         _capture_caller_phone_from_participant(lifecycle, participant)
 
     ctx.room.on("participant_connected", _handle_participant_connected)
+    for participant in ctx.room.remote_participants.values():
+        _capture_caller_phone_from_participant(lifecycle, participant)
 
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(

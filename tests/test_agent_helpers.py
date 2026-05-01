@@ -69,8 +69,8 @@ def test_resolve_case_insensitive(sun_apr_26_2026):
     assert _resolve_relative_date("Next Monday", sun_apr_26_2026) == "May 04 2026"
 
 
-def _participant(kind, attrs=None):
-    return SimpleNamespace(kind=kind, attributes=attrs or {})
+def _participant(kind, attrs=None, identity=""):
+    return SimpleNamespace(kind=kind, attributes=attrs or {}, identity=identity)
 
 
 def test_get_sip_participant_phone_reads_sip_attribute():
@@ -85,6 +85,55 @@ def test_get_sip_participant_phone_ignores_non_sip_participant():
     participant = _participant(
         rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
         {"sip.phoneNumber": "+15551112222"},
+    )
+    assert _get_sip_participant_phone(participant) is None
+
+
+def test_get_sip_participant_phone_prefers_explicit_sip_attribute():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        {"sip.phoneNumber": "+15551112222"},
+        "sip_17135550038",
+    )
+    assert _get_sip_participant_phone(participant) == "+15551112222"
+
+
+def test_get_sip_participant_phone_reads_sip_from_user():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        {"sip.fromUser": "17135550038"},
+    )
+    assert _get_sip_participant_phone(participant) == "+17135550038"
+
+
+def test_get_sip_participant_phone_reads_sip_from_uri():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        {"sip.from": "sip:+17135550038@pbx.example.com"},
+    )
+    assert _get_sip_participant_phone(participant) == "+17135550038"
+
+
+def test_get_sip_participant_phone_reads_sip_from_header_uri():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        {"sip.from": '"Keith" <sip:+17135550038@pbx.example.com>;tag=abc'},
+    )
+    assert _get_sip_participant_phone(participant) == "+17135550038"
+
+
+def test_get_sip_participant_phone_reads_sip_identity_fallback():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        identity="sip_17135550038",
+    )
+    assert _get_sip_participant_phone(participant) == "+17135550038"
+
+
+def test_get_sip_participant_phone_ignores_non_phone_identity():
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        identity="sip_agent_smith",
     )
     assert _get_sip_participant_phone(participant) is None
 

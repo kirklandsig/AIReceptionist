@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-04-28
+> **Last updated:** 2026-05-01
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -997,8 +997,22 @@ is SIP and has the `sip.phoneNumber` attribute, `CallLifecycle.set_caller_phone`
 fills `metadata.caller_phone` if it was still missing. The setter is
 first-write-wins so a valid early value is not overwritten later.
 
+Follow-up from @trinicomcom showed an Asterisk/BYOC trunk where
+`sip.phoneNumber` still was not populated, but LiveKit logged the SIP
+participant identity as `sip_17135550038`. The CallerID resolver now keeps
+`sip.phoneNumber` as the preferred source, then checks `sip.fromUser`,
+`sip.from`, and finally parses `sip_<digits>` participant identities into
+`+<digits>`. `handle_call` also re-scans current room participants after
+registering `participant_connected` so a participant that joins in that small
+window is still captured.
+
+Regression coverage in `tests/test_agent_helpers.py` now covers explicit
+`sip.phoneNumber` precedence, `sip.fromUser`, SIP URI `sip.from`, identity
+fallback, non-phone identities, and the existing lifecycle capture path.
+
 Troubleshooting docs now explain that persistent `Unknown` after this fix
-means the SIP trunk likely is not providing `sip.phoneNumber` to LiveKit.
+means the SIP trunk is not exposing CallerID through any supported SIP
+attribute or identity format.
 
 Same issue also surfaced a display-layer gap in transfer summaries.
 `transfer_call` already called `lifecycle.record_transfer(target.name)`, so

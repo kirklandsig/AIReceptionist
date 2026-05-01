@@ -238,17 +238,19 @@ LIVEKIT_URL=wss://...cloud  # Correct
 **Symptom**: A real phone call has CallerID, but call-end emails or
 transcript headers show `Caller: Unknown`.
 
-**Cause**: Current versions capture `sip.phoneNumber` when the SIP
-participant connects. If `Unknown` still appears, the SIP trunk may not be
-passing CallerID through to LiveKit as the `sip.phoneNumber` participant
-attribute.
+**Cause**: Current versions capture CallerID from SIP participant metadata
+when the call starts and again when the SIP participant connects. Resolution
+checks `sip.phoneNumber`, `sip.fromUser`, `sip.from`, and LiveKit SIP
+participant identities such as `sip_17135550038`. If `Unknown` still appears,
+the SIP trunk is not exposing CallerID through any of those fields.
 
 **Solution**:
 1. Pull the latest `main` branch. Older versions read caller attributes
    before the SIP participant had joined the room, which made `Unknown`
    deterministic on some setups.
-2. Check the LiveKit room participant attributes for the SIP caller and
-   confirm `sip.phoneNumber` is present.
+2. Check the LiveKit room participant attributes and identity for the SIP
+   caller. Useful fields are `sip.phoneNumber`, `sip.fromUser`, `sip.from`,
+   and identities in the `sip_<digits>` format.
 3. If using BYOC/Asterisk, verify your trunk is forwarding caller ID into
    LiveKit. Some SIP setups need explicit caller-ID mapping or header
    forwarding.

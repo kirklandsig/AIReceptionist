@@ -231,7 +231,7 @@ for the full schema.
 
 ### Caller Identity
 
-The `_get_caller_identity()` helper method finds the SIP participant in the LiveKit room. In a typical SIP call, there is one remote participant (the caller) and the agent. The helper identifies the caller by finding the participant that is not the agent.
+The `_get_caller_identity()` helper method finds the SIP participant in the LiveKit room by `ParticipantKind.PARTICIPANT_KIND_SIP`. In a typical SIP call, that remote participant is the caller. CallerID display is resolved separately from SIP participant metadata, including `sip.phoneNumber` and BYOC/Asterisk-style `sip_<digits>` identities.
 
 ### Example Interaction
 

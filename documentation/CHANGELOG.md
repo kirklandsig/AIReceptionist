@@ -86,6 +86,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameter (default `None` keeps the prior no-attendee behavior).
 
 ### Fixed
+- **BYOC/Asterisk CallerID fallback** (issue #9, reported by @trinicomcom):
+  if LiveKit does not populate `sip.phoneNumber`, CallerID resolution now
+  falls back to `sip.fromUser`, `sip.from`, and SIP participant identities
+  like `sip_17135550038`. The agent also re-scans existing room participants
+  after registering the `participant_connected` handler to close the small
+  connect-window race.
 - **CallerID capture race** (issue #9, reported by @trinicomcom): call-end
   emails and transcripts could show `Caller: Unknown` because
   `sip.phoneNumber` was read before the SIP participant had joined the

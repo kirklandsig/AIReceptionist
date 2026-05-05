@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`voice.idle` safety nets** (issue #11): three new defaults stop the
+  agent from running indefinitely on silent or off-topic callers.
+  - **Silence hangup** (default ON, 15s away + 30s grace = 45s total
+    silence). Wires `AgentSession.user_away_timeout` and a `user_state_changed`
+    listener; if the caller stays `away` past the grace period, the agent
+    says a brief "we'll wrap up" and disconnects with reason
+    `silence_timeout`. Disable per business with `voice.idle.silence_hangup_enabled: false`.
+  - **Max-duration cap** (default OFF). Set
+    `voice.idle.max_call_duration_seconds: 900` to cap calls at 15 minutes;
+    the agent will say goodbye and disconnect with reason
+    `max_duration_reached` when the cap is reached.
+  - **Unproductive-turn ceiling** (default ON, threshold 5). Counts
+    consecutive agent replies that match a tunable list of "stuck"
+    phrases (`unproductive_phrases`) AND did not invoke any function tool
+    that turn. After the threshold, the agent ends with reason
+    `unproductive_turns_exhausted`. Catches the Trinicom Blade Runner
+    scenario where the caller monologues at the agent for 21 minutes.
 - **`end_call` function tool** (issue #10): the agent can now end the call
   itself when the caller has clearly finished — e.g. "goodbye", "thanks,
   bye", "that's all I needed". The tool says a brief goodbye, then disconnects

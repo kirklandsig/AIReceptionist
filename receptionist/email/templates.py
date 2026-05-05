@@ -14,6 +14,7 @@ _OUTCOME_LABELS = {
     "message_taken": "Message taken",
     "transferred": "Transferred",
     "appointment_booked": "Appointment booked",
+    "agent_ended": "Agent ended",
 }
 
 
@@ -99,6 +100,8 @@ def build_call_end_email(
     )
     if metadata.transfer_target:
         body_text += f"Transferred to: {metadata.transfer_target}\n"
+    if metadata.agent_end_reason:
+        body_text += f"Agent end reason: {metadata.agent_end_reason}\n"
     if metadata.appointment_details:
         body_text += (
             f"Appointment: {metadata.appointment_details.get('start_iso', '?')}\n"
@@ -129,6 +132,8 @@ def build_call_end_email(
     )
     if metadata.transfer_target:
         body_html += f"<tr><td><strong>Transferred to</strong></td><td>{e(metadata.transfer_target)}</td></tr>"
+    if metadata.agent_end_reason:
+        body_html += f"<tr><td><strong>Agent end reason</strong></td><td>{e(metadata.agent_end_reason)}</td></tr>"
     if metadata.appointment_details:
         start_iso = metadata.appointment_details.get("start_iso", "?")
         html_link = metadata.appointment_details.get("html_link", "")

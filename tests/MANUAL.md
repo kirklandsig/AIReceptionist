@@ -27,6 +27,9 @@ Each checkbox should be checked off in the PR description or release notes; unch
 - [ ] Ask to be transferred → `transfer_call` is invoked; SIP transfer occurs (or is attempted — check logs)
 - [ ] Leave a voice message → `take_message` acknowledges the save
 - [ ] Ask about hours → `get_business_hours` returns the current day's open/close status
+- [ ] Say "goodbye" → `end_call` is invoked, agent says a brief goodbye, and the call disconnects within ~10s
+- [ ] Call summary email shows `Agent ended` outcome and `Agent end reason: caller_goodbye`
+- [ ] Logs include `end_call: removed participant <identity>` (or, on fallback, `end_call: deleted room <name>`)
 
 ## Message delivery (per enabled channel)
 - [ ] **file**: a JSON file appears under `file_path` after a message is taken

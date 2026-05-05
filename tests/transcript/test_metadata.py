@@ -83,4 +83,26 @@ def test_metadata_to_dict_includes_new_fields():
 
 def test_valid_outcomes_is_expected_set():
     """Regression: ensure the allowed outcome vocabulary matches the design spec."""
-    assert VALID_OUTCOMES == {"hung_up", "message_taken", "transferred", "appointment_booked"}
+    assert VALID_OUTCOMES == {
+        "hung_up", "message_taken", "transferred",
+        "appointment_booked", "agent_ended",
+    }
+
+
+def test_metadata_to_dict_includes_agent_end_reason():
+    """Issue #10: the agent_end_reason must round-trip through to_dict so
+    transcript JSON exporters and webhooks see the reason value."""
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.outcomes.add("agent_ended")
+    md.agent_end_reason = "silence_timeout"
+    md.mark_finalized()
+    d = md.to_dict()
+    assert d["agent_end_reason"] == "silence_timeout"
+    assert "agent_ended" in d["outcomes"]
+
+
+def test_metadata_default_agent_end_reason_is_none():
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    assert md.agent_end_reason is None
+    d = md.to_dict()
+    assert d["agent_end_reason"] is None

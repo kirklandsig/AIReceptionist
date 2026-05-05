@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`end_call` function tool** (issue #10): the agent can now end the call
+  itself when the caller has clearly finished — e.g. "goodbye", "thanks,
+  bye", "that's all I needed". The tool says a brief goodbye, then disconnects
+  the SIP caller via `remove_participant` (preferred — sends a SIP BYE) and
+  falls back to `delete_room` if removal fails. The system prompt teaches
+  the LLM when to call it and, equally important, when NOT to call it.
+- **`agent_ended` outcome and `agent_end_reason` field** on `CallMetadata`
+  (issues #10/#11). Distinguishes agent-initiated hangups from caller
+  hangups in call summaries, transcripts, and dashboards. The reason is a
+  short label drawn from a closed vocabulary (`caller_goodbye`,
+  `silence_timeout`, `unproductive_turns_exhausted`); call-end emails and
+  Markdown transcript headers render it next to the outcome row.
+
 ### Fixed
 - **CallerID resolution for non-SIP-kind participants** (issue #9):
   the SIP participant resolver no longer requires

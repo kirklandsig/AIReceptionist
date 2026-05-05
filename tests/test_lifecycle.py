@@ -69,6 +69,26 @@ def test_lifecycle_record_appointment_booked_adds_outcome(config):
     assert "appointment_booked" in lifecycle.metadata.outcomes
 
 
+def test_lifecycle_record_agent_ended_adds_outcome_and_reason(config):
+    """Issue #10: the agent-initiated hangup records the outcome AND the
+    short reason label so call summaries can show 'why' the agent ended."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_agent_ended("caller_goodbye")
+    assert "agent_ended" in lifecycle.metadata.outcomes
+    assert lifecycle.metadata.agent_end_reason == "caller_goodbye"
+
+
+def test_lifecycle_record_agent_ended_first_reason_wins(config):
+    """If silence-timeout fires after the goodbye path has already started,
+    the first reason wins so the most actionable signal survives."""
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_agent_ended("caller_goodbye")
+    lifecycle.record_agent_ended("silence_timeout")
+    assert lifecycle.metadata.agent_end_reason == "caller_goodbye"
+    # Outcome stays a single-membership flag regardless of how many times fired
+    assert lifecycle.metadata.outcomes == {"agent_ended"}
+
+
 def test_lifecycle_multi_outcome_transfer_and_booking(config):
     """A call can be both transferred AND book an appointment. Both outcomes recorded."""
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)

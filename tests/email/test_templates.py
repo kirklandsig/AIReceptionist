@@ -178,3 +178,35 @@ def test_outcome_labels_cover_all_valid_outcomes():
         "_OUTCOME_LABELS keys must match VALID_OUTCOMES exactly. "
         "If you added a new outcome, update both."
     )
+
+
+def test_call_end_email_includes_agent_end_reason():
+    """Issue #10: when the agent itself hangs up, the call summary must
+    show the reason in both the text and HTML email bodies so staff can
+    distinguish a polite goodbye from a silence-timeout."""
+    md = CallMetadata(
+        call_id="r", business_name="Acme", caller_phone="+15551112222",
+        start_ts="2026-04-23T14:30:00+00:00",
+        end_ts="2026-04-23T14:30:30+00:00",
+        duration_seconds=30.0,
+        outcomes={"agent_ended"},
+        agent_end_reason="silence_timeout",
+    )
+    subject, body_text, body_html = build_call_end_email(md, DispatchContext())
+    assert "Agent ended" in subject
+    assert "Agent end reason: silence_timeout" in body_text
+    assert "Agent end reason" in body_html
+    assert "silence_timeout" in body_html
+
+
+def test_call_end_email_omits_agent_end_reason_when_unset():
+    """When the caller hung up first (no agent end), the reason row stays out
+    of the body so the layout doesn't grow unused fields."""
+    md = CallMetadata(
+        call_id="r", business_name="Acme", caller_phone="+15551112222",
+        start_ts="2026-04-23T14:30:00+00:00",
+        outcomes={"hung_up"},
+    )
+    _, body_text, body_html = build_call_end_email(md, DispatchContext())
+    assert "Agent end reason" not in body_text
+    assert "Agent end reason" not in body_html

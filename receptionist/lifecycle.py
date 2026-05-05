@@ -87,6 +87,20 @@ class CallLifecycle:
         self.metadata.appointment_details = details
         self._add_outcome("appointment_booked")
 
+    def record_agent_ended(self, reason: str) -> None:
+        """Called when the agent itself decides to end the call (issues #10/#11).
+
+        `reason` is a short free-form label such as `caller_goodbye`,
+        `silence_timeout`, or `unproductive_turns_exhausted`. Stored on the
+        metadata so call summaries, transcripts, and dashboards can
+        distinguish *why* the agent hung up. The first reason wins so the
+        most actionable signal is preserved if multiple end paths fire
+        concurrently (e.g. silence timeout racing with a goodbye).
+        """
+        if self.metadata.agent_end_reason is None:
+            self.metadata.agent_end_reason = reason
+        self._add_outcome("agent_ended")
+
     def _add_outcome(self, outcome: str) -> None:
         # Explicit membership check prevents silent drops if a future outcome
         # is added without updating VALID_OUTCOMES.

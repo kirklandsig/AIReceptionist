@@ -47,6 +47,12 @@ def test_voice_idle_threshold_must_be_positive():
         VoiceIdleConfig(unproductive_turn_threshold=0)
 
 
+def test_voice_idle_max_duration_must_be_positive_when_set():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        VoiceIdleConfig(max_call_duration_seconds=0)
+
+
 def test_voice_idle_away_seconds_must_be_positive():
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
@@ -135,6 +141,7 @@ def _bare_receptionist(v2_yaml: str):
         lifecycle=lifecycle,
         session=MagicMock(),
         _consecutive_unproductive_turns=0,
+        _current_turn_has_user_input=False,
         _current_turn_used_tool=False,
         _current_turn_assistant_replied=False,
         _unproductive_end_scheduled=False,
@@ -172,6 +179,16 @@ def test_unproductive_counter_increments_on_deflection_phrase(v2_yaml):
     r._on_user_input_transcribed(_user_event())
     r._on_conversation_item_added(_assistant_item("I'm here to help!"))
     assert r._consecutive_unproductive_turns == 1
+
+
+def test_unproductive_counter_ignores_pre_user_agent_speech(v2_yaml):
+    r = _bare_receptionist(v2_yaml)
+    r.config.voice.idle.unproductive_turn_threshold = 1
+
+    r._on_conversation_item_added(_assistant_item("I'm here to help!"))
+
+    assert r._consecutive_unproductive_turns == 0
+    assert r.lifecycle.metadata.agent_end_reason is None
 
 
 def test_unproductive_counter_resets_on_function_tool_call(v2_yaml):

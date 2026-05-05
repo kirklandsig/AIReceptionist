@@ -477,6 +477,7 @@ class Receptionist(Agent):
         # _on_user_input_transcribed / _on_function_tools_executed /
         # _on_conversation_item_added for the full state machine.
         self._consecutive_unproductive_turns: int = 0
+        self._current_turn_has_user_input: bool = False
         self._current_turn_used_tool: bool = False
         self._current_turn_assistant_replied: bool = False
         self._unproductive_end_scheduled: bool = False
@@ -656,6 +657,7 @@ class Receptionist(Agent):
         """
         if not getattr(ev, "is_final", False):
             return
+        self._current_turn_has_user_input = True
         self._current_turn_used_tool = False
         self._current_turn_assistant_replied = False
 
@@ -680,6 +682,10 @@ class Receptionist(Agent):
             return
         item = getattr(ev, "item", None)
         if item is None or getattr(item, "role", None) != "assistant":
+            return
+        if not self._current_turn_has_user_input:
+            # Ignore greetings, consent preambles, and other proactive agent
+            # speech before the caller has produced a final transcript.
             return
         self._current_turn_assistant_replied = True
 

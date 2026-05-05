@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-import json
 import base64
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -119,6 +121,24 @@ def test_resolve_oauth_codex_refreshes_expired_access_token(tmp_path, monkeypatc
     assert saved["last_refresh"]
 
 
+def test_resolve_oauth_codex_removes_refresh_lock_file(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    expired = _jwt(exp=datetime.now(timezone.utc) - timedelta(minutes=5))
+    fresh = _jwt(exp=datetime.now(timezone.utc) + timedelta(minutes=30))
+    path.write_text(
+        json.dumps({"tokens": {"access_token": expired, "refresh_token": "refresh"}}),
+        encoding="utf-8",
+    )
+
+    def fake_post(*args, **kwargs):
+        return httpx.Response(200, json={"access_token": fresh})
+
+    monkeypatch.setattr("receptionist.voice_auth.httpx.post", fake_post)
+    auth = CodexOAuthVoiceAuth(type="oauth_codex", path=str(path))
+    assert resolve_voice_bearer(auth) == fresh
+    assert not (tmp_path / ".auth.json.refresh.lock").exists()
+
+
 def test_resolve_oauth_codex_uses_cache_when_file_still_expired(tmp_path, monkeypatch):
     path = tmp_path / "auth.json"
     expired = _jwt(exp=datetime.now(timezone.utc) - timedelta(minutes=5))
@@ -145,6 +165,43 @@ def test_resolve_oauth_codex_uses_cache_when_file_still_expired(tmp_path, monkey
         encoding="utf-8",
     )
     assert resolve_voice_bearer(auth) == fresh
+    assert calls == 1
+
+
+def test_resolve_oauth_codex_serializes_concurrent_refreshes(tmp_path, monkeypatch):
+    path = tmp_path / "auth.json"
+    expired = _jwt(exp=datetime.now(timezone.utc) - timedelta(minutes=5))
+    fresh = _jwt(exp=datetime.now(timezone.utc) + timedelta(minutes=30))
+    path.write_text(
+        json.dumps({"tokens": {"access_token": expired, "refresh_token": "refresh"}}),
+        encoding="utf-8",
+    )
+    entered_refresh = threading.Event()
+    release_refresh = threading.Event()
+    calls = 0
+
+    def fake_post(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        entered_refresh.set()
+        assert release_refresh.wait(timeout=2)
+        return httpx.Response(200, json={
+            "access_token": fresh,
+            "refresh_token": "rotated-refresh",
+        })
+
+    monkeypatch.setattr("receptionist.voice_auth.httpx.post", fake_post)
+    auth = CodexOAuthVoiceAuth(type="oauth_codex", path=str(path))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(resolve_voice_bearer, auth)
+        assert entered_refresh.wait(timeout=2)
+        second = pool.submit(resolve_voice_bearer, auth)
+        release_refresh.set()
+
+        assert first.result(timeout=2) == fresh
+        assert second.result(timeout=2) == fresh
+
     assert calls == 1
 
 

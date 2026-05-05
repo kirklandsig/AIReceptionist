@@ -65,7 +65,7 @@ def test_main_setup_existing_token_updates_yaml_without_codex_login(tmp_path, mo
     }
 
 
-def test_main_setup_copies_existing_source_auth_without_codex_login(tmp_path, monkeypatch, mocker):
+def test_main_setup_runs_codex_login_even_when_source_auth_exists(tmp_path, monkeypatch, mocker):
     _write_business_config(tmp_path, "testbiz")
     source = tmp_path / "codex" / "auth.json"
     _write_codex_auth(source)
@@ -82,13 +82,33 @@ def test_main_setup_copies_existing_source_auth_without_codex_login(tmp_path, mo
     ])
 
     assert exit_code == 0
-    run.assert_not_called()
+    run.assert_called_once_with(["codex", "login"], check=False)
     target = tmp_path / "secrets" / "testbiz" / "openai_auth.json"
     assert json.loads(target.read_text(encoding="utf-8"))["tokens"]["access_token"]
     config = yaml.safe_load((tmp_path / "config" / "businesses" / "testbiz.yaml").read_text(
         encoding="utf-8",
     ))
     assert config["voice"]["auth"]["path"] == "secrets/testbiz/openai_auth.json"
+
+
+def test_main_setup_can_reuse_existing_source_auth_for_smoke_tests(tmp_path, monkeypatch, mocker):
+    _write_business_config(tmp_path, "testbiz")
+    source = tmp_path / "codex" / "auth.json"
+    _write_codex_auth(source)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("receptionist.voice.setup_cli.shutil.which", lambda name: "codex")
+    run = mocker.patch("receptionist.voice.setup_cli.subprocess.run")
+
+    exit_code = main([
+        "setup", "testbiz",
+        "--codex-auth-source", str(source),
+        "--reuse-existing-codex-auth",
+    ])
+
+    assert exit_code == 0
+    run.assert_not_called()
+    target = tmp_path / "secrets" / "testbiz" / "openai_auth.json"
+    assert json.loads(target.read_text(encoding="utf-8"))["tokens"]["access_token"]
 
 
 def test_main_setup_runs_codex_login_when_source_missing_then_copies_auth(

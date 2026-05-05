@@ -90,8 +90,9 @@ class CallLifecycle:
     def record_agent_ended(self, reason: str) -> None:
         """Called when the agent itself decides to end the call (issues #10/#11).
 
-        `reason` is a short free-form label such as `caller_goodbye`,
-        `silence_timeout`, or `unproductive_turns_exhausted`. Stored on the
+        `reason` is a short label such as `caller_goodbye`,
+        `silence_timeout`, `max_duration_reached`, or
+        `unproductive_turns_exhausted`. Stored on the
         metadata so call summaries, transcripts, and dashboards can
         distinguish *why* the agent hung up. The first reason wins so the
         most actionable signal is preserved if multiple end paths fire

@@ -204,8 +204,8 @@ copy of the file.
 **Solution**:
 1. Run `python -m receptionist.voice setup <business>` and sign in again with the business's ChatGPT account.
 2. Confirm the YAML points at the intended per-business file, usually `secrets/<business>/openai_auth.json`.
-3. If multiple workers share a business, ensure they all mount the same token file path so refresh rotation is visible to every worker.
-4. If refresh continues to fail, run `codex login status` to confirm the base Codex login is still valid.
+3. The agent serializes concurrent refreshes with a per-file lock. If multiple worker processes share a business, ensure they all mount the same token file path so refresh rotation and the lock file are visible to every worker.
+4. If refresh continues to fail, run `codex login status` to confirm the base Codex login is still valid, then rerun setup.
 
 ### Codex CLI not found during voice setup
 

@@ -21,6 +21,7 @@ Traditional IVR systems frustrate callers with rigid menus. Human receptionists 
 |----------|-------------|
 | [Architecture](architecture.md) | How the system works end-to-end: call flow, component responsibilities, data model, and design decisions. |
 | [Configuration Reference](configuration-reference.md) | Complete reference for the YAML business configuration file — every field, every validation rule, every default. |
+| [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) | Use a ChatGPT/Codex login token for OpenAI Realtime so businesses can run from ChatGPT subscription entitlements instead of an API key. |
 | [Deployment Guide](deployment-guide.md) | Step-by-step instructions for deploying with LiveKit Cloud or self-hosted LiveKit, including SIP trunk setup with Twilio and Telnyx. |
 | [Development Guide](development-guide.md) | Local development setup, running tests, code organization, and contribution guidelines. |
 | [Function Tools Reference](function-tools-reference.md) | Detailed reference for each of the four agent function tools: `lookup_faq`, `transfer_call`, `take_message`, and `get_business_hours`. |
@@ -88,7 +89,7 @@ See the [Deployment Guide](deployment-guide.md) for production setup and the [Co
 
 - **Python 3.11+** (tested on 3.14.2, Windows 11)
 - **LiveKit Server** — Cloud account or self-hosted instance
-- **OpenAI API Key** — with Realtime API access
+- **OpenAI auth** — either an API key with Realtime API access or [ChatGPT OAuth](chatgpt-oauth-setup.md) through Codex CLI
 - **SIP Trunk** — Twilio or Telnyx account for phone number connectivity
 
 ---

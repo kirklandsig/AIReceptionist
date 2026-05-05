@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **ChatGPT OAuth setup documentation**: new
+  `documentation/chatgpt-oauth-setup.md` explains how to use a ChatGPT/Codex
+  login token for OpenAI Realtime so eligible ChatGPT subscriptions can power
+  calls instead of an OpenAI Platform API key. README, deployment,
+  development, configuration, troubleshooting, `.env.example`, and docs index
+  pages now link to the flow.
 - **`voice.idle` safety nets** (issue #11): three new defaults stop the
   agent from running indefinitely on silent or off-topic callers.
   - **Silence hangup** (default ON, 15s away + 30s grace = 45s total

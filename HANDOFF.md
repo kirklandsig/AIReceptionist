@@ -416,7 +416,7 @@ These should be set in a `.env` file (see `.env.example` for template):
 | `LIVEKIT_URL`         | LiveKit Cloud WebSocket URL                |
 | `LIVEKIT_API_KEY`     | LiveKit API key for authentication         |
 | `LIVEKIT_API_SECRET`  | LiveKit API secret for authentication      |
-| `OPENAI_API_KEY`      | OpenAI API key for Realtime API access     |
+| `OPENAI_API_KEY`      | OpenAI API key for Realtime API access (optional when every business uses `voice.auth.type: "oauth_codex"`) |
 
 ### Development Environment
 
@@ -649,7 +649,7 @@ bddec57 chore: initial project scaffolding with dependencies
 
 - Python 3.11 or 3.12 (recommended; 3.14 works but is not officially supported by livekit-agents)
 - A LiveKit Cloud account (or self-hosted LiveKit server)
-- An OpenAI API key with Realtime API access
+- OpenAI Realtime auth: either an API key or ChatGPT/Codex OAuth configured per business
 
 ### Setup Steps
 
@@ -672,7 +672,7 @@ cp .env.example .env
 #   LIVEKIT_URL=wss://aireceptionist-402e6ask.livekit.cloud
 #   LIVEKIT_API_KEY=<your key>
 #   LIVEKIT_API_SECRET=<your secret>
-#   OPENAI_API_KEY=<your key>
+#   OPENAI_API_KEY=<your key>   # optional when business YAML uses oauth_codex
 
 # 5. Run the tests to verify everything works
 pytest
@@ -713,7 +713,7 @@ python -m receptionist.agent dev
 
 ### Audio issues (silence, glitches, dropped audio)
 
-- Check your `OPENAI_API_KEY` -- the Realtime API requires specific access.
+- Check your OpenAI auth source: `OPENAI_API_KEY` for API-key auth, or the configured ChatGPT/Codex OAuth token file for `voice.auth.type: "oauth_codex"`.
 - Noise cancellation requires the `livekit-plugins-noise-cancellation` package. If it fails to load, the agent may still work but without noise cancellation.
 - Ensure the event loop is not being blocked (the `asyncio.to_thread` wrapper on `save_message` is specifically for this).
 
@@ -1075,6 +1075,11 @@ Review hardening after the smoke:
   logging in again, but otherwise runs `codex login` by default. Use
   `--reuse-existing-codex-auth` only for intentional non-interactive smoke
   tests that copy an existing Codex auth file.
+- Public docs now include `documentation/chatgpt-oauth-setup.md`, a dedicated
+  guide for using ChatGPT/Codex OAuth so businesses can authenticate Realtime
+  from eligible ChatGPT subscription accounts instead of an OpenAI Platform API
+  key. README, deployment, development, configuration, troubleshooting, and the
+  docs index link to it.
 
 ---
 

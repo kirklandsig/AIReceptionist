@@ -33,7 +33,7 @@ This project solves all of it:
 
 - **OpenAI Realtime API (speech-to-speech).** No transcription chain. The model hears the caller and speaks back directly. Sub-second response times. Natural turn-taking. The same model behind ChatGPT Advanced Voice.
 - **Self-hosted.** Runs on your infrastructure. Your data stays on your servers. Full control.
-- **No monthly SaaS fee.** You pay OpenAI for API usage (roughly $0.20-0.30/min) and that is it. No platform markup. No per-seat pricing. No "enterprise tier" upsell.
+- **No monthly SaaS fee.** Use a normal OpenAI API key or authenticate with a ChatGPT/Codex OAuth token so eligible ChatGPT subscriptions can power Realtime. No platform markup, no per-seat pricing, no "enterprise tier" upsell.
 - **Fully configurable.** Business hours, FAQs, call routing, voice selection, personality -- all defined in a simple YAML file. Change anything, redeploy in seconds.
 - **Multi-business from a single deployment.** One agent process handles calls for multiple businesses. Each phone number routes to its own config.
 - **Open source under AGPL-3.0.** The code is yours. Fork it, modify it, extend it. Nobody can take this and lock it behind a paywall without releasing their changes.
@@ -47,7 +47,7 @@ This project solves all of it:
 | **Voice fidelity** | OpenAI Realtime speech-to-speech -- near-human quality | Cascaded STT + LLM + TTS -- robotic, high latency |
 | **Response latency** | Sub-second (direct speech-to-speech) | 1-3 seconds (multi-hop pipeline) |
 | **Turn-taking** | Natural, model-native | Awkward pauses, interruptions |
-| **Monthly cost** | ~$0.20-0.30/min API usage only | $200-500/month subscription + per-minute overages |
+| **Monthly cost** | API-key usage or ChatGPT subscription auth; no platform fee | $200-500/month subscription + per-minute overages |
 | **Data privacy** | Your servers, your data | Third-party stores your call data |
 | **Customization** | Full source code, modify anything | Limited to what their dashboard exposes |
 | **Vendor lock-in** | None -- open source, standard SIP | Proprietary platform, migration is painful |
@@ -72,7 +72,7 @@ This project solves all of it:
 ## Prerequisites
 
 - Python 3.11+
-- OpenAI API key (with Realtime API access)
+- OpenAI auth: either an API key with Realtime API access or ChatGPT OAuth via Codex CLI
 - LiveKit server ([self-hosted](https://docs.livekit.io/home/self-hosting/local/) or [LiveKit Cloud](https://cloud.livekit.io))
 - SIP trunk provider (Twilio or Telnyx) with a phone number
 
@@ -90,8 +90,9 @@ pip install -e .
 
 ```bash
 cp .env.example .env
-# Edit .env with your keys:
-#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, OPENAI_API_KEY
+# Edit .env with your LiveKit keys:
+#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+# Add OPENAI_API_KEY, or configure ChatGPT OAuth in your business YAML.
 ```
 
 3. **Configure your business:**
@@ -129,6 +130,29 @@ Key sections:
 - `routing` -- departments/people the receptionist can transfer to
 - `faqs` -- question/answer pairs the receptionist draws from
 - `messages` -- how to store messages (file or webhook)
+
+### OpenAI Realtime Auth
+
+The default path is still `OPENAI_API_KEY`, but each business can also use a
+ChatGPT subscription login through Codex OAuth:
+
+```yaml
+voice:
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
+  auth:
+    type: "oauth_codex"
+    path: "secrets/my-business/openai_auth.json"
+```
+
+Set it up with:
+
+```bash
+python -m receptionist.voice setup my-business
+```
+
+See [`documentation/chatgpt-oauth-setup.md`](documentation/chatgpt-oauth-setup.md)
+for the full guide, including multi-business token files and refresh behavior.
 
 ## Message delivery channels
 
@@ -247,7 +271,11 @@ This loads `config/businesses/my-business.yaml`. Add as many business configs as
 
 ## Cost
 
-You pay OpenAI directly for Realtime API usage. There is no platform fee, no markup, no subscription.
+You can authenticate Realtime with either a normal OpenAI API key or a
+ChatGPT/Codex OAuth token. API-key deployments pay OpenAI Platform usage
+directly. ChatGPT OAuth deployments use the signed-in ChatGPT account's
+subscription entitlements when that account has access to the configured
+Realtime model. There is no AIReceptionist platform fee or markup.
 
 **Estimated cost:** ~$0.20-0.30 per minute of conversation.
 

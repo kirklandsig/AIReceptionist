@@ -217,9 +217,12 @@ voice:
     env: "ACME_OPENAI_KEY"  # default: OPENAI_API_KEY
 ```
 
-##### Codex OAuth auth
+##### ChatGPT / Codex OAuth auth
 
-Use the Codex CLI / ChatGPT-login OAuth access token. The agent reads
+Use the Codex CLI / ChatGPT-login OAuth access token. This lets a business use
+the signed-in ChatGPT account's subscription entitlements for OpenAI Realtime
+instead of an `OPENAI_API_KEY`, when that account has access to the configured
+model. The agent reads
 `tokens.access_token` from the JSON file and passes it as the Realtime bearer
 token. If the access token is expired or within 60 seconds of expiring, the
 agent uses `tokens.refresh_token` to refresh it through OpenAI's OAuth token
@@ -279,6 +282,10 @@ For non-interactive smoke tests only, `--reuse-existing-codex-auth` skips the
 login step when `--codex-auth-source` already contains a usable token. Do not
 use that flag for per-business onboarding unless you intentionally want to copy
 the currently logged-in Codex account.
+
+See [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) for the complete walkthrough,
+including subscription use, multi-business token files, refresh locking, and
+troubleshooting.
 
 ##### Static OAuth bearer auth
 

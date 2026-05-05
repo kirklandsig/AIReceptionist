@@ -71,7 +71,7 @@ receptionist/
 2. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from SIP participant metadata when available (`sip.phoneNumber`, `sip.fromUser`, `sip.from`, or `sip_<digits>` identity fallback), and filled later from the `participant_connected` event if the SIP participant had not joined yet
 3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id, api_key=await resolve_voice_bearer_async(config.voice.auth))`; explicit `oauth_codex` tokens refresh before session construction when needed
 4. `lifecycle.attach_transcript_capture(session)` subscribes to `user_input_transcribed`, `conversation_item_added`, `function_tools_executed` events
-5. `session.on("close", _handle_close)` registered — schedules `lifecycle.on_call_ended()` and resolves a future
+5. `session.on("close", _handle_close)` registered — cancels idle timers and schedules `lifecycle.on_call_ended()`
 6. `lifecycle.start_recording_if_enabled(ctx.room.name)` starts LiveKit Egress if `config.recording.enabled`
 
 ### 3. Greeting flow
@@ -86,16 +86,21 @@ receptionist/
   - `transfer_call` → `lifecycle.record_transfer(department)` → `transfer_target` + outcome="transferred"
   - `take_message` → `Dispatcher.dispatch_message(...)` (sync file + background email/webhook) → `lifecycle.record_message_taken()` → outcome="message_taken"
   - `get_business_hours` → no metadata change
+  - `end_call` → `lifecycle.record_agent_ended(reason)` → outcome="agent_ended" + `agent_end_reason`, then background goodbye + SIP BYE/delete-room termination
+- Idle safety nets run outside the LLM tool path:
+  - Silence timeout (`voice.idle.away_seconds + silence_grace_seconds`) → reason="silence_timeout"
+  - Max-duration cap (`voice.idle.max_call_duration_seconds`, when set) → reason="max_duration_reached"
+  - Consecutive unproductive replies (`voice.idle.unproductive_turn_threshold`) → reason="unproductive_turns_exhausted"
 
 ### 5. Disconnect
 1. `session` emits `close` event
-2. `_handle_close` schedules `lifecycle.on_call_ended()` via `asyncio.create_task`, then resolves `close_work_done`
+2. `_handle_close` cancels pending idle timers, then schedules `lifecycle.on_call_ended()` via `asyncio.create_task`
 3. `on_call_ended`:
    - `metadata.mark_finalized()` (sets end_ts, duration, outcome="hung_up" if none)
    - If recording: `stop_recording(handle)` returns artifact URL (local path or s3://)
    - If transcripts: `write_transcript_files(...)` writes JSON + Markdown
    - If `email.triggers.on_call_end`: `EmailChannel.deliver_call_end(metadata, context)` for each configured email channel
-4. `handle_call` awaits `close_work_done` (30s timeout) before returning — guarantees artifacts land before worker releases the call
+4. The LiveKit RTC job keeps the event loop alive until the room closes; close-time artifact work runs from the scheduled task
 
 ## Key design decisions
 

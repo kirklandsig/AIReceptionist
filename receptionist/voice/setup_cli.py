@@ -40,6 +40,15 @@ def main(argv: list[str] | None = None) -> int:
         default=str(DEFAULT_CODEX_AUTH_PATH),
         help="Source Codex auth.json path after codex login. Default: ~/.codex/auth.json.",
     )
+    setup.add_argument(
+        "--reuse-existing-codex-auth",
+        action="store_true",
+        help=(
+            "Skip codex login when --codex-auth-source already contains a usable "
+            "token. Intended for non-interactive smoke tests; for per-business "
+            "setup, leave this off so operators explicitly sign in."
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.command != "setup":
@@ -57,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
         args.business,
         auth_path_override=args.auth_path,
         codex_auth_source=Path(args.codex_auth_source).expanduser(),
+        reuse_existing_codex_auth=args.reuse_existing_codex_auth,
     )
 
 
@@ -65,6 +75,7 @@ def _run_setup(
     *,
     auth_path_override: str | None = None,
     codex_auth_source: Path = DEFAULT_CODEX_AUTH_PATH,
+    reuse_existing_codex_auth: bool = False,
 ) -> int:
     config_path = DEFAULT_CONFIG_DIR / f"{business_slug}.yaml"
     if not config_path.exists():
@@ -88,7 +99,7 @@ def _run_setup(
         print(f"[OK] Updated {config_path} voice.auth.path")
         return 0
 
-    if _source_auth_usable(codex_auth_source):
+    if reuse_existing_codex_auth and _source_auth_usable(codex_auth_source):
         print(f"Using existing Codex auth file at {codex_auth_source}")
     else:
         codex = shutil.which("codex")

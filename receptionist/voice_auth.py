@@ -7,10 +7,13 @@ import os
 import stat
 import sys
 import threading
+import time
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 
@@ -25,6 +28,9 @@ OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 OPENAI_CODEX_REFRESH_URL = "https://auth.openai.com/oauth/token"
 REFRESH_URL_ENV = "CODEX_REFRESH_TOKEN_URL_OVERRIDE"
 REFRESH_EXPIRY_SKEW_SECONDS = 60
+REFRESH_LOCK_TIMEOUT_SECONDS = 30.0
+REFRESH_LOCK_STALE_SECONDS = 120.0
+REFRESH_LOCK_POLL_SECONDS = 0.1
 
 
 @dataclass(frozen=True)
@@ -42,6 +48,7 @@ class _CachedToken:
 
 _CACHE_LOCK = threading.Lock()
 _TOKEN_CACHE: dict[tuple[Path, str], _CachedToken] = {}
+_REFRESH_LOCKS: dict[tuple[Path, str], threading.Lock] = {}
 
 
 class VoiceAuthError(RuntimeError):
@@ -83,12 +90,8 @@ def resolve_voice_bearer(auth: VoiceAuth | None) -> str | None:
 def inspect_codex_auth_file(path_str: str) -> TokenStatus:
     path = Path(path_str).expanduser()
     data = _read_auth_json(path)
-    tokens = data.get("tokens") or {}
-    access_token = tokens.get("access_token")
-    if not access_token:
-        raise VoiceAuthError(
-            f"voice.auth oauth_codex file is missing tokens.access_token: {path}"
-        )
+    tokens = _read_tokens(data, path)
+    access_token = _read_access_token(tokens, path)
     return TokenStatus(
         access_token=access_token,
         expires_at=_decode_jwt_exp(access_token),
@@ -99,12 +102,8 @@ def inspect_codex_auth_file(path_str: str) -> TokenStatus:
 def _read_codex_access_token(path_str: str) -> str:
     path = Path(path_str).expanduser()
     data = _read_auth_json(path)
-    tokens = data.get("tokens") or {}
-    access_token = tokens.get("access_token")
-    if not access_token:
-        raise VoiceAuthError(
-            f"voice.auth oauth_codex file is missing tokens.access_token: {path}"
-        )
+    tokens = _read_tokens(data, path)
+    access_token = _read_access_token(tokens, path)
     refresh_token = tokens.get("refresh_token")
     expires_at = _decode_jwt_exp(access_token)
     if not _should_refresh(expires_at):
@@ -121,24 +120,65 @@ def _read_codex_access_token(path_str: str) -> str:
             f"tokens.refresh_token: {path}"
         )
 
-    refreshed = _refresh_codex_tokens(refresh_token)
-    refreshed_access_token = refreshed.get("access_token")
-    if not refreshed_access_token:
-        raise VoiceAuthError("voice.auth oauth_codex refresh response missing access_token")
+    refresh_lock = _get_refresh_lock(path, refresh_token)
+    with refresh_lock:
+        with _refresh_file_lock(path):
+            # Another call may have refreshed and rotated the file while we
+            # waited. Re-read before POSTing so only one caller spends the
+            # refresh token.
+            data = _read_auth_json(path)
+            tokens = _read_tokens(data, path)
+            access_token = _read_access_token(tokens, path)
+            refresh_token = tokens.get("refresh_token")
+            expires_at = _decode_jwt_exp(access_token)
+            if not _should_refresh(expires_at):
+                _cache_token(path, refresh_token, access_token, expires_at)
+                return access_token
 
-    tokens["access_token"] = refreshed_access_token
-    if refreshed.get("refresh_token"):
-        tokens["refresh_token"] = refreshed["refresh_token"]
-    if refreshed.get("id_token"):
-        tokens["id_token"] = refreshed["id_token"]
-    data["tokens"] = tokens
-    data["last_refresh"] = datetime.now(timezone.utc).isoformat()
-    _write_auth_json(path, data)
+            cached = _get_cached_token(path, refresh_token)
+            if cached is not None and not _should_refresh(cached.expires_at):
+                return cached.access_token
 
-    new_refresh_token = tokens.get("refresh_token")
-    new_expires_at = _decode_jwt_exp(refreshed_access_token)
-    _cache_token(path, new_refresh_token, refreshed_access_token, new_expires_at)
-    return refreshed_access_token
+            if not refresh_token:
+                raise VoiceAuthError(
+                    f"voice.auth oauth_codex access_token is expired and file is missing "
+                    f"tokens.refresh_token: {path}"
+                )
+
+            refreshed = _refresh_codex_tokens(refresh_token)
+            refreshed_access_token = refreshed.get("access_token")
+            if not refreshed_access_token:
+                raise VoiceAuthError("voice.auth oauth_codex refresh response missing access_token")
+
+            tokens["access_token"] = refreshed_access_token
+            if refreshed.get("refresh_token"):
+                tokens["refresh_token"] = refreshed["refresh_token"]
+            if refreshed.get("id_token"):
+                tokens["id_token"] = refreshed["id_token"]
+            data["tokens"] = tokens
+            data["last_refresh"] = datetime.now(timezone.utc).isoformat()
+            _write_auth_json(path, data)
+
+            new_refresh_token = tokens.get("refresh_token")
+            new_expires_at = _decode_jwt_exp(refreshed_access_token)
+            _cache_token(path, new_refresh_token, refreshed_access_token, new_expires_at)
+            return refreshed_access_token
+
+
+def _read_tokens(data: dict[str, Any], path: Path) -> dict[str, Any]:
+    tokens = data.get("tokens") or {}
+    if not isinstance(tokens, dict):
+        raise VoiceAuthError(f"voice.auth oauth_codex file tokens must be an object: {path}")
+    return tokens
+
+
+def _read_access_token(tokens: dict[str, Any], path: Path) -> str:
+    access_token = tokens.get("access_token")
+    if not access_token:
+        raise VoiceAuthError(
+            f"voice.auth oauth_codex file is missing tokens.access_token: {path}"
+        )
+    return access_token
 
 
 def _read_auth_json(path: Path) -> dict[str, Any]:
@@ -226,6 +266,83 @@ def _get_cached_token(path: Path, refresh_token: str | None) -> _CachedToken | N
         return _TOKEN_CACHE.get((path, refresh_token))
 
 
+def _get_refresh_lock(path: Path, refresh_token: str) -> threading.Lock:
+    with _CACHE_LOCK:
+        key = (path, refresh_token)
+        lock = _REFRESH_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _REFRESH_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _refresh_file_lock(path: Path) -> Iterator[None]:
+    lock_path = path.with_name(f".{path.name}.refresh.lock")
+    deadline = time.monotonic() + REFRESH_LOCK_TIMEOUT_SECONDS
+    fd: int | None = None
+    owner = f"{os.getpid()}:{uuid.uuid4().hex}\n"
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, owner.encode("ascii"))
+            break
+        except FileExistsError:
+            if _remove_stale_refresh_lock(lock_path):
+                continue
+            if time.monotonic() >= deadline:
+                raise VoiceAuthError(
+                    f"voice.auth oauth_codex timed out waiting for refresh lock: {lock_path}"
+                )
+            time.sleep(REFRESH_LOCK_POLL_SECONDS)
+        except OSError as e:
+            raise VoiceAuthError(
+                f"voice.auth oauth_codex could not create refresh lock: {lock_path}"
+            ) from e
+
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        _remove_refresh_lock_if_owner(lock_path, owner)
+
+
+def _remove_stale_refresh_lock(lock_path: Path) -> bool:
+    try:
+        age = time.time() - lock_path.stat().st_mtime
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    if age <= REFRESH_LOCK_STALE_SECONDS:
+        return False
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _remove_refresh_lock_if_owner(lock_path: Path, owner: str) -> None:
+    try:
+        current_owner = lock_path.read_text(encoding="ascii")
+    except FileNotFoundError:
+        return
+    except OSError:
+        return
+    if current_owner != owner:
+        return
+    try:
+        lock_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
 def _cache_token(
     path: Path, refresh_token: str | None, access_token: str, expires_at: int | None,
 ) -> None:
@@ -238,6 +355,7 @@ def _cache_token(
 def _clear_token_cache() -> None:
     with _CACHE_LOCK:
         _TOKEN_CACHE.clear()
+        _REFRESH_LOCKS.clear()
 
 
 def _write_auth_json(path: Path, data: dict[str, Any]) -> None:

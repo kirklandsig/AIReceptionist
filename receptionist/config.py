@@ -96,7 +96,7 @@ class VoiceIdleConfig(BaseModel):
     are looking up information or muting their phone."""
 
     # ---- Max call duration ----------------------------------------------
-    max_call_duration_seconds: int | None = None
+    max_call_duration_seconds: int | None = Field(default=None, gt=0)
     """Optional ceiling on the total call duration. None disables the cap
     entirely (default — preserve original behavior). Set to e.g. 900 to
     cap calls at 15 minutes; the agent will say goodbye and disconnect

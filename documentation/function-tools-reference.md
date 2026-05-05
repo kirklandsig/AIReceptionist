@@ -498,10 +498,8 @@ The system prompt instructs the LLM:
 ### Hangup Sequence
 
 1. The tool records the `agent_ended` outcome and `agent_end_reason` on the call lifecycle **first** so even if the hangup races the LiveKit close event, the call summary already shows agent-ended with the reason.
-2. The tool calls `ctx.session.generate_reply(...)` with goodbye instructions and stores the resulting `SpeechHandle`.
-3. The tool schedules a background task that:
-   1. Awaits `handle.wait_for_playout()` (with a 10-second hard timeout so a stuck TTS never wedges the call open).
-   2. Calls the module-level `_terminate_room` helper.
+2. The tool schedules a background task that calls `ctx.session.generate_reply(...)` with goodbye instructions and stores the resulting `SpeechHandle`.
+3. That background task awaits `handle.wait_for_playout()` (with a 10-second hard timeout so a stuck TTS never wedges the call open), then calls the module-level `_terminate_room` helper.
 4. The tool returns a short string immediately so the LLM doesn't block its own turn.
 
 `_terminate_room` prefers SIP BYE via `RoomService.remove_participant`, which drops just the caller and leaves the agent's close handler to fire normally. If `remove_participant` fails (token missing `room_admin`, participant already gone), it falls back to `RoomService.delete_room`, which closes the entire room and triggers the participant-disconnect close path. If even `delete_room` fails, the error is logged and the close handler eventually fires from natural disconnect.

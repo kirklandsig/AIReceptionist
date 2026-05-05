@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-05-01
+> **Last updated:** 2026-05-05
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -453,8 +453,8 @@ logic, lifecycle metadata, messaging channels, email rendering/senders,
 recording, transcript capture/formatting/writing, retention, Google Calendar
 booking, and integration-level call/booking flows.
 
-**Current result:** `325 passed, 2 skipped` via `python -m pytest` on
-2026-05-01.
+**Current result:** `374 passed, 2 skipped` via
+`.\venv\Scripts\python.exe -m pytest -q` on 2026-05-05.
 
 ### What Is NOT Tested
 
@@ -1058,17 +1058,55 @@ the business slug, uses an existing `voice.auth.path` or defaults to
 and updates the business YAML `voice.auth` block in place.
 
 Unit coverage includes `tests/test_voice_auth.py` and
-`tests/test_voice_setup_cli.py`. This still needs a live smoke test before
-commit: run `python -m receptionist.voice setup example-dental`, then
-`RECEPTIONIST_CONFIG=example-dental python -m receptionist.agent dev`, and
-verify the LiveKit playground can connect to `gpt-realtime-1.5` using the
-ChatGPT-login OAuth token. Also force one expired-access-token case while
-preserving the refresh token to verify live refresh against OpenAI.
+`tests/test_voice_setup_cli.py`. Live OAuth smoke completed on 2026-05-05:
+`python -m receptionist.voice setup example-dental` created the local token
+file, a forced expired-access-token refresh succeeded against
+`https://auth.openai.com/oauth/token`, and the LiveKit Playground connected to
+`gpt-realtime-1.5` with the ChatGPT-login OAuth bearer (no `401`, invalid
+bearer, or scope errors observed). The tracked example YAML was reverted after
+the smoke so no local secret path is committed.
 
-Current local status as of 2026-05-01: OAuth/API auth work is implemented but
-uncommitted. Full automated suite passes at `325 passed, 2 skipped` via
-`.\venv\Scripts\python.exe -m pytest`. A safe local Codex resolver check
-against `~/.codex/auth.json` succeeded (`access_token` length observed, expiry
-claim present, `refresh_token` present; no secrets printed). Remaining blocker
-before commit is live Realtime smoke testing with `example-dental`, including
-one forced expired-access-token refresh case.
+Review hardening after the smoke:
+
+- `oauth_codex` refresh now serializes concurrent refreshes with an in-process
+  lock plus a per-file refresh lock, then re-reads the auth file after waiting
+  so simultaneous calls/workers do not spend the same rotating refresh token.
+- The setup CLI validates an existing per-business target token without
+  logging in again, but otherwise runs `codex login` by default. Use
+  `--reuse-existing-codex-auth` only for intentional non-interactive smoke
+  tests that copy an existing Codex auth file.
+
+---
+
+## Addendum — 2026-05-05: Trinicom issues #9, #10, #11
+
+Issue #9 (CallerID): `_get_sip_participant_phone()` is now kind-agnostic. It
+checks `sip.phoneNumber`, `sip.fromUser`, `sip.from`, and finally identities
+matching `sip_<digits>` even when LiveKit marks the participant as non-SIP.
+`_get_caller_identity()` still prefers SIP-kind participants for transfer and
+hangup targeting, but falls back to the same `sip_<digits>` identity pattern.
+`handle_call()` also listens for `participant_attributes_changed` so late
+`sip.*` metadata can populate `metadata.caller_phone`. Always-on INFO logs use
+`component="agent.callerid"` so production CallerID failures can be diagnosed
+without debug logging.
+
+Issue #10 (agent-initiated goodbye): `Receptionist.end_call()` records
+`outcome="agent_ended"` plus `agent_end_reason` synchronously, then schedules a
+background goodbye + hangup. `_speak_goodbye_and_terminate()` waits up to 10s
+for goodbye playout, then `_terminate_room()` prefers
+`RoomService.remove_participant` (SIP BYE) and falls back to `delete_room`.
+Emails, Markdown transcripts, and metadata JSON render the new outcome/reason.
+
+Issue #11 (idle safety nets): `VoiceConfig.idle` adds three independent limits.
+Silence hangup is on by default (`away_seconds=15`, `silence_grace_seconds=30`),
+max call duration is off by default (`max_call_duration_seconds=None`, positive
+integer required when set), and unproductive-turn hangup is on by default at 5
+consecutive stuck replies. Unproductive scoring requires a final caller
+transcript first, so greetings/consent preambles cannot consume the budget, and
+any function-tool execution resets the counter.
+
+Automated coverage for the 2026-05-05 work includes OAuth resolver/setup tests,
+CallerID helper tests, `end_call`/termination helper tests, lifecycle/email/
+transcript metadata tests, and `voice.idle` schema + unproductive-counter tests.
+The full suite after review hardening passes at `374 passed, 2 skipped` via
+`.\venv\Scripts\python.exe -m pytest -q`.

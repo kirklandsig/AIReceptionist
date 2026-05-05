@@ -244,9 +244,10 @@ To create a per-business token file, run:
 python -m receptionist.voice setup example-dental
 ```
 
-The setup command launches `codex login`, copies the resulting Codex auth file
-to `secrets/<business>/openai_auth.json`, validates the token, and updates the
-business YAML in place:
+If the target token file is already usable, the setup command validates it and
+updates the YAML without logging in again. Otherwise, it launches `codex login`,
+copies the resulting Codex auth file to `secrets/<business>/openai_auth.json`,
+validates the token, and updates the business YAML in place:
 
 ```yaml
 voice:
@@ -273,6 +274,11 @@ voice:
     type: "oauth_codex"
     path: "secrets/trinicom/openai_auth.json"
 ```
+
+For non-interactive smoke tests only, `--reuse-existing-codex-auth` skips the
+login step when `--codex-auth-source` already contains a usable token. Do not
+use that flag for per-business onboarding unless you intentionally want to copy
+the currently logged-in Codex account.
 
 ##### Static OAuth bearer auth
 
@@ -304,7 +310,7 @@ duration cap.
 | `silence_hangup_enabled` | bool | `true` | Master switch for the silence-timeout path. |
 | `away_seconds` | float | `15.0` | Seconds of silence before LiveKit's `user_state` flips to `away`. |
 | `silence_grace_seconds` | float | `30.0` | Additional seconds the agent waits after `away` before hanging up. |
-| `max_call_duration_seconds` | int or null | `null` | Optional ceiling on total call duration in seconds. `null` disables. |
+| `max_call_duration_seconds` | int or null | `null` | Optional ceiling on total call duration in seconds. `null` disables. Must be greater than 0 when set. |
 | `unproductive_hangup_enabled` | bool | `true` | Master switch for the unproductive-turn ceiling. |
 | `unproductive_turn_threshold` | int | `5` | Consecutive unproductive replies before the agent ends. |
 | `unproductive_phrases` | list[str] | tuned defaults | Substrings (case-insensitive) that mark a reply as a deflection. |

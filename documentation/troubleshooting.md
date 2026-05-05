@@ -265,22 +265,40 @@ copy of the file.
 **Symptom**: A real phone call has CallerID, but call-end emails or
 transcript headers show `Caller: Unknown`.
 
-**Cause**: Current versions capture CallerID from SIP participant metadata
-when the call starts and again when the SIP participant connects. Resolution
-checks `sip.phoneNumber`, `sip.fromUser`, `sip.from`, and LiveKit SIP
-participant identities such as `sip_17135550038`. If `Unknown` still appears,
-the SIP trunk is not exposing CallerID through any of those fields.
+**Cause**: Current versions capture CallerID three ways:
+1. At `handle_call` snapshot (room scan when the agent picks up).
+2. On every `participant_connected` event.
+3. On every `participant_attributes_changed` event for any `sip.*`
+   attribute, in case the trunk publishes CallerID after the participant
+   has already joined the room.
+
+Resolution checks (in order, kind-agnostic since 2026-05):
+- attribute `sip.phoneNumber`
+- attribute `sip.fromUser` (Telnyx setups)
+- attribute `sip.from` (URI or full SIP FROM header)
+- participant identity matching `sip_<digits>` (Asterisk BYOC pattern)
+
+If `Unknown` still appears, the SIP trunk is not exposing CallerID through
+any of those fields.
 
 **Solution**:
-1. Pull the latest `main` branch. Older versions read caller attributes
-   before the SIP participant had joined the room, which made `Unknown`
-   deterministic on some setups.
-2. Check the LiveKit room participant attributes and identity for the SIP
-   caller. Useful fields are `sip.phoneNumber`, `sip.fromUser`, `sip.from`,
-   and identities in the `sip_<digits>` format.
+1. Pull the latest `main` branch. Earlier versions short-circuited on
+   `participant.kind != PARTICIPANT_KIND_SIP`, which made the
+   identity-regex fallback unreachable on BYOC/Asterisk trunks that emit
+   the SIP participant with a different kind value.
+2. Check the always-on INFO logs with `component=agent.callerid` in your
+   agent log stream. Each capture attempt records `participant_identity`,
+   `participant_kind`, and the attribute keys the trunk actually published.
+   The handle-call snapshot also records every remote participant present
+   at pickup time.
 3. If using BYOC/Asterisk, verify your trunk is forwarding caller ID into
    LiveKit. Some SIP setups need explicit caller-ID mapping or header
-   forwarding.
+   forwarding. The `agent.callerid` logs will show whether the trunk is
+   publishing any `sip.*` attributes at all.
+4. If you've redeployed the fix and still see `Unknown`, ensure your
+   server has cleared any `__pycache__/` directories and that the running
+   process is the one with the new code (check the start-up timestamp
+   against the deploy time).
 
 ### One-way audio (caller hears agent but agent does not hear caller, or vice versa)
 

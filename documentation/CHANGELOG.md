@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **CallerID resolution for non-SIP-kind participants** (issue #9):
+  the SIP participant resolver no longer requires
+  `participant.kind == PARTICIPANT_KIND_SIP`. Some BYOC/Asterisk SIP trunks
+  publish the SIP participant with a different kind value but with an
+  identity matching `sip_<digits>` and/or `sip.*` attributes. The kind gate
+  was the silent-`Unknown` trap reported by @trinicomcom: even though the
+  identity was clearly `sip_17135550038`, the helper short-circuited before
+  the identity-regex fallback ran. The kind comparison is preserved as a
+  preference in `_get_caller_identity` (SIP-kind participants still win) but
+  is no longer a precondition.
+- **Late SIP attribute updates** are now captured: `handle_call` subscribes
+  to `participant_attributes_changed` and re-runs CallerID capture when any
+  `sip.*` attribute arrives after the participant has already joined the
+  room (Telnyx INVITE → PRACK delay, Asterisk diversion-header late update).
+
+### Changed
+- **Always-on `agent.callerid` INFO logs** record the snapshot at
+  `handle_call` start, the participant identity/kind/attribute keys for
+  every capture attempt, and a clear positive/negative result line. Operators
+  no longer need to flip a debug flag to diagnose CallerID issues.
+
 ### Added
 - **Per-business OpenAI Realtime auth selection**: `voice.auth` can now
   choose how each business authenticates to the Realtime API. Omitting

@@ -10,6 +10,8 @@ from livekit import rtc
 
 from receptionist.agent import (
     _capture_caller_phone_from_participant,
+    _get_caller_identity,
+    _get_caller_phone,
     _get_sip_participant_phone,
     _resolve_relative_date,
 )
@@ -81,12 +83,28 @@ def test_get_sip_participant_phone_reads_sip_attribute():
     assert _get_sip_participant_phone(participant) == "+15551112222"
 
 
-def test_get_sip_participant_phone_ignores_non_sip_participant():
+def test_get_sip_participant_phone_uses_attribute_regardless_of_kind():
+    """BYOC/Asterisk trunks may emit the SIP participant with a non-SIP kind.
+
+    The kind gate was removed in 2026-05; the helper now relies on attributes
+    and the `sip_<digits>` identity regex, both of which are specific enough
+    that false positives from non-SIP participants are not a real risk.
+    """
     participant = _participant(
         rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
         {"sip.phoneNumber": "+15551112222"},
     )
-    assert _get_sip_participant_phone(participant) is None
+    assert _get_sip_participant_phone(participant) == "+15551112222"
+
+
+def test_get_sip_participant_phone_uses_identity_regardless_of_kind():
+    """Issue #9 regression: a STANDARD-kind participant whose identity is
+    `sip_<digits>` (Asterisk BYOC pattern) must still resolve to a phone."""
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+        identity="sip_17135550038",
+    )
+    assert _get_sip_participant_phone(participant) == "+17135550038"
 
 
 def test_get_sip_participant_phone_prefers_explicit_sip_attribute():
@@ -138,6 +156,17 @@ def test_get_sip_participant_phone_ignores_non_phone_identity():
     assert _get_sip_participant_phone(participant) is None
 
 
+def test_get_sip_participant_phone_returns_none_for_irrelevant_participant():
+    """A non-SIP participant with no sip.* attributes and a non-SIP identity
+    must not produce a phone (no false positives from the relaxed kind gate)."""
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+        attrs={"agent.state": "listening"},
+        identity="agent-12345",
+    )
+    assert _get_sip_participant_phone(participant) is None
+
+
 def test_capture_caller_phone_from_connected_sip_participant(v2_yaml):
     from receptionist.config import BusinessConfig
     config = BusinessConfig.from_yaml_string(v2_yaml)
@@ -157,6 +186,126 @@ def test_capture_caller_phone_from_sip_participant_without_phone_is_noop(v2_yaml
     participant = _participant(rtc.ParticipantKind.PARTICIPANT_KIND_SIP)
     _capture_caller_phone_from_participant(lifecycle, participant)
     assert lifecycle.metadata.caller_phone is None
+
+
+def test_capture_caller_phone_from_byoc_identity_only_participant(v2_yaml):
+    """Issue #9 regression: an Asterisk/BYOC participant with kind=STANDARD
+    and identity `sip_<digits>` must have its phone captured. The kind gate
+    was the silent-Unknown trap reported by @trinicomcom."""
+    from receptionist.config import BusinessConfig
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone=None)
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+        identity="sip_17135550038",
+    )
+    _capture_caller_phone_from_participant(lifecycle, participant)
+    assert lifecycle.metadata.caller_phone == "+17135550038"
+
+
+def test_capture_caller_phone_logs_negative_result_at_info(caplog, v2_yaml):
+    """Issue #9: operators need a clear INFO log when CallerID can't be
+    resolved, so they can see what attributes/identity the SIP trunk
+    actually published without flipping debug flags."""
+    import logging
+
+    from receptionist.config import BusinessConfig
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone=None)
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_SIP,
+        attrs={"sip.callId": "abc-123"},
+        identity="sip_agent_smith",
+    )
+    with caplog.at_level(logging.INFO, logger="receptionist"):
+        _capture_caller_phone_from_participant(lifecycle, participant)
+    matched = [
+        r for r in caplog.records
+        if getattr(r, "component", None) == "agent.callerid"
+    ]
+    assert matched, "expected an agent.callerid INFO log record"
+    msg = matched[0].getMessage()
+    assert "no phone resolvable" in msg
+    assert "sip_agent_smith" in msg
+    # And the structured `extra` carries source/identity for log shippers
+    record = matched[0]
+    assert record.source == "snapshot"
+    assert record.participant_identity == "sip_agent_smith"
+
+
+def test_capture_caller_phone_logs_positive_result_at_info(caplog, v2_yaml):
+    import logging
+
+    from receptionist.config import BusinessConfig
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-abc", caller_phone=None)
+    participant = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD,
+        identity="sip_17135550038",
+    )
+    with caplog.at_level(logging.INFO, logger="receptionist"):
+        _capture_caller_phone_from_participant(
+            lifecycle, participant, source="participant_attributes_changed",
+        )
+    matched = [
+        r for r in caplog.records
+        if getattr(r, "component", None) == "agent.callerid"
+        and "captured caller phone" in r.getMessage()
+    ]
+    assert matched, "expected a successful capture INFO log record"
+    assert matched[0].source == "participant_attributes_changed"
+
+
+# ---- _get_caller_identity / _get_caller_phone room-level tests ----
+
+
+def _ctx(*participants):
+    """Minimal JobContext stand-in: just exposes ctx.room.remote_participants."""
+    room = SimpleNamespace(
+        name="test-room",
+        remote_participants={p.identity or f"id-{i}": p for i, p in enumerate(participants)},
+    )
+    return SimpleNamespace(room=room)
+
+
+def test_get_caller_identity_prefers_sip_kind():
+    sip_p = _participant(rtc.ParticipantKind.PARTICIPANT_KIND_SIP, identity="sip_17135550038")
+    standard_p = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD, identity="sip_19998887777",
+    )
+    assert _get_caller_identity(_ctx(standard_p, sip_p)) == "sip_17135550038"
+
+
+def test_get_caller_identity_falls_back_to_byoc_identity_when_no_sip_kind():
+    """Issue #9: BYOC trunks may publish the SIP participant with a non-SIP kind.
+    Identity-based fallback keeps caller-identity resolution working."""
+    standard_p = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD, identity="sip_17135550038",
+    )
+    assert _get_caller_identity(_ctx(standard_p)) == "sip_17135550038"
+
+
+def test_get_caller_identity_returns_empty_when_no_sip_like_participant(caplog):
+    """Issue #9: the warning is preserved when nothing looks SIP-like; caller
+    identity becomes the empty string and downstream code knows to skip
+    SIP-specific operations."""
+    import logging
+
+    standard_p = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD, identity="agent-12345",
+    )
+    with caplog.at_level(logging.WARNING):
+        assert _get_caller_identity(_ctx(standard_p)) == ""
+    assert any("No SIP participant" in r.getMessage() for r in caplog.records)
+
+
+def test_get_caller_phone_uses_byoc_identity_when_attributes_missing():
+    """Issue #9 regression: phone resolves from a STANDARD-kind participant
+    whose identity is `sip_<digits>` (Asterisk/BYOC pattern)."""
+    standard_p = _participant(
+        rtc.ParticipantKind.PARTICIPANT_KIND_STANDARD, identity="sip_17135550038",
+    )
+    assert _get_caller_phone(_ctx(standard_p)) == "+17135550038"
 
 
 # ---- _offered_slot_batches eviction tests (memory cap) ----

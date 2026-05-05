@@ -158,16 +158,27 @@ def load_business_config(ctx: agents.JobContext) -> BusinessConfig:
 
 
 def _get_caller_identity(ctx: agents.JobContext) -> str:
-    """Get the SIP caller's participant identity from the room."""
+    """Get the SIP caller's participant identity from the room.
+
+    Prefers participants whose kind is `PARTICIPANT_KIND_SIP`, but falls back
+    to any participant whose identity matches `sip_<digits>` so BYOC/Asterisk
+    trunks that publish a different kind value still work.
+    """
+    fallback = ""
     for participant in ctx.room.remote_participants.values():
         if participant.kind == rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
             return participant.identity
+        identity = getattr(participant, "identity", "")
+        if identity and _SIP_IDENTITY_PHONE_RE.fullmatch(identity.strip()):
+            fallback = fallback or identity
+    if fallback:
+        return fallback
     logger.warning("No SIP participant found in room %s", ctx.room.name)
     return ""
 
 
 def _get_caller_phone(ctx: agents.JobContext) -> str | None:
-    """Best-effort extract caller phone number from SIP participant metadata."""
+    """Best-effort extract caller phone number from any room participant."""
     for participant in ctx.room.remote_participants.values():
         phone = _get_sip_participant_phone(participant)
         if phone:
@@ -176,8 +187,19 @@ def _get_caller_phone(ctx: agents.JobContext) -> str | None:
 
 
 def _get_sip_participant_phone(participant: rtc.RemoteParticipant) -> str | None:
-    if participant.kind != rtc.ParticipantKind.PARTICIPANT_KIND_SIP:
-        return None
+    """Resolve a phone number for `participant`, kind-agnostic.
+
+    Order of attempts:
+      1. SIP attribute `sip.phoneNumber` (LiveKit Cloud + most BYOC trunks)
+      2. SIP attribute `sip.fromUser` (some Telnyx setups)
+      3. SIP attribute `sip.from` URI / FROM-header value
+      4. Participant identity matching `sip_<digits>` (Asterisk BYOC pattern)
+
+    The kind gate was removed in 2026-05 because some BYOC/Asterisk trunks
+    emit the SIP participant with a non-SIP kind value, but its identity
+    still matches `sip_<digits>`. The identity regex is specific enough
+    that false positives from non-SIP participants are not a real risk.
+    """
     attrs = getattr(participant, "attributes", {}) or {}
     phone = attrs.get("sip.phoneNumber")
     if phone:
@@ -212,10 +234,43 @@ def _get_sip_phone_from_identity(identity: str) -> str | None:
 
 def _capture_caller_phone_from_participant(
     lifecycle: CallLifecycle, participant: rtc.RemoteParticipant,
+    *, source: str = "snapshot",
 ) -> None:
+    """Set caller_phone from a participant if not yet known.
+
+    Always-on INFO logs (component=`agent.callerid`) record both the
+    successful capture path and the negative result so on-call operators
+    can diagnose CallerID issues without flipping debug flags. The
+    participant identity is logged so BYOC/Asterisk trunks emitting
+    `sip_<digits>` are visible in production logs.
+    """
     phone = _get_sip_participant_phone(participant)
+    identity = getattr(participant, "identity", "") or ""
+    kind = getattr(participant, "kind", None)
+    extra = {
+        "call_id": lifecycle.metadata.call_id,
+        "component": "agent.callerid",
+        "source": source,
+        "participant_identity": identity,
+        "participant_kind": int(kind) if kind is not None else None,
+    }
     if phone:
+        already_set = lifecycle.metadata.caller_phone is not None
         lifecycle.set_caller_phone(phone)
+        if already_set:
+            logger.info(
+                "callerid: phone %s already captured; new candidate %s ignored",
+                lifecycle.metadata.caller_phone, phone, extra=extra,
+            )
+        else:
+            logger.info("callerid: captured caller phone %s", phone, extra=extra)
+        return
+    logger.info(
+        "callerid: no phone resolvable from participant identity=%r attrs_keys=%s",
+        identity,
+        sorted((getattr(participant, "attributes", {}) or {}).keys()),
+        extra=extra,
+    )
 
 
 class Receptionist(Agent):
@@ -667,12 +722,52 @@ async def handle_call(ctx: agents.JobContext):
         caller_phone=_get_caller_phone(ctx),
     )
 
+    logger.info(
+        "callerid: handle_call snapshot caller_phone=%s room=%s",
+        lifecycle.metadata.caller_phone, ctx.room.name,
+        extra={
+            "call_id": lifecycle.metadata.call_id,
+            "component": "agent.callerid",
+            "source": "handle_call_snapshot",
+            "remote_participants": [
+                {
+                    "identity": getattr(p, "identity", ""),
+                    "kind": int(getattr(p, "kind", 0) or 0),
+                    "attrs": sorted((getattr(p, "attributes", {}) or {}).keys()),
+                }
+                for p in ctx.room.remote_participants.values()
+            ],
+        },
+    )
+
     def _handle_participant_connected(participant: rtc.RemoteParticipant) -> None:
-        _capture_caller_phone_from_participant(lifecycle, participant)
+        _capture_caller_phone_from_participant(
+            lifecycle, participant, source="participant_connected",
+        )
+
+    def _handle_participant_attributes_changed(
+        changed_attributes: dict[str, str], participant: rtc.RemoteParticipant,
+    ) -> None:
+        # SIP trunks sometimes publish caller-id attributes after the participant
+        # has already joined the room (e.g. Telnyx INVITE → PRACK delay, Asterisk
+        # diversion-header late update). Re-run capture if any sip.* attribute
+        # changed and we don't have a phone yet.
+        if lifecycle.metadata.caller_phone is not None:
+            return
+        if not any(k.startswith("sip.") for k in (changed_attributes or {})):
+            return
+        _capture_caller_phone_from_participant(
+            lifecycle, participant, source="participant_attributes_changed",
+        )
 
     ctx.room.on("participant_connected", _handle_participant_connected)
+    ctx.room.on(
+        "participant_attributes_changed", _handle_participant_attributes_changed,
+    )
     for participant in ctx.room.remote_participants.values():
-        _capture_caller_phone_from_participant(lifecycle, participant)
+        _capture_caller_phone_from_participant(
+            lifecycle, participant, source="initial_scan",
+        )
 
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(

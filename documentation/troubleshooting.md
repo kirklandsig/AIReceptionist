@@ -260,6 +260,56 @@ copy of the file.
 4. Check LiveKit logs for SIP REFER/transfer errors.
 5. Some SIP trunk configurations require explicit outbound/termination setup separate from inbound/origination.
 
+### Agent never hangs up, even after caller leaves the line silent
+
+**Symptom**: After the caller stops talking — or walks away from the
+phone — the agent stays on the line indefinitely, racking up SIP and
+Realtime usage.
+
+**Cause**: `voice.idle.silence_hangup_enabled` is `false`, or the
+`away_seconds + silence_grace_seconds` total is too long for the
+business's tolerance.
+
+**Solution**:
+1. Confirm `voice.idle.silence_hangup_enabled: true` in the business YAML
+   (default is true; explicit `false` disables the path).
+2. Tune `voice.idle.away_seconds` (default 15s) and
+   `voice.idle.silence_grace_seconds` (default 30s); the total is the
+   maximum silence before the agent says goodbye.
+3. The hangup is recorded as `outcomes: ["agent_ended"]` with
+   `agent_end_reason: "silence_timeout"`. Check the call summary email
+   to confirm the new path fired.
+
+### Agent hangs up with `agent_end_reason: unproductive_turns_exhausted`
+
+**Symptom**: A call ends with the agent-ended outcome and reason
+`unproductive_turns_exhausted` even though the caller was making good
+faith requests.
+
+**Cause**: `voice.idle.unproductive_phrases` matched the agent's reply
+text on N consecutive turns where no function tool fired. Common false
+positive: chit-chat or empathetic interjections containing one of the
+default substrings (e.g. "I'm here to help" used as a greeting).
+
+**Solution**:
+1. Inspect the markdown transcript to see which agent replies were scored
+   unproductive (the `agent.unproductive` INFO logs record `count` and
+   `threshold`).
+2. Trim the `voice.idle.unproductive_phrases` list to drop the noisy
+   substring, or raise `voice.idle.unproductive_turn_threshold` (default 5).
+3. To disable entirely, set `voice.idle.unproductive_hangup_enabled: false`.
+
+### Agent hangs up with `agent_end_reason: max_duration_reached`
+
+**Symptom**: Calls cut off at exactly the same elapsed time, regardless of
+the caller's intent.
+
+**Cause**: `voice.idle.max_call_duration_seconds` is set; the cap was
+hit. This setting defaults to `null` (no cap).
+
+**Solution**: Adjust or remove `voice.idle.max_call_duration_seconds`
+to match the longest call your business reasonably needs.
+
 ### Caller shows as `Unknown` in call-end email or transcript
 
 **Symptom**: A real phone call has CallerID, but call-end emails or

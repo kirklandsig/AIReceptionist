@@ -31,6 +31,14 @@ Each checkbox should be checked off in the PR description or release notes; unch
 - [ ] Call summary email shows `Agent ended` outcome and `Agent end reason: caller_goodbye`
 - [ ] Logs include `end_call: removed participant <identity>` (or, on fallback, `end_call: deleted room <name>`)
 
+## Idle safety nets (issue #11)
+- [ ] **Silence timeout**: stay silent on the line for `away_seconds + silence_grace_seconds` (default 45s) → agent says a "we'll wrap up" sentence and disconnects. Call summary shows `agent_end_reason: silence_timeout`.
+- [ ] **Silence cancellation**: go silent for ~20s, then say something → no hangup; agent continues normally.
+- [ ] **Unproductive turns**: deliver `unproductive_turn_threshold` (default 5) consecutive off-topic prompts that elicit deflection replies → agent says a polite close and disconnects. Call summary shows `agent_end_reason: unproductive_turns_exhausted`.
+- [ ] **Productive recovery**: after a few unproductive turns, ask a real question that triggers a function tool (e.g. "what are your hours?") → counter resets to 0 (verify in logs `unproductive_turns: tool fired, resetting counter`); agent does not hang up.
+- [ ] **Max duration cap** (when configured): set `max_call_duration_seconds: 60` for a smoke test → after 60s the agent says goodbye and disconnects. Call summary shows `agent_end_reason: max_duration_reached`.
+- [ ] **Defaults preserved**: a business YAML without a `voice.idle` block still gets the default safety nets (silence on, max duration off, unproductive on at 5).
+
 ## Message delivery (per enabled channel)
 - [ ] **file**: a JSON file appears under `file_path` after a message is taken
 - [ ] **email**: inbox receives the message email with caller, callback, message body

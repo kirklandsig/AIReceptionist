@@ -134,26 +134,26 @@ async def test_end_call_records_outcome_immediately(v2_yaml, monkeypatch):
     receptionist, lifecycle = _bare_receptionist(v2_yaml)
     ctx, handle = _ctx_with_session()
 
-    # Stub the job context + terminate so we don't touch real LiveKit
+    # Stub the job context + speak/terminate so we don't touch real LiveKit
     monkeypatch.setattr("receptionist.agent.get_job_context", lambda: _job_ctx())
+    speak_and_terminate = AsyncMock()
     monkeypatch.setattr(
-        "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
+        "receptionist.agent._speak_goodbye_and_terminate", speak_and_terminate,
     )
-    terminate = AsyncMock()
-    monkeypatch.setattr("receptionist.agent._terminate_room", terminate)
 
     result = await receptionist._end_call(ctx)
 
+    # Outcome is recorded synchronously in the tool body (BEFORE the task runs)
     assert lifecycle.metadata.agent_end_reason == "caller_goodbye"
     assert "agent_ended" in lifecycle.metadata.outcomes
     assert "caller_goodbye" in result
-    ctx.session.generate_reply.assert_called_once()
     # Drain the scheduled hangup task
     pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
-    handle.wait_for_playout.assert_awaited_once()
-    terminate.assert_awaited_once()
+    speak_and_terminate.assert_awaited_once()
+    kwargs = speak_and_terminate.call_args.kwargs
+    assert kwargs["reason"] == "caller_goodbye"
 
 
 @pytest.mark.asyncio
@@ -164,9 +164,8 @@ async def test_end_call_clamps_invalid_reason_to_caller_goodbye(v2_yaml, monkeyp
     ctx, _ = _ctx_with_session()
     monkeypatch.setattr("receptionist.agent.get_job_context", lambda: _job_ctx())
     monkeypatch.setattr(
-        "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
+        "receptionist.agent._speak_goodbye_and_terminate", AsyncMock(),
     )
-    monkeypatch.setattr("receptionist.agent._terminate_room", AsyncMock())
 
     await receptionist._end_call(ctx, reason="rude_caller")
 
@@ -178,16 +177,17 @@ async def test_end_call_clamps_invalid_reason_to_caller_goodbye(v2_yaml, monkeyp
 
 @pytest.mark.asyncio
 async def test_end_call_accepts_known_reasons(v2_yaml, monkeypatch):
-    """Reasons reserved for #11 (silence_timeout, unproductive_turns_exhausted)
-    must be accepted by end_call so the future commits do not need to refactor."""
-    for reason in ["silence_timeout", "unproductive_turns_exhausted"]:
+    """Reasons reserved for #11 (silence_timeout, unproductive_turns_exhausted,
+    max_duration_reached) must all be accepted by end_call."""
+    for reason in [
+        "silence_timeout", "unproductive_turns_exhausted", "max_duration_reached",
+    ]:
         receptionist, lifecycle = _bare_receptionist(v2_yaml)
         ctx, _ = _ctx_with_session()
         monkeypatch.setattr("receptionist.agent.get_job_context", lambda: _job_ctx())
         monkeypatch.setattr(
-            "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
+            "receptionist.agent._speak_goodbye_and_terminate", AsyncMock(),
         )
-        monkeypatch.setattr("receptionist.agent._terminate_room", AsyncMock())
 
         await receptionist._end_call(ctx, reason=reason)
         assert lifecycle.metadata.agent_end_reason == reason
@@ -197,25 +197,63 @@ async def test_end_call_accepts_known_reasons(v2_yaml, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_end_call_hangs_up_even_when_playout_times_out(v2_yaml, monkeypatch):
-    """Belt-and-suspenders: if the goodbye playout never resolves (TTS stall,
-    network glitch), the 10s wait timeout must still trigger the hangup
-    so the call doesn't get stuck open."""
-    receptionist, _ = _bare_receptionist(v2_yaml)
-    ctx, handle = _ctx_with_session()
+async def test_speak_goodbye_and_terminate_calls_terminate_after_playout(
+    v2_yaml, monkeypatch,
+):
+    """The shared helper must speak goodbye, await playout, then terminate."""
+    from receptionist.agent import _speak_goodbye_and_terminate
+    from receptionist.config import BusinessConfig
 
-    async def _hang_forever() -> None:
-        await asyncio.sleep(60)
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
 
-    handle.wait_for_playout = AsyncMock(side_effect=_hang_forever)
-    monkeypatch.setattr("receptionist.agent.get_job_context", lambda: _job_ctx())
+    handle = MagicMock()
+    handle.wait_for_playout = AsyncMock()
+    session = MagicMock()
+    session.generate_reply = MagicMock(return_value=handle)
+
+    job_ctx = _job_ctx()
     monkeypatch.setattr(
         "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
     )
     terminate = AsyncMock()
     monkeypatch.setattr("receptionist.agent._terminate_room", terminate)
 
-    # Compress the wait_for timeout by patching asyncio.wait_for
+    await _speak_goodbye_and_terminate(
+        session, lifecycle, job_ctx, reason="caller_goodbye",
+    )
+    handle.wait_for_playout.assert_awaited_once()
+    terminate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_speak_goodbye_and_terminate_hangs_up_on_playout_timeout(
+    v2_yaml, monkeypatch,
+):
+    """Belt-and-suspenders: if the goodbye playout never resolves (TTS stall,
+    network glitch), the 10s wait timeout must still trigger the hangup
+    so the call doesn't get stuck open."""
+    from receptionist.agent import _speak_goodbye_and_terminate
+    from receptionist.config import BusinessConfig
+
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+
+    handle = MagicMock()
+
+    async def _hang_forever() -> None:
+        await asyncio.sleep(60)
+
+    handle.wait_for_playout = AsyncMock(side_effect=_hang_forever)
+    session = MagicMock()
+    session.generate_reply = MagicMock(return_value=handle)
+    job_ctx = _job_ctx()
+    monkeypatch.setattr(
+        "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
+    )
+    terminate = AsyncMock()
+    monkeypatch.setattr("receptionist.agent._terminate_room", terminate)
+
     real_wait_for = asyncio.wait_for
 
     async def _short_wait(awaitable, timeout):
@@ -223,10 +261,9 @@ async def test_end_call_hangs_up_even_when_playout_times_out(v2_yaml, monkeypatc
 
     monkeypatch.setattr("receptionist.agent.asyncio.wait_for", _short_wait)
 
-    await receptionist._end_call(ctx)
-    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    if pending:
-        await asyncio.gather(*pending, return_exceptions=True)
+    await _speak_goodbye_and_terminate(
+        session, lifecycle, job_ctx, reason="caller_goodbye",
+    )
     terminate.assert_awaited_once()
 
 
@@ -234,5 +271,10 @@ def test_agent_end_reason_whitelist_matches_documentation():
     """Hard-pinned vocabulary so future contributors must update both code
     and docs (function-tools-reference.md / CHANGELOG) when adding a reason."""
     assert _AGENT_END_REASONS == frozenset(
-        {"caller_goodbye", "silence_timeout", "unproductive_turns_exhausted"}
+        {
+            "caller_goodbye",
+            "silence_timeout",
+            "unproductive_turns_exhausted",
+            "max_duration_reached",
+        }
     )

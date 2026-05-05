@@ -67,12 +67,79 @@ VoiceAuth = Annotated[
 ]
 
 
+class VoiceIdleConfig(BaseModel):
+    """Issue #11 safety nets: silence timeout, max-duration cap, and
+    unproductive-turn ceiling. Defaults are conservative so existing YAMLs
+    remain backward-compatible: silence hangup is on (15s away + 30s grace =
+    45s total caller silence before the agent says goodbye), max duration
+    is OFF, and the unproductive-turn ceiling is 5 consecutive replies that
+    look like the agent is stuck.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    # ---- Silence hangup --------------------------------------------------
+    silence_hangup_enabled: bool = True
+    """Master switch for the silence-timeout path. When False, the agent
+    never hangs up just because the caller stopped talking. The
+    `away_seconds` value is still applied to LiveKit's `user_state` so
+    other downstream consumers (analytics, dashboards) keep working."""
+
+    away_seconds: float = Field(default=15.0, gt=0)
+    """How long of silence flips LiveKit's `user_state` to `away`. Maps
+    one-to-one to `AgentSession.user_away_timeout`. Below this, the caller
+    is just thinking; above, they may have walked away from the phone."""
+
+    silence_grace_seconds: float = Field(default=30.0, ge=0)
+    """How long the agent waits after `user_state` becomes `away` before
+    triggering the silence-timeout hangup. Set to 0 to hang up immediately
+    on `away` (aggressive). Default 30s gives a long pause for callers who
+    are looking up information or muting their phone."""
+
+    # ---- Max call duration ----------------------------------------------
+    max_call_duration_seconds: int | None = None
+    """Optional ceiling on the total call duration. None disables the cap
+    entirely (default — preserve original behavior). Set to e.g. 900 to
+    cap calls at 15 minutes; the agent will say goodbye and disconnect
+    when the cap is reached."""
+
+    # ---- Unproductive turn ceiling --------------------------------------
+    unproductive_hangup_enabled: bool = True
+    """Master switch for the unproductive-turn safety net."""
+
+    unproductive_turn_threshold: int = Field(default=5, gt=0)
+    """How many consecutive `unproductive` agent replies trigger a hangup.
+    A reply is considered unproductive if (a) the agent did NOT invoke any
+    function tool that turn AND (b) the reply text matches one of the
+    `unproductive_phrases` substrings (case-insensitive). Productive turns
+    (any function tool call OR a substantive reply) reset the counter to 0.
+    """
+
+    unproductive_phrases: list[str] = Field(
+        default_factory=lambda: [
+            "i'm here to help",
+            "i'm here to assist",
+            "could you rephrase",
+            "could you clarify",
+            "i didn't quite catch",
+            "i don't have specific information",
+            "i'm not able to help with that",
+            "i'm not sure i understand",
+            "if you have a specific question",
+        ]
+    )
+    """Substrings that signal the agent is stuck. Tunable per business so a
+    plain-English clinic and a niche legal-research firm can adjust the
+    deflection vocabulary. Matched case-insensitively against the agent's
+    spoken reply."""
+
+
 class VoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     voice_id: str = "marin"
     model: str = "gpt-realtime-1.5"
     auth: VoiceAuth | None = None
+    idle: VoiceIdleConfig = Field(default_factory=VoiceIdleConfig)
 
 
 class DayHours(BaseModel):

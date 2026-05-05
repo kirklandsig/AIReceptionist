@@ -290,6 +290,59 @@ voice:
 
 Exactly one of `token` or `token_env` is required.
 
+#### `voice.idle` (issue #11 safety nets)
+
+`voice.idle` configures three independent safety nets so the agent doesn't
+hold a SIP and Realtime session open indefinitely. Defaults are conservative
+— silence hangup is on (45s total silence), max duration is off, and the
+unproductive-turn ceiling is 5 — so omitting the block preserves the
+prior behavior for the silence and unproductive paths and disables the
+duration cap.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `silence_hangup_enabled` | bool | `true` | Master switch for the silence-timeout path. |
+| `away_seconds` | float | `15.0` | Seconds of silence before LiveKit's `user_state` flips to `away`. |
+| `silence_grace_seconds` | float | `30.0` | Additional seconds the agent waits after `away` before hanging up. |
+| `max_call_duration_seconds` | int or null | `null` | Optional ceiling on total call duration in seconds. `null` disables. |
+| `unproductive_hangup_enabled` | bool | `true` | Master switch for the unproductive-turn ceiling. |
+| `unproductive_turn_threshold` | int | `5` | Consecutive unproductive replies before the agent ends. |
+| `unproductive_phrases` | list[str] | tuned defaults | Substrings (case-insensitive) that mark a reply as a deflection. |
+
+Examples:
+
+```yaml
+# Aggressive silence handling: hang up after 30s total silence.
+voice:
+  voice_id: "marin"
+  idle:
+    away_seconds: 10
+    silence_grace_seconds: 20
+```
+
+```yaml
+# Cap every call at 10 minutes.
+voice:
+  voice_id: "marin"
+  idle:
+    max_call_duration_seconds: 600
+```
+
+```yaml
+# Disable the unproductive-turn cap entirely (e.g. for clinics where
+# callers commonly need long, exploratory conversations).
+voice:
+  voice_id: "marin"
+  idle:
+    unproductive_hangup_enabled: false
+```
+
+When the agent hangs up via any of these paths, the call summary records
+`outcomes: ["agent_ended"]` and `agent_end_reason: "<silence_timeout |
+unproductive_turns_exhausted | max_duration_reached>"`. See
+[`function-tools-reference.md#end_call`](function-tools-reference.md#end_call)
+for the full vocabulary.
+
 ---
 
 ### greeting

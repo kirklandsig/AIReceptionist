@@ -237,8 +237,121 @@ def _get_sip_phone_from_identity(identity: str) -> str | None:
 # and call-summary email subjects stay consistent. New causes added here must
 # also be reflected in documentation/function-tools-reference.md.
 _AGENT_END_REASONS = frozenset(
-    {"caller_goodbye", "silence_timeout", "unproductive_turns_exhausted"}
+    {
+        "caller_goodbye",
+        "silence_timeout",
+        "unproductive_turns_exhausted",
+        "max_duration_reached",
+    }
 )
+
+
+# Default goodbye instructions per agent-end reason. The end_call tool can
+# override these, but the silence/duration/unproductive paths use these so
+# the caller hears something appropriate rather than a generic "bye".
+_AGENT_END_INSTRUCTIONS = {
+    "caller_goodbye": (
+        "Say a very brief, friendly goodbye to the caller in one short "
+        "sentence (e.g. \"Thanks for calling, have a great day!\"). Do not "
+        "add follow-up questions; the call ends right after."
+    ),
+    "silence_timeout": (
+        "The caller has gone quiet. Say a brief, friendly note that you "
+        "are wrapping up because you haven't heard from them, and invite "
+        "them to call back any time. One or two short sentences only."
+    ),
+    "unproductive_turns_exhausted": (
+        "Politely close the call: acknowledge that you have not been able "
+        "to help with this request, suggest the caller contact the office "
+        "directly during business hours, and say goodbye. One or two short "
+        "sentences only."
+    ),
+    "max_duration_reached": (
+        "Politely note that the call has run long and you need to wrap up, "
+        "invite the caller to call back any time, and say goodbye. One or "
+        "two short sentences only."
+    ),
+}
+
+
+def _extract_message_text(item) -> str:
+    """Best-effort flatten an `llm.ChatMessage`-shaped item into a plain string.
+
+    The realtime SDK exposes `item.content` as either a string or a list of
+    content parts (each part has `.text` for text parts, `.transcript` for
+    audio transcripts). We concatenate everything string-like and ignore the
+    rest.
+    """
+    content = getattr(item, "content", None)
+    if isinstance(content, str):
+        return content
+    if not content:
+        return ""
+    parts: list[str] = []
+    for part in content:
+        if isinstance(part, str):
+            parts.append(part)
+            continue
+        text = getattr(part, "text", None)
+        if isinstance(text, str):
+            parts.append(text)
+            continue
+        transcript = getattr(part, "transcript", None)
+        if isinstance(transcript, str):
+            parts.append(transcript)
+    return " ".join(parts).strip()
+
+
+async def _speak_goodbye_and_terminate(
+    session: AgentSession,
+    lifecycle: CallLifecycle,
+    job_ctx: agents.JobContext,
+    *,
+    reason: str,
+) -> None:
+    """Speak a brief goodbye then disconnect the SIP caller.
+
+    Used by `Receptionist.end_call` (caller said goodbye) and the
+    silence/duration/unproductive watchers in `handle_call`. Each call site
+    is expected to have already called `lifecycle.record_agent_ended(reason)`
+    synchronously, so the call summary reflects the agent end even if the
+    natural-disconnect close event races this background task.
+
+    The goodbye playout uses a hard 10s timeout so a stuck TTS never wedges
+    the call open. Terminate then prefers SIP BYE via `remove_participant`
+    and falls back to `delete_room` (see `_terminate_room`).
+    """
+    call_id = lifecycle.metadata.call_id
+    log_extra = {"call_id": call_id, "component": "agent.end"}
+    instructions = _AGENT_END_INSTRUCTIONS.get(
+        reason, _AGENT_END_INSTRUCTIONS["caller_goodbye"],
+    )
+
+    if session is not None:
+        try:
+            handle = session.generate_reply(instructions=instructions)
+            try:
+                await asyncio.wait_for(handle.wait_for_playout(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "agent_end: goodbye playout timed out (reason=%s)",
+                    reason, extra=log_extra,
+                )
+            except Exception:
+                logger.exception(
+                    "agent_end: error waiting for goodbye playout (reason=%s)",
+                    reason, extra=log_extra,
+                )
+        except Exception:
+            logger.exception(
+                "agent_end: failed to speak goodbye (reason=%s); proceeding "
+                "to terminate", reason, extra=log_extra,
+            )
+
+    caller_identity = _get_caller_identity(job_ctx)
+    await _terminate_room(
+        job_ctx, caller_identity, job_ctx.room.name, call_id=call_id,
+    )
 
 
 async def _terminate_room(
@@ -360,6 +473,13 @@ class Receptionist(Agent):
         # match FAQ "What are your hours?" AND vice versa), which a single
         # dict can't represent — leave that as a linear scan.
         self._routing_by_name = {r.name.lower(): r for r in self.config.routing}
+        # Issue #11 unproductive-turn counter state. See
+        # _on_user_input_transcribed / _on_function_tools_executed /
+        # _on_conversation_item_added for the full state machine.
+        self._consecutive_unproductive_turns: int = 0
+        self._current_turn_used_tool: bool = False
+        self._current_turn_assistant_replied: bool = False
+        self._unproductive_end_scheduled: bool = False
 
     def _get_calendar_client(self):
         """Lazily construct and cache the Google Calendar client for this call."""
@@ -498,46 +618,136 @@ class Receptionist(Agent):
             reason: short label for *why* the agent ended the call. Stored
                 on the call summary so staff can audit agent-initiated
                 hangups. Allowed values: `caller_goodbye` (default),
-                `silence_timeout`, `unproductive_turns_exhausted`. Any
-                other value is replaced with `caller_goodbye`.
+                `silence_timeout`, `unproductive_turns_exhausted`,
+                `max_duration_reached`. Any other value is replaced with
+                `caller_goodbye`.
         """
-        # Record the outcome FIRST so even if the hangup races the close
-        # event the call summary already shows agent-ended with the reason.
         safe_reason = reason if reason in _AGENT_END_REASONS else "caller_goodbye"
+        # Record the outcome synchronously so even if the background hangup
+        # task races a caller-initiated close, the call summary already
+        # shows agent-ended with this reason.
         self.lifecycle.record_agent_ended(safe_reason)
 
-        handle = ctx.session.generate_reply(
-            instructions=(
-                "Say a very brief, friendly goodbye to the caller in one short "
-                "sentence (e.g. \"Thanks for calling, have a great day!\"). "
-                "Do not add follow-up questions; the call ends right after."
+        # Schedule the actual hangup in the background so the tool can return
+        # immediately (the LLM gets the tool response right away; the caller
+        # hears the goodbye and disconnects via the background task).
+        job_ctx = get_job_context()
+        session = ctx.session
+        lifecycle = self.lifecycle
+
+        async def _run_end() -> None:
+            await _speak_goodbye_and_terminate(
+                session, lifecycle, job_ctx, reason=safe_reason,
             )
+
+        asyncio.create_task(_run_end())
+        return f"Agent ending the call (reason={safe_reason})."
+
+    # ------------------------------------------------------------------
+    # Issue #11 unproductive-turn counter
+    # ------------------------------------------------------------------
+
+    def _on_user_input_transcribed(self, ev) -> None:
+        """Reset per-turn flags whenever a final user transcript arrives.
+
+        Listener is attached in `handle_call` after the session is built.
+        The agent's `conversation_item_added` event for the matching
+        assistant reply later in the same turn checks this flag.
+        """
+        if not getattr(ev, "is_final", False):
+            return
+        self._current_turn_used_tool = False
+        self._current_turn_assistant_replied = False
+
+    def _on_function_tools_executed(self, _ev) -> None:
+        """A function tool ran => this turn is productive => reset counter."""
+        self._current_turn_used_tool = True
+        if self._consecutive_unproductive_turns:
+            logger.debug(
+                "unproductive_turns: tool fired, resetting counter from %d to 0",
+                self._consecutive_unproductive_turns,
+                extra={"call_id": self.lifecycle.metadata.call_id, "component": "agent.unproductive"},
+            )
+        self._consecutive_unproductive_turns = 0
+
+    def _on_conversation_item_added(self, ev) -> None:
+        """Score the agent's reply for unproductiveness and trigger end_call
+        when the threshold is reached.
+        """
+        if self._current_turn_assistant_replied:
+            # The assistant added a follow-up message in the same turn (rare).
+            # Only score the first reply per user turn to avoid double-counting.
+            return
+        item = getattr(ev, "item", None)
+        if item is None or getattr(item, "role", None) != "assistant":
+            return
+        self._current_turn_assistant_replied = True
+
+        idle_cfg = self.config.voice.idle
+        if not idle_cfg.unproductive_hangup_enabled:
+            return
+        if self._current_turn_used_tool:
+            self._consecutive_unproductive_turns = 0
+            return
+
+        text = _extract_message_text(item)
+        if not text:
+            return
+
+        text_lower = text.lower()
+        is_unproductive = any(
+            phrase in text_lower for phrase in idle_cfg.unproductive_phrases
+        )
+        if not is_unproductive:
+            self._consecutive_unproductive_turns = 0
+            return
+
+        self._consecutive_unproductive_turns += 1
+        log_extra = {
+            "call_id": self.lifecycle.metadata.call_id,
+            "component": "agent.unproductive",
+            "count": self._consecutive_unproductive_turns,
+            "threshold": idle_cfg.unproductive_turn_threshold,
+        }
+        logger.info(
+            "unproductive_turns: count=%d threshold=%d",
+            self._consecutive_unproductive_turns,
+            idle_cfg.unproductive_turn_threshold,
+            extra=log_extra,
+        )
+        if self._consecutive_unproductive_turns < idle_cfg.unproductive_turn_threshold:
+            return
+
+        # Threshold reached — schedule the agent-initiated end. Guard with a
+        # one-shot flag so we don't double-fire if more replies come in
+        # between scheduling and termination.
+        if self._unproductive_end_scheduled:
+            return
+        self._unproductive_end_scheduled = True
+        logger.warning(
+            "unproductive_turns: threshold reached, ending call",
+            extra=log_extra,
         )
 
-        job_ctx = get_job_context()
-        caller_identity = _get_caller_identity(job_ctx)
-        room_name = job_ctx.room.name
-        call_id = self.lifecycle.metadata.call_id
+        try:
+            job_ctx = get_job_context()
+        except RuntimeError:
+            logger.exception(
+                "unproductive_turns: no job context; cannot end call",
+                extra=log_extra,
+            )
+            return
+        session = self.session
+        lifecycle = self.lifecycle
+        lifecycle.record_agent_ended("unproductive_turns_exhausted")
 
-        async def _hangup_after_goodbye() -> None:
-            try:
-                await asyncio.wait_for(handle.wait_for_playout(), timeout=10.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "end_call: goodbye playout timed out, hanging up anyway",
-                    extra={"call_id": call_id, "component": "agent.end_call"},
-                )
-            except Exception:
-                logger.exception(
-                    "end_call: error waiting for goodbye playout; hanging up",
-                    extra={"call_id": call_id, "component": "agent.end_call"},
-                )
-            await _terminate_room(
-                job_ctx, caller_identity, room_name, call_id=call_id,
+        async def _run() -> None:
+            await _speak_goodbye_and_terminate(
+                session, lifecycle, job_ctx,
+                reason="unproductive_turns_exhausted",
             )
 
-        asyncio.create_task(_hangup_after_goodbye())
-        return f"Agent ending the call (reason={safe_reason})."
+        asyncio.create_task(_run())
 
     @function_tool()
     async def get_business_hours(self, ctx: RunContext) -> str:
@@ -885,16 +1095,114 @@ async def handle_call(ctx: agents.JobContext):
             lifecycle, participant, source="initial_scan",
         )
 
+    idle_cfg = config.voice.idle
     session = AgentSession(
         llm=openai.realtime.RealtimeModel(
             model=config.voice.model,
             voice=config.voice.voice_id,
             api_key=await resolve_voice_bearer_async(config.voice.auth),
         ),
+        # Issue #11: feed the silence-hangup `away_seconds` into LiveKit's
+        # built-in user-state machine. When the caller falls silent for this
+        # long, `user_state` flips to "away" and we start the grace timer.
+        user_away_timeout=idle_cfg.away_seconds,
     )
 
     # Wire transcript capture BEFORE session starts so no events are missed.
     lifecycle.attach_transcript_capture(session)
+
+    # Build the Receptionist BEFORE wiring its event listeners so we can
+    # also subscribe to session events the agent needs (issue #11).
+    receptionist = Receptionist(config, lifecycle)
+    session.on("user_input_transcribed", receptionist._on_user_input_transcribed)
+    session.on("function_tools_executed", receptionist._on_function_tools_executed)
+    session.on("conversation_item_added", receptionist._on_conversation_item_added)
+
+    # Issue #11 silence-timeout watcher. Holds a single TimerHandle that
+    # the user_state_changed listener resets as the caller goes
+    # away/listening/speaking. The closure captures `session` and
+    # `lifecycle` so it doesn't need to walk through Receptionist.
+    silence_state = {"timer": None, "scheduled": False}
+
+    def _cancel_silence_timer() -> None:
+        timer = silence_state["timer"]
+        if timer is not None:
+            timer.cancel()
+            silence_state["timer"] = None
+
+    def _on_silence_grace_expired() -> None:
+        # Re-check user_state at fire time; the user may have come back.
+        if session.user_state != "away":
+            return
+        if silence_state["scheduled"]:
+            return
+        silence_state["scheduled"] = True
+        lifecycle.record_agent_ended("silence_timeout")
+
+        async def _run() -> None:
+            await _speak_goodbye_and_terminate(
+                session, lifecycle, ctx, reason="silence_timeout",
+            )
+
+        asyncio.create_task(_run())
+
+    def _on_user_state_changed(ev) -> None:
+        if not idle_cfg.silence_hangup_enabled:
+            return
+        new_state = getattr(ev, "new_state", None)
+        if new_state == "away":
+            _cancel_silence_timer()
+            loop = asyncio.get_event_loop()
+            silence_state["timer"] = loop.call_later(
+                idle_cfg.silence_grace_seconds, _on_silence_grace_expired,
+            )
+            logger.info(
+                "silence_timeout: caller went away, hanging up in %.1fs unless they return",
+                idle_cfg.silence_grace_seconds,
+                extra={
+                    "call_id": lifecycle.metadata.call_id,
+                    "component": "agent.silence",
+                    "grace_seconds": idle_cfg.silence_grace_seconds,
+                },
+            )
+        else:
+            _cancel_silence_timer()
+
+    session.on("user_state_changed", _on_user_state_changed)
+
+    # Issue #11 max-duration cap. Single one-shot timer scheduled at
+    # session start; cancelled by the close handler so a normal hangup
+    # doesn't double-fire the goodbye.
+    duration_state: dict[str, asyncio.TimerHandle | bool | None] = {
+        "timer": None, "scheduled": False,
+    }
+
+    def _on_max_duration_reached() -> None:
+        if duration_state["scheduled"]:
+            return
+        duration_state["scheduled"] = True
+        lifecycle.record_agent_ended("max_duration_reached")
+        logger.warning(
+            "max_duration: cap of %ds reached, ending call",
+            idle_cfg.max_call_duration_seconds,
+            extra={
+                "call_id": lifecycle.metadata.call_id,
+                "component": "agent.max_duration",
+            },
+        )
+
+        async def _run() -> None:
+            await _speak_goodbye_and_terminate(
+                session, lifecycle, ctx, reason="max_duration_reached",
+            )
+
+        asyncio.create_task(_run())
+
+    if idle_cfg.max_call_duration_seconds:
+        loop = asyncio.get_event_loop()
+        duration_state["timer"] = loop.call_later(
+            idle_cfg.max_call_duration_seconds, _on_max_duration_reached,
+        )
 
     # Register the close handler. `close` fires when the session ends for any
     # reason. livekit's EventEmitter rejects coroutine handlers (it requires
@@ -908,6 +1216,14 @@ async def handle_call(ctx: agents.JobContext):
     # artifacts land after disconnect even though handle_call returned
     # minutes earlier.
     def _handle_close(_event) -> None:
+        # Issue #11: cancel any pending silence/duration timers so a normal
+        # hangup doesn't accidentally fire goodbye-after-disconnect later.
+        _cancel_silence_timer()
+        timer = duration_state["timer"]
+        if timer is not None:
+            timer.cancel()
+            duration_state["timer"] = None
+
         async def _run() -> None:
             try:
                 await lifecycle.on_call_ended()
@@ -925,7 +1241,7 @@ async def handle_call(ctx: agents.JobContext):
 
     await session.start(
         room=ctx.room,
-        agent=Receptionist(config, lifecycle),
+        agent=receptionist,
         room_options=room_io.RoomOptions(
             audio_input=room_io.AudioInputOptions(
                 noise_cancellation=lambda params: (

@@ -94,6 +94,11 @@ LIVEKIT_API_SECRET=your-api-secret
 OPENAI_API_KEY=sk-your-openai-key
 ```
 
+`OPENAI_API_KEY` is optional when your test business YAML uses
+`voice.auth.type: "oauth_codex"`. For that path, run
+`python -m receptionist.voice setup <business>` and see
+[ChatGPT OAuth Setup](chatgpt-oauth-setup.md).
+
 **For testing without LiveKit/OpenAI**: You can run the unit tests without these credentials. They are only needed for running the agent itself.
 
 ### Step 6: Create a Business Configuration

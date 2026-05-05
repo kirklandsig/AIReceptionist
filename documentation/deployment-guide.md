@@ -30,7 +30,8 @@ This guide covers everything needed to deploy AI Receptionist in production: Liv
 Before deploying, ensure you have:
 
 - **Python 3.11+** installed
-- **OpenAI API key** with Realtime API access
+- **OpenAI auth**: either an API key with Realtime API access or
+  [ChatGPT OAuth](chatgpt-oauth-setup.md) through Codex CLI
 - **LiveKit account** (Cloud) or server infrastructure (self-hosted)
 - **SIP trunk provider account** (Twilio or Telnyx)
 - **Phone number** provisioned through your SIP trunk provider
@@ -46,14 +47,22 @@ Create a `.env` file in the project root (use `.env.example` as a template):
 cp .env.example .env
 ```
 
-Required variables:
+Required variables for all deployments:
 
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `LIVEKIT_URL` | WebSocket URL for your LiveKit server | `wss://your-project.livekit.cloud` |
 | `LIVEKIT_API_KEY` | LiveKit API key for authentication | `APIxxxxxxxxxxxxxxx` |
 | `LIVEKIT_API_SECRET` | LiveKit API secret for authentication | `your-api-secret` |
+
+Required for API-key auth only:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
 | `OPENAI_API_KEY` | OpenAI API key with Realtime API access | `sk-proj-xxxxxxxxxxxxx` |
+
+If every deployed business has `voice.auth.type: "oauth_codex"`, `OPENAI_API_KEY`
+is not required. See [ChatGPT OAuth Setup](chatgpt-oauth-setup.md).
 
 **Security**: Never commit `.env` to version control. The `.env.example` file contains placeholder values and is safe to commit.
 
@@ -155,7 +164,7 @@ sip:
     - name: "primary"
       address: "sip.twilio.com"
       username: "your-sip-username"
-      password: "your-sip-password"
+      password: ${SIP_TRUNK_PASSWORD}
 ```
 
 ### Step 3: Configure DNS and TLS
@@ -175,6 +184,9 @@ LIVEKIT_API_SECRET=your-api-secret \
 OPENAI_API_KEY=sk-your-openai-key \
 python -m receptionist.agent start
 ```
+
+Omit `OPENAI_API_KEY` when every deployed business config uses
+`voice.auth.type: "oauth_codex"`.
 
 ---
 
@@ -439,6 +451,7 @@ docker run -d \
   --restart unless-stopped \
   -v $(pwd)/messages:/app/messages \
   -v $(pwd)/config:/app/config \
+  -v $(pwd)/secrets:/app/secrets \
   ai-receptionist
 ```
 
@@ -454,6 +467,7 @@ services:
     volumes:
       - ./messages:/app/messages
       - ./config/businesses:/app/config/businesses
+      - ./secrets:/app/secrets
 ```
 
 ### Supervisor (Alternative)
@@ -469,6 +483,10 @@ stderr_logfile=/var/log/ai-receptionist/error.log
 stdout_logfile=/var/log/ai-receptionist/output.log
 environment=LIVEKIT_URL="wss://...",LIVEKIT_API_KEY="...",LIVEKIT_API_SECRET="...",OPENAI_API_KEY="..."
 ```
+
+For ChatGPT OAuth-only deployments, omit `OPENAI_API_KEY` and mount the
+configured `secrets/<business>/openai_auth.json` token files with the business
+configs.
 
 ---
 
@@ -544,13 +562,17 @@ A modest VPS (2 CPU, 4GB RAM) can comfortably handle 5-10 concurrent calls.
 
 ## Cost Management
 
-### OpenAI Realtime API
+### OpenAI Realtime Auth
 
-This is the largest cost component at ~$0.20-0.30 per minute. To manage costs:
+API-key deployments pay OpenAI Platform Realtime usage directly. ChatGPT OAuth
+deployments use the signed-in ChatGPT account's subscription entitlements when
+that account has access to the configured Realtime model. To manage costs and
+access:
 
 - **Keep calls concise**: A well-configured receptionist resolves calls quickly.
-- **Monitor usage**: Track per-call and daily costs through the OpenAI dashboard.
-- **Set spending limits**: Configure spending alerts in your OpenAI account.
+- **API keys**: Track usage and set spending alerts in the OpenAI dashboard.
+- **ChatGPT OAuth**: Monitor subscription/model access on the ChatGPT account
+  used for each business token file.
 
 ### SIP Trunk
 
@@ -561,6 +583,9 @@ SIP costs are minimal (~$0.01-0.02/min). Phone number rental is typically $1-2/m
 LiveKit Cloud offers a free tier. For high-volume deployments, review LiveKit's pricing page for current rates.
 
 ### Monthly Cost Estimate
+
+These examples assume OpenAI Platform API-key billing. ChatGPT OAuth deployments
+use the signed-in ChatGPT account's subscription/model access instead.
 
 | Business Profile | Calls/Day | Avg Duration | Monthly Cost |
 |-----------------|-----------|-------------|-------------|
@@ -576,7 +601,7 @@ Before going live, verify:
 
 - [ ] `.env` file is not committed to version control
 - [ ] `.env` file permissions restrict access (e.g., `chmod 600 .env`)
-- [ ] OpenAI API key has appropriate spending limits
+- [ ] OpenAI API key has appropriate spending limits, or ChatGPT OAuth token files are stored securely per business
 - [ ] LiveKit API credentials are kept secure
 - [ ] Config YAML files do not contain sensitive information beyond phone numbers
 - [ ] Message storage directory has appropriate filesystem permissions

@@ -187,10 +187,10 @@ LIVEKIT_URL=wss://...cloud  # Correct
 **Solution**:
 1. If `voice.auth` is omitted, verify `OPENAI_API_KEY` in `.env` starts with `sk-`.
 2. If using `voice.auth.type: "api_key"`, verify the configured `env` var exists in the agent process.
-3. If using `voice.auth.type: "oauth_codex"`, verify the configured file exists and contains `tokens.access_token` and `tokens.refresh_token`. Run `python -m receptionist.voice setup <business>` to create or repair a per-business token file.
+3. If using `voice.auth.type: "oauth_codex"`, verify the configured file exists and contains `tokens.access_token` and `tokens.refresh_token`. Run `python -m receptionist.voice setup <business>` to create or repair a per-business token file. See [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) for the full flow.
 4. If using `voice.auth.type: "oauth_static"`, verify exactly one of `token` or `token_env` is configured and that the token is current.
 5. Confirm the account behind the bearer has Realtime model access and billing/plan access for `voice.model`.
-6. Test a bearer manually: `curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`
+6. For API-key auth, test a bearer manually: `curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`
 
 ### `oauth_codex` refresh failed
 

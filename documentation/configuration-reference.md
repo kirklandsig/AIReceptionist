@@ -157,17 +157,19 @@ Voice configuration for the OpenAI Realtime API.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
-| `voice_id` | string | No | `"coral"` | The OpenAI voice to use for the receptionist. |
-| `model` | string | No | `"gpt-realtime"` | The OpenAI Realtime model variant to use. |
+| `voice_id` | string | No | `"marin"` | The OpenAI voice to use for the receptionist. |
+| `model` | string | No | `"gpt-realtime-1.5"` | The OpenAI Realtime model variant to use. |
+| `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. |
 
 **Available models**:
 
 | Model | Description |
 |-------|-------------|
-| `gpt-realtime` | Latest speech-to-speech model (default, auto-updates) |
+| `gpt-realtime-1.5` | Current high-quality speech-to-speech model (default) |
+| `gpt-realtime` | Latest speech-to-speech model alias |
 | `gpt-4o-realtime-preview` | Original Advanced Voice model |
 
-**Recommendation**: `gpt-realtime` (the default) is the latest and highest-quality model. It's the same speech-to-speech technology powering ChatGPT Advanced Voice. Only change this if you have a specific reason to pin to an older variant.
+**Recommendation**: keep the default `gpt-realtime-1.5` unless you have a specific reason to pin another variant.
 
 **Available voices**:
 
@@ -176,20 +178,117 @@ Voice configuration for the OpenAI Realtime API.
 | `alloy` | Neutral, balanced |
 | `ash` | Warm, conversational |
 | `ballad` | Soft, gentle |
-| `coral` | Friendly, professional (default) |
+| `coral` | Friendly, professional |
 | `echo` | Clear, articulate |
 | `sage` | Calm, authoritative |
 | `shimmer` | Bright, energetic |
 | `verse` | Rich, expressive |
-| `marin` | Natural, approachable |
+| `marin` | Natural, approachable (default) |
 
-**Recommendation**: `coral` works well for most professional settings. `ash` is good for warmer, more personal businesses. `sage` suits authoritative contexts like law firms.
+**Recommendation**: `marin` works well with `gpt-realtime-1.5`. `ash` is good for warmer, more personal businesses. `sage` suits authoritative contexts like law firms.
 
 ```yaml
 voice:
-  voice_id: "sage"
-  model: "gpt-realtime"  # optional, defaults to latest
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
 ```
+
+#### `voice.auth`
+
+`voice.auth` is optional. If you omit it, the agent keeps the original
+behavior: the LiveKit OpenAI plugin reads `OPENAI_API_KEY` from the process
+environment.
+
+When `voice.auth` is present, it is strict. The configured source must
+resolve successfully; the agent will not silently fall back to a global
+`OPENAI_API_KEY` if a business-specific auth source is missing.
+
+##### API key auth
+
+Use the default OpenAI API-key flow, optionally with a business-specific env
+var name.
+
+```yaml
+voice:
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
+  auth:
+    type: "api_key"
+    env: "ACME_OPENAI_KEY"  # default: OPENAI_API_KEY
+```
+
+##### Codex OAuth auth
+
+Use the Codex CLI / ChatGPT-login OAuth access token. The agent reads
+`tokens.access_token` from the JSON file and passes it as the Realtime bearer
+token. If the access token is expired or within 60 seconds of expiring, the
+agent uses `tokens.refresh_token` to refresh it through OpenAI's OAuth token
+endpoint and writes the rotated tokens back to the same file.
+
+```yaml
+voice:
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
+  auth:
+    type: "oauth_codex"
+    path: "~/.codex/auth.json"  # default
+```
+
+This path is best for local development or smoke-testing OAuth access. For
+multi-tenant production, prefer per-business token files or API keys rather
+than sharing one user login across all businesses.
+
+To create a per-business token file, run:
+
+```bash
+python -m receptionist.voice setup example-dental
+```
+
+The setup command launches `codex login`, copies the resulting Codex auth file
+to `secrets/<business>/openai_auth.json`, validates the token, and updates the
+business YAML in place:
+
+```yaml
+voice:
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
+  auth:
+    type: "oauth_codex"
+    path: "secrets/example-dental/openai_auth.json"
+```
+
+For multiple businesses using different ChatGPT accounts, run setup once per
+business and sign into the correct account each time:
+
+```yaml
+# config/businesses/acme.yaml
+voice:
+  auth:
+    type: "oauth_codex"
+    path: "secrets/acme/openai_auth.json"
+
+# config/businesses/trinicom.yaml
+voice:
+  auth:
+    type: "oauth_codex"
+    path: "secrets/trinicom/openai_auth.json"
+```
+
+##### Static OAuth bearer auth
+
+Use a raw bearer token directly or read it from an env var. Prefer
+`token_env` so secrets do not live in YAML.
+
+```yaml
+voice:
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
+  auth:
+    type: "oauth_static"
+    token_env: "OPENAI_OAUTH_TOKEN"
+```
+
+Exactly one of `token` or `token_env` is required.
 
 ---
 

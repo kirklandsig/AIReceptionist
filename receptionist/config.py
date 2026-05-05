@@ -33,9 +33,46 @@ class BusinessInfo(BaseModel):
     timezone: str
 
 
+class APIKeyVoiceAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["api_key"]
+    env: str = "OPENAI_API_KEY"
+
+
+class CodexOAuthVoiceAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["oauth_codex"]
+    path: str = "~/.codex/auth.json"
+
+
+class StaticOAuthVoiceAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["oauth_static"]
+    token: str | None = None
+    token_env: str | None = None
+
+    @model_validator(mode="after")
+    def validate_single_token_source(self) -> StaticOAuthVoiceAuth:
+        if bool(self.token) == bool(self.token_env):
+            raise ValueError("oauth_static auth requires exactly one of token or token_env")
+        return self
+
+
+VoiceAuth = Annotated[
+    Union[APIKeyVoiceAuth, CodexOAuthVoiceAuth, StaticOAuthVoiceAuth],
+    Field(discriminator="type"),
+]
+
+
 class VoiceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     voice_id: str = "marin"
     model: str = "gpt-realtime-1.5"
+    auth: VoiceAuth | None = None
 
 
 class DayHours(BaseModel):

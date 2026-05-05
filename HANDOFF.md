@@ -437,9 +437,9 @@ python -m receptionist.agent start
 ### Running Tests
 
 ```bash
-pytest                    # Run all 15 tests
-pytest tests/test_config.py   # Run only config tests
-pytest -v                 # Verbose output
+python -m pytest                  # Run full suite
+python -m pytest tests/test_config.py   # Run only config tests
+python -m pytest -v               # Verbose output
 ```
 
 ---
@@ -448,22 +448,20 @@ pytest -v                 # Verbose output
 
 ### Test Coverage Summary
 
-| Test File            | Tests | What It Covers                                                              |
-| -------------------- | ----- | --------------------------------------------------------------------------- |
-| `test_config.py`     | 6     | YAML parsing, file loading, closed/open day hours, missing name validation, invalid delivery method validation, cross-field delivery validation |
-| `test_prompts.py`    | 6     | Business name in prompt, personality text, FAQ content, routing info, hours schedule, after-hours message |
-| `test_messages.py`   | 3     | Single file creation and content, multiple file uniqueness, auto-directory creation |
+Current automated suite spans configuration, prompt generation, agent helper
+logic, lifecycle metadata, messaging channels, email rendering/senders,
+recording, transcript capture/formatting/writing, retention, Google Calendar
+booking, and integration-level call/booking flows.
 
-**Total: 15 tests, all passing.**
+**Current result:** `325 passed, 2 skipped` via `python -m pytest` on
+2026-05-01.
 
 ### What Is NOT Tested
 
-- The `agent.py` module (would require mocking LiveKit SDK and OpenAI Realtime API).
-- Webhook delivery (stubbed, not implemented).
-- Integration/end-to-end call flow.
-- `get_business_hours()` timezone logic.
-- `transfer_call()` SIP transfer logic.
-- Error handling paths in agent tools.
+- Live SIP transfer against a real trunk.
+- Live OpenAI Realtime audio sessions.
+- Live LiveKit Egress recording against cloud storage.
+- Live Google OAuth browser consent beyond setup CLI unit coverage.
 
 ### Testing Approach
 
@@ -1026,3 +1024,51 @@ email table, and Markdown transcript header. While touching the template,
 the HTML call-end email body was brought to parity with the text body for
 appointment details, FAQs answered, languages detected, transcript path,
 and recording-failed status.
+
+---
+
+## Addendum — 2026-04-28: Per-business Realtime OAuth/API auth
+
+Added `voice.auth` to `VoiceConfig` so each business YAML can choose how it
+authenticates to OpenAI Realtime. Omitted `voice.auth` preserves the legacy
+behavior where the LiveKit OpenAI plugin reads `OPENAI_API_KEY` directly.
+Explicit auth modes are strict and do not silently fall back to a global key:
+
+- `type: "api_key"` reads `env` (default `OPENAI_API_KEY`), enabling
+  business-specific env vars like `TRINICOM_OPENAI_KEY`.
+- `type: "oauth_codex"` reads `tokens.access_token` from the Codex CLI /
+  ChatGPT-login auth file (default `~/.codex/auth.json`) and passes it as
+  the Realtime bearer via `RealtimeModel(api_key=...)`. Access tokens are
+  JWTs and are refreshed on demand when expired or within 60 seconds of
+  expiry; refresh uses Codex's OpenAI OAuth client id and writes rotated
+  tokens back to the same auth file.
+- `type: "oauth_static"` accepts exactly one of `token` or `token_env` for
+  raw bearer tokens.
+
+New module: `receptionist/voice_auth.py` with `resolve_voice_bearer()`,
+`resolve_voice_bearer_async()`, token-expiry inspection, in-memory cache,
+atomic auth-file writes, and `VoiceAuthError`. `handle_call` now passes
+`api_key=await resolve_voice_bearer_async(config.voice.auth)` into
+`RealtimeModel` so refresh network I/O runs off the event loop.
+
+New setup CLI: `python -m receptionist.voice setup <business>`. It validates
+the business slug, uses an existing `voice.auth.path` or defaults to
+`secrets/<business>/openai_auth.json`, runs `codex login`, copies
+`~/.codex/auth.json` to the per-business path, validates token shape/expiry,
+and updates the business YAML `voice.auth` block in place.
+
+Unit coverage includes `tests/test_voice_auth.py` and
+`tests/test_voice_setup_cli.py`. This still needs a live smoke test before
+commit: run `python -m receptionist.voice setup example-dental`, then
+`RECEPTIONIST_CONFIG=example-dental python -m receptionist.agent dev`, and
+verify the LiveKit playground can connect to `gpt-realtime-1.5` using the
+ChatGPT-login OAuth token. Also force one expired-access-token case while
+preserving the refresh token to verify live refresh against OpenAI.
+
+Current local status as of 2026-05-01: OAuth/API auth work is implemented but
+uncommitted. Full automated suite passes at `325 passed, 2 skipped` via
+`.\venv\Scripts\python.exe -m pytest`. A safe local Codex resolver check
+against `~/.codex/auth.json` succeeded (`access_token` length observed, expiry
+claim present, `refresh_token` present; no secrets printed). Remaining blocker
+before commit is live Realtime smoke testing with `example-dental`, including
+one forced expired-access-token refresh case.

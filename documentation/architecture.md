@@ -12,6 +12,10 @@ receptionist/
 ├── config.py                Pydantic v2 models, YAML loader, env-var interpolation
 ├── prompts.py               System prompt builder (includes LANGUAGE block)
 ├── lifecycle.py             CallLifecycle: per-call metadata owner, close-event fan-out
+├── voice_auth.py            Per-business Realtime bearer resolver (`voice.auth`)
+├── voice/                   OpenAI voice auth setup CLI
+│   ├── setup_cli.py         python -m receptionist.voice setup <business>
+│   └── __main__.py          CLI dispatcher
 │
 ├── booking/                 Google Calendar integration (NEW)
 │   ├── models.py            SlotProposal, BookingResult dataclasses
@@ -65,7 +69,7 @@ receptionist/
 ### 2. Session initialization
 1. `load_business_config(ctx)` picks a YAML based on `job.metadata["config"]` (or first YAML as fallback)
 2. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from SIP participant metadata when available (`sip.phoneNumber`, `sip.fromUser`, `sip.from`, or `sip_<digits>` identity fallback), and filled later from the `participant_connected` event if the SIP participant had not joined yet
-3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id)`
+3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id, api_key=await resolve_voice_bearer_async(config.voice.auth))`; explicit `oauth_codex` tokens refresh before session construction when needed
 4. `lifecycle.attach_transcript_capture(session)` subscribes to `user_input_transcribed`, `conversation_item_added`, `function_tools_executed` events
 5. `session.on("close", _handle_close)` registered — schedules `lifecycle.on_call_ended()` and resolves a future
 6. `lifecycle.start_recording_if_enabled(ctx.room.name)` starts LiveKit Egress if `config.recording.enabled`

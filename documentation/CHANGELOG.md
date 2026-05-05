@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-business OpenAI Realtime auth selection**: `voice.auth` can now
+  choose how each business authenticates to the Realtime API. Omitting
+  `voice.auth` preserves the existing `OPENAI_API_KEY` behavior; explicit
+  options include `api_key` (custom env var), `oauth_codex` (Codex CLI /
+  ChatGPT-login OAuth token at `~/.codex/auth.json`), and `oauth_static`
+  (raw bearer token, inline or env-sourced). `oauth_codex` now refreshes
+  expired access tokens with `tokens.refresh_token` and writes rotated tokens
+  back to the same auth file.
+- **OpenAI OAuth setup CLI**: `python -m receptionist.voice setup <business>`
+  runs Codex login, copies the Codex auth file to
+  `secrets/<business>/openai_auth.json`, validates it, and updates the
+  business YAML `voice.auth` block.
 - **Google Calendar integration** (issue #3): two new function tools
   (`check_availability`, `book_appointment`) let the agent book appointments
   on a per-business Google Calendar during live calls. Supports both

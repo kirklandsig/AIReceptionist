@@ -41,6 +41,8 @@ def to_markdown(segments: Sequence[TranscriptSegment], metadata: CallMetadata) -
         lines.append(f"- Outcomes: {', '.join(sorted(metadata.outcomes))}")
     if metadata.transfer_target:
         lines.append(f"- Transferred to: {metadata.transfer_target}")
+    if metadata.agent_end_reason:
+        lines.append(f"- Agent end reason: {metadata.agent_end_reason}")
     if metadata.appointment_details:
         lines.append(f"- Appointment: {metadata.appointment_details.get('start_iso', '?')}")
     if metadata.recording_failed:

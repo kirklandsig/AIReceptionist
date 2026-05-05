@@ -11,7 +11,9 @@ logger = logging.getLogger("receptionist")
 # Valid outcome labels. Membership-checked in lifecycle._add_outcome to prevent
 # silent typos; new outcomes must be added here AND in the _OUTCOME_LABELS map
 # in receptionist/email/templates.py for their human-readable display.
-VALID_OUTCOMES = {"hung_up", "message_taken", "transferred", "appointment_booked"}
+VALID_OUTCOMES = {
+    "hung_up", "message_taken", "transferred", "appointment_booked", "agent_ended",
+}
 
 
 @dataclass
@@ -31,6 +33,12 @@ class CallMetadata:
     languages_detected: set[str] = field(default_factory=set)
     recording_failed: bool = False
     recording_artifact: str | None = None
+    # Free-form short label for *why* the agent ended the call (issues #10/#11).
+    # Populated alongside the `agent_ended` outcome so call summaries, transcripts,
+    # and dashboards can distinguish a polite goodbye from a silence-timeout or
+    # unproductive-turn cap. Stays None when the agent did not initiate the
+    # hangup (e.g. caller hung up first => outcome `hung_up`).
+    agent_end_reason: str | None = None
 
     def __post_init__(self):
         if not self.start_ts:
@@ -66,6 +74,7 @@ class CallMetadata:
             "message_taken": self.message_taken,
             "appointment_booked": self.appointment_booked,
             "appointment_details": self.appointment_details,
+            "agent_end_reason": self.agent_end_reason,
             "faqs_answered": list(self.faqs_answered),
             "languages_detected": sorted(self.languages_detected),
             "recording_failed": self.recording_failed,

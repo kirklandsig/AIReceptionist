@@ -1,6 +1,6 @@
 # Function Tools Reference
 
-This document provides a detailed reference for each of the four function tools exposed by the Receptionist agent to the OpenAI Realtime model. These tools are the mechanisms through which the AI takes actions during a phone call.
+This document provides a detailed reference for each function tool exposed by the Receptionist agent to the OpenAI Realtime model. These tools are the mechanisms through which the AI takes actions during a phone call.
 
 ---
 
@@ -12,6 +12,7 @@ This document provides a detailed reference for each of the four function tools 
 - [transfer_call](#transfer_call)
 - [take_message](#take_message)
 - [get_business_hours](#get_business_hours)
+- [end_call](#end_call)
 - [Tool Interaction Patterns](#tool-interaction-patterns)
 - [Error Handling](#error-handling)
 - [Extending the Tool Set](#extending-the-tool-set)
@@ -20,7 +21,7 @@ This document provides a detailed reference for each of the four function tools 
 
 ## Overview
 
-The Receptionist agent exposes four function tools to the OpenAI Realtime model:
+The Receptionist agent exposes the following function tools to the OpenAI Realtime model (calendar tools `check_availability` and `book_appointment` are added when `calendar.enabled: true`):
 
 | Tool | Purpose | Triggers |
 |------|---------|----------|
@@ -28,6 +29,7 @@ The Receptionist agent exposes four function tools to the OpenAI Realtime model:
 | `transfer_call` | Transfer the call to a department/person | Caller requests to speak with someone specific |
 | `take_message` | Record a message from the caller | Caller wants to leave a message |
 | `get_business_hours` | Check current open/closed status | Caller asks about business hours |
+| `end_call` | Say goodbye and hang up | Caller has clearly finished the conversation |
 
 These tools are defined as methods on the `Receptionist` class in `agent.py`, decorated with `@function_tool()`. The LiveKit Agents SDK and OpenAI Realtime API handle the serialization, invocation, and result passing automatically.
 
@@ -463,6 +465,79 @@ Agent speaks: "We're currently open! Today we're here until
 
 ---
 
+## end_call
+
+### Purpose
+
+Ends the call after a brief goodbye when the caller has clearly finished the conversation. Issue #10 added this so businesses don't pay for SIP and Realtime time when the caller has said goodbye but stayed on the line.
+
+### Signature
+
+```python
+@function_tool()
+async def end_call(self, ctx: RunContext, reason: str = "caller_goodbye") -> str
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `reason` | str | No (default `caller_goodbye`) | Short label recording *why* the agent ended the call. Must be one of `caller_goodbye`, `silence_timeout`, `unproductive_turns_exhausted`. Any other value is silently replaced with `caller_goodbye` so the metadata field stays a closed vocabulary. |
+
+### Return Value
+
+A short string the LLM uses as the tool response (e.g. `"Agent ending the call (reason=caller_goodbye)."`). The actual goodbye sentence is generated and spoken via a parallel `generate_reply` call, so the caller hears a natural goodbye even though the tool itself returns immediately.
+
+### When to Call (Prompt Guidance)
+
+The system prompt instructs the LLM:
+- DO call when the caller says "goodbye", "thanks, bye", "that's all I needed", or you've already said you can't help and they have nothing else.
+- DO NOT call just because the caller is quiet for a moment, mid-question, or asking for something you haven't tried yet.
+- NEVER call as the very first reply to a caller; greet them and let them state their need first.
+
+### Hangup Sequence
+
+1. The tool records the `agent_ended` outcome and `agent_end_reason` on the call lifecycle **first** so even if the hangup races the LiveKit close event, the call summary already shows agent-ended with the reason.
+2. The tool calls `ctx.session.generate_reply(...)` with goodbye instructions and stores the resulting `SpeechHandle`.
+3. The tool schedules a background task that:
+   1. Awaits `handle.wait_for_playout()` (with a 10-second hard timeout so a stuck TTS never wedges the call open).
+   2. Calls the module-level `_terminate_room` helper.
+4. The tool returns a short string immediately so the LLM doesn't block its own turn.
+
+`_terminate_room` prefers SIP BYE via `RoomService.remove_participant`, which drops just the caller and leaves the agent's close handler to fire normally. If `remove_participant` fails (token missing `room_admin`, participant already gone), it falls back to `RoomService.delete_room`, which closes the entire room and triggers the participant-disconnect close path. If even `delete_room` fails, the error is logged and the close handler eventually fires from natural disconnect.
+
+### Tracking on the Call Summary
+
+When `end_call` succeeds, the call summary records:
+- `outcomes`: includes `"agent_ended"` (in addition to any other outcomes from the same call, e.g. `"transferred"` if the caller was transferred earlier in the same session).
+- `agent_end_reason`: short label, rendered in the call-end email subject (`Agent ended`), the call-end email body (`Agent end reason: caller_goodbye`), the HTML email row (`Agent end reason | caller_goodbye`), and the Markdown transcript header.
+
+### Example Interaction
+
+```
+Caller: "Great, thanks for your help. Goodbye!"
+
+→ Model calls: end_call(reason="caller_goodbye")
+  → Agent says: "Thanks for calling, have a great day!"
+  → Background task waits for playout, then sends SIP BYE to caller
+← Tool returns: "Agent ending the call (reason=caller_goodbye)."
+
+[Call disconnects.]
+```
+
+### Negative Example (LLM Restraint)
+
+```
+Caller: [pauses for 4 seconds]
+
+# Model should NOT call end_call here. The caller is just thinking.
+# Issue #11 adds an explicit silence-timeout path so the agent can end
+# the call when the caller has been quiet long enough that they've
+# clearly walked away.
+```
+
+---
+
 ## Tool Interaction Patterns
 
 ### Sequential Tool Calls
@@ -534,6 +609,8 @@ Caller: "Do you do teeth whitening?"
 | `transfer_call` | SIP transfer fails | Apology + offer to take a message instead |
 | `take_message` | File write fails | Apology + ask to try again |
 | `get_business_hours` | Config error | General hours from system prompt |
+| `end_call` | `remove_participant` fails | Falls back to `delete_room`; caller is disconnected either way |
+| `end_call` | `delete_room` also fails | Logged; close handler fires on natural disconnect (caller eventually drops) |
 
 ---
 

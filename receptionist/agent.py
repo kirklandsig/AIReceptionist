@@ -232,6 +232,64 @@ def _get_sip_phone_from_identity(identity: str) -> str | None:
     return phone if phone.startswith("+") else f"+{phone}"
 
 
+# Whitelist of reasons accepted by `end_call`. Keeps the agent-end reason
+# field (CallMetadata.agent_end_reason) bounded to known causes so dashboards
+# and call-summary email subjects stay consistent. New causes added here must
+# also be reflected in documentation/function-tools-reference.md.
+_AGENT_END_REASONS = frozenset(
+    {"caller_goodbye", "silence_timeout", "unproductive_turns_exhausted"}
+)
+
+
+async def _terminate_room(
+    job_ctx: agents.JobContext,
+    caller_identity: str,
+    room_name: str,
+    *,
+    call_id: str,
+) -> None:
+    """Disconnect the caller; prefer SIP BYE, fall back to full room delete.
+
+    `remove_participant` is the right tool for SIP BYE: it asks LiveKit to
+    drop the caller specifically (the agent stays in the room until the
+    session close handler fires). If that call fails — typically because
+    the agent token lacks `room_admin` for this room, or the participant
+    has already disconnected — we fall back to `delete_room`, which closes
+    the room for everyone and triggers the participant-disconnect close
+    path. Either way, the close handler runs `lifecycle.on_call_ended`.
+    """
+    log_extra = {"call_id": call_id, "component": "agent.terminate"}
+    if caller_identity:
+        try:
+            await job_ctx.api.room.remove_participant(
+                api.RoomParticipantIdentity(
+                    room=room_name, identity=caller_identity,
+                )
+            )
+            logger.info(
+                "end_call: removed participant %s from %s",
+                caller_identity, room_name, extra=log_extra,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "end_call: remove_participant failed for %s in %s; "
+                "falling back to delete_room",
+                caller_identity, room_name, exc_info=True, extra=log_extra,
+            )
+    try:
+        await job_ctx.api.room.delete_room(
+            api.DeleteRoomRequest(room=room_name)
+        )
+        logger.info("end_call: deleted room %s", room_name, extra=log_extra)
+    except Exception:
+        logger.exception(
+            "end_call: delete_room failed for %s; close event will fire on "
+            "natural disconnect",
+            room_name, extra=log_extra,
+        )
+
+
 def _capture_caller_phone_from_participant(
     lifecycle: CallLifecycle, participant: rtc.RemoteParticipant,
     *, source: str = "snapshot",
@@ -422,6 +480,64 @@ class Receptionist(Agent):
 
         self.lifecycle.record_message_taken()
         return f"Message saved from {caller_name}. Let them know their message has been recorded and someone will get back to them."
+
+    @function_tool()
+    async def end_call(
+        self, ctx: RunContext, reason: str = "caller_goodbye",
+    ) -> str:
+        """End the call after a brief goodbye.
+
+        Use this when the caller has clearly finished the conversation —
+        for example "goodbye", "thanks, bye", "that's all I needed", or when
+        you've told the caller you have no further help to offer and they
+        have nothing else to ask. Do NOT use this just because the caller
+        is quiet for a moment, mid-question, or asking for something you
+        haven't tried yet.
+
+        Args:
+            reason: short label for *why* the agent ended the call. Stored
+                on the call summary so staff can audit agent-initiated
+                hangups. Allowed values: `caller_goodbye` (default),
+                `silence_timeout`, `unproductive_turns_exhausted`. Any
+                other value is replaced with `caller_goodbye`.
+        """
+        # Record the outcome FIRST so even if the hangup races the close
+        # event the call summary already shows agent-ended with the reason.
+        safe_reason = reason if reason in _AGENT_END_REASONS else "caller_goodbye"
+        self.lifecycle.record_agent_ended(safe_reason)
+
+        handle = ctx.session.generate_reply(
+            instructions=(
+                "Say a very brief, friendly goodbye to the caller in one short "
+                "sentence (e.g. \"Thanks for calling, have a great day!\"). "
+                "Do not add follow-up questions; the call ends right after."
+            )
+        )
+
+        job_ctx = get_job_context()
+        caller_identity = _get_caller_identity(job_ctx)
+        room_name = job_ctx.room.name
+        call_id = self.lifecycle.metadata.call_id
+
+        async def _hangup_after_goodbye() -> None:
+            try:
+                await asyncio.wait_for(handle.wait_for_playout(), timeout=10.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "end_call: goodbye playout timed out, hanging up anyway",
+                    extra={"call_id": call_id, "component": "agent.end_call"},
+                )
+            except Exception:
+                logger.exception(
+                    "end_call: error waiting for goodbye playout; hanging up",
+                    extra={"call_id": call_id, "component": "agent.end_call"},
+                )
+            await _terminate_room(
+                job_ctx, caller_identity, room_name, call_id=call_id,
+            )
+
+        asyncio.create_task(_hangup_after_goodbye())
+        return f"Agent ending the call (reason={safe_reason})."
 
     @function_tool()
     async def get_business_hours(self, ctx: RunContext) -> str:

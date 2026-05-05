@@ -75,6 +75,18 @@ def test_prompt_contains_after_hours_instructions():
     assert "currently closed" in prompt
 
 
+def test_prompt_contains_ending_calls_guidance():
+    """Issue #10: the system prompt must teach the LLM when to call end_call
+    and — equally important — when NOT to call it."""
+    prompt = build_system_prompt(_make_config())
+    assert "ENDING CALLS" in prompt
+    assert "end_call" in prompt
+    # Negative guard: don't end calls just because of silence
+    assert "Do NOT call end_call" in prompt or "do NOT call end_call" in prompt
+    # Negative guard: never as the first reply
+    assert "first reply" in prompt or "greet them" in prompt
+
+
 # ---- multi-language tests ----
 
 

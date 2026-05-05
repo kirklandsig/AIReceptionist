@@ -29,6 +29,7 @@ from receptionist.lifecycle import CallLifecycle
 from receptionist.messaging.dispatcher import Dispatcher
 from receptionist.messaging.models import DispatchContext, Message
 from receptionist.prompts import build_system_prompt
+from receptionist.voice_auth import resolve_voice_bearer_async
 
 load_dotenv(".env.local")
 load_dotenv(".env")
@@ -677,6 +678,7 @@ async def handle_call(ctx: agents.JobContext):
         llm=openai.realtime.RealtimeModel(
             model=config.voice.model,
             voice=config.voice.voice_id,
+            api_key=await resolve_voice_bearer_async(config.voice.auth),
         ),
     )
 

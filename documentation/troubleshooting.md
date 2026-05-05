@@ -178,17 +178,44 @@ LIVEKIT_URL=wss://...cloud  # Correct
 3. Restart the agent.
 4. Verify `.env` is being loaded (check for `python-dotenv` in dependencies).
 
-### OpenAI API key errors
+### OpenAI Realtime auth errors
 
-**Symptom**: Agent connects to LiveKit but fails when a call arrives, with OpenAI authentication errors in logs.
+**Symptom**: Agent connects to LiveKit but fails when a call arrives, with OpenAI authentication errors in logs. Examples include `401`, `Invalid bearer token`, `insufficient_scope`, or a missing env-var error from `voice.auth`.
 
-**Cause**: `OPENAI_API_KEY` is missing, incorrect, or does not have Realtime API access.
+**Cause**: The configured Realtime auth source is missing, expired, or does not have access to the selected Realtime model.
 
 **Solution**:
-1. Verify `OPENAI_API_KEY` in `.env` starts with `sk-`.
-2. Confirm your OpenAI account has Realtime API access (it requires specific access beyond standard API usage).
-3. Check your OpenAI billing — expired credits will cause authentication-like errors.
-4. Test the key: `curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`
+1. If `voice.auth` is omitted, verify `OPENAI_API_KEY` in `.env` starts with `sk-`.
+2. If using `voice.auth.type: "api_key"`, verify the configured `env` var exists in the agent process.
+3. If using `voice.auth.type: "oauth_codex"`, verify the configured file exists and contains `tokens.access_token` and `tokens.refresh_token`. Run `python -m receptionist.voice setup <business>` to create or repair a per-business token file.
+4. If using `voice.auth.type: "oauth_static"`, verify exactly one of `token` or `token_env` is configured and that the token is current.
+5. Confirm the account behind the bearer has Realtime model access and billing/plan access for `voice.model`.
+6. Test a bearer manually: `curl https://api.openai.com/v1/models -H "Authorization: Bearer $OPENAI_API_KEY"`
+
+### `oauth_codex` refresh failed
+
+**Symptom**: Calls worked earlier, then startup or call handling fails with a
+`voice.auth oauth_codex refresh failed` error.
+
+**Cause**: The short-lived Codex `access_token` expired and the stored
+`refresh_token` was missing, revoked, expired, or already rotated by another
+copy of the file.
+
+**Solution**:
+1. Run `python -m receptionist.voice setup <business>` and sign in again with the business's ChatGPT account.
+2. Confirm the YAML points at the intended per-business file, usually `secrets/<business>/openai_auth.json`.
+3. If multiple workers share a business, ensure they all mount the same token file path so refresh rotation is visible to every worker.
+4. If refresh continues to fail, run `codex login status` to confirm the base Codex login is still valid.
+
+### Codex CLI not found during voice setup
+
+**Symptom**: `python -m receptionist.voice setup <business>` exits with
+`Codex CLI not found on PATH`.
+
+**Solution**:
+1. Install Codex CLI: `npm install -g @openai/codex`.
+2. Confirm `codex --version` works in the same shell you use for setup.
+3. Re-run `python -m receptionist.voice setup <business>`.
 
 ---
 

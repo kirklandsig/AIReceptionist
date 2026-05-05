@@ -140,6 +140,92 @@ def test_v2_schema_loads(v2_yaml):
     assert config.business.name == "Test Dental"
     assert config.voice.voice_id == "marin"
     assert config.voice.model == "gpt-realtime-1.5"
+    assert config.voice.auth is None
+
+
+def _v2_yaml_with_voice_auth(v2_yaml: str, auth_block: str) -> str:
+    return v2_yaml.replace(
+        '  model: "gpt-realtime-1.5"',
+        f'  model: "gpt-realtime-1.5"\n  auth:\n{auth_block}',
+    )
+
+
+def test_voice_auth_api_key_defaults_to_openai_env(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "api_key"')
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.auth.type == "api_key"
+    assert config.voice.auth.env == "OPENAI_API_KEY"
+
+
+def test_voice_auth_api_key_custom_env(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "api_key"\n    env: "ACME_OPENAI_KEY"')
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.auth.type == "api_key"
+    assert config.voice.auth.env == "ACME_OPENAI_KEY"
+
+
+def test_voice_auth_oauth_codex_defaults_to_codex_path(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "oauth_codex"')
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.auth.type == "oauth_codex"
+    assert config.voice.auth.path == "~/.codex/auth.json"
+
+
+def test_voice_auth_oauth_codex_custom_path(v2_yaml, tmp_path):
+    auth_path = tmp_path / "auth.json"
+    yaml_text = _v2_yaml_with_voice_auth(
+        v2_yaml,
+        f'    type: "oauth_codex"\n    path: "{_yaml_safe(auth_path)}"',
+    )
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.auth.type == "oauth_codex"
+    assert config.voice.auth.path == _yaml_safe(auth_path)
+
+
+def test_voice_auth_oauth_static_with_inline_token(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "oauth_static"\n    token: "bearer-token"')
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.auth.type == "oauth_static"
+    assert config.voice.auth.token == "bearer-token"
+    assert config.voice.auth.token_env is None
+
+
+def test_voice_auth_oauth_static_with_token_env(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "oauth_static"\n    token_env: "OPENAI_OAUTH_TOKEN"')
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.auth.type == "oauth_static"
+    assert config.voice.auth.token is None
+    assert config.voice.auth.token_env == "OPENAI_OAUTH_TOKEN"
+
+
+def test_voice_auth_oauth_static_requires_one_token_source(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "oauth_static"')
+    with pytest.raises(Exception, match="exactly one"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_voice_auth_oauth_static_rejects_two_token_sources(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(
+        v2_yaml,
+        '    type: "oauth_static"\n    token: "x"\n    token_env: "OPENAI_OAUTH_TOKEN"',
+    )
+    with pytest.raises(Exception, match="exactly one"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_voice_auth_unknown_type_rejected(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "magic"')
+    with pytest.raises(Exception):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_voice_auth_extra_fields_rejected(v2_yaml):
+    yaml_text = _v2_yaml_with_voice_auth(
+        v2_yaml,
+        '    type: "oauth_codex"\n    path: "~/.codex/auth.json"\n    token_env: "NOPE"',
+    )
+    with pytest.raises(Exception):
+        BusinessConfig.from_yaml_string(yaml_text)
 
 
 def test_languages_config(v2_yaml):

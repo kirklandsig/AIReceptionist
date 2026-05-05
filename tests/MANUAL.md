@@ -6,7 +6,7 @@ Each checkbox should be checked off in the PR description or release notes; unch
 
 ## Prerequisites
 - [ ] Virtualenv active and deps installed (`pip install -e ".[dev]"`)
-- [ ] `.env` populated with `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `OPENAI_API_KEY`
+- [ ] `.env` populated with `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and either `OPENAI_API_KEY` or per-business `voice.auth`
 - [ ] Agent starts cleanly: `python -m receptionist.agent dev` shows `starting worker` with no errors
 
 ## Core call flow
@@ -66,8 +66,37 @@ Each checkbox should be checked off in the PR description or release notes; unch
 
 ## Known limitations to NOT flag as bugs
 - Python 3.14 may print compatibility warnings (use 3.11/3.12 for production)
-- `sip.phoneNumber` attribute may be absent on non-standard SIP trunks → caller appears as "Unknown" in emails (not a bug; documented fallback)
+- `sip.phoneNumber` attribute may be absent on non-standard SIP trunks; CallerID falls back to SIP metadata and `sip_<digits>` identities when present
 - `S3` storage for transcripts is NOT supported (local only)
+
+---
+
+## OpenAI Realtime OAuth
+
+Requires Codex CLI installed (`codex --version`) and a ChatGPT account with
+Realtime model access.
+
+### Setup
+
+- [ ] Run `python -m receptionist.voice setup example-dental`
+- [ ] Browser/Codex login completes using the intended ChatGPT account
+- [ ] Token file exists at `secrets/example-dental/openai_auth.json`
+- [ ] `config/businesses/example-dental.yaml` contains `voice.auth.type: oauth_codex`
+- [ ] Agent starts with `RECEPTIONIST_CONFIG=example-dental python -m receptionist.agent dev`
+
+### Live call smoke test
+
+- [ ] Connect from LiveKit Playground
+- [ ] Greeting is heard using `gpt-realtime-1.5` and the configured voice
+- [ ] Complete at least two conversational turns without `401`, `Invalid bearer token`, or `insufficient_scope`
+
+### Refresh smoke test
+
+- [ ] Preserve the real `tokens.refresh_token` in `secrets/example-dental/openai_auth.json`
+- [ ] Replace only `tokens.access_token` with an expired JWT-shaped test token
+- [ ] Start the agent and place a LiveKit Playground call
+- [ ] Agent refreshes the token before session construction; auth file is rewritten with a fresh `tokens.access_token`
+- [ ] Call proceeds normally after refresh
 
 ---
 

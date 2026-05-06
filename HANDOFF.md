@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-05-05
+> **Last updated:** 2026-05-06
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -334,11 +334,11 @@ This section traces a complete phone call through the system.
 
 1. An external caller dials the business phone number.
 2. The SIP trunk provider routes the call to the LiveKit Cloud SIP gateway.
-3. LiveKit Cloud creates a new room and dispatches the call to the registered agent.
+3. LiveKit Cloud creates a new room and dispatches the call to the registered agent name (`RECEPTIONIST_AGENT_NAME`, default `receptionist`).
 
 ### Step 2: Session Initialization (`handle_call`)
 
-1. `handle_call(ctx)` is triggered by the `@server.rtc_session()` decorator.
+1. `handle_call(ctx)` is triggered by the `@server.rtc_session(agent_name=...)` decorator.
 2. `load_business_config(ctx)` runs:
    - Checks `ctx.job.metadata` for a `"config"` key.
    - If found and valid (alphanumeric slug), loads the corresponding YAML file.
@@ -404,8 +404,8 @@ The `livekit-agents` package officially restricts Python to `<3.14`. The develop
 ### LiveKit Cloud
 
 - **Project URL:** `wss://aireceptionist-402e6ask.livekit.cloud`
-- **Agent registration:** The agent registers with `agent_name=""` (empty string) for auto-dispatch.
-- **Production note:** For multi-business routing with dispatch rules, restore `agent_name="receptionist"` and configure LiveKit dispatch rules accordingly.
+- **Agent registration:** The agent registers as `RECEPTIONIST_AGENT_NAME`, defaulting to `receptionist` for production dispatch rules.
+- **Development note:** Set `RECEPTIONIST_AGENT_NAME=""` only for local wildcard/dev dispatch testing, such as LiveKit Playground sessions without named dispatch.
 
 ### Required Environment Variables
 
@@ -416,6 +416,7 @@ These should be set in a `.env` file (see `.env.example` for template):
 | `LIVEKIT_URL`         | LiveKit Cloud WebSocket URL                |
 | `LIVEKIT_API_KEY`     | LiveKit API key for authentication         |
 | `LIVEKIT_API_SECRET`  | LiveKit API secret for authentication      |
+| `RECEPTIONIST_AGENT_NAME` | LiveKit agent dispatch name; defaults to `receptionist` when unset |
 | `OPENAI_API_KEY`      | OpenAI API key for Realtime API access (optional when every business uses `voice.auth.type: "oauth_codex"`) |
 
 ### Development Environment
@@ -429,6 +430,9 @@ These should be set in a `.env` file (see `.env.example` for template):
 ```bash
 # Development mode (auto-reload, verbose logging)
 python -m receptionist.agent dev
+
+# Local wildcard dispatch / Playground workaround
+RECEPTIONIST_AGENT_NAME="" python -m receptionist.agent dev
 
 # Production mode
 python -m receptionist.agent start
@@ -453,8 +457,8 @@ logic, lifecycle metadata, messaging channels, email rendering/senders,
 recording, transcript capture/formatting/writing, retention, Google Calendar
 booking, and integration-level call/booking flows.
 
-**Current result:** `374 passed, 2 skipped` via
-`.\venv\Scripts\python.exe -m pytest -q` on 2026-05-05.
+**Current result:** `377 passed, 2 skipped` via
+`.\venv\Scripts\python.exe -m pytest -q` on 2026-05-06.
 
 ### What Is NOT Tested
 
@@ -542,49 +546,51 @@ When tool functions (e.g., `transfer_call`) encounter exceptions, the full error
 
 | #  | Issue                                        | Impact                                      | Suggested Fix                                                    |
 | -- | -------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------- |
-| 1  | Webhook delivery is stubbed (`NotImplementedError`) | Cannot integrate with external systems      | Implement `_send_webhook()` using `httpx` or `aiohttp`          |
-| 2  | Python 3.14 compatibility uncertain          | Potential runtime crashes in production      | Pin to Python 3.11 or 3.12 in production Dockerfile/deployment   |
-| 3  | `agent_name=""` for dev testing              | No named dispatch in production              | Restore `agent_name="receptionist"` and configure dispatch rules |
+| 1  | Python 3.14 compatibility uncertain          | Potential runtime crashes in production      | Pin production to Python 3.11 or 3.12                            |
+| 2  | LiveKit dispatch name must match deployment  | Calls will not reach the worker if mismatched | Keep `RECEPTIONIST_AGENT_NAME` aligned with `roomConfig.agents[].agentName` |
 
 ### Medium Priority
 
 | #  | Issue                                        | Impact                                      | Suggested Fix                                                    |
 | -- | -------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------- |
-| 4  | `lookup_faq` uses simple substring matching  | May return wrong FAQ for ambiguous queries   | Use TF-IDF or embedding similarity; sufficient for <30 FAQs now  |
-| 5  | No call recording or transcript capture      | No audit trail or review capability          | Use LiveKit Egress API for recordings; OpenAI Realtime text output for transcripts |
-| 6  | No email notification for messages           | Staff must manually check message files      | Add SMTP/SendGrid integration triggered after `save_message()`   |
+| 3  | `lookup_faq` uses simple substring matching  | May return wrong FAQ for ambiguous queries   | Use TF-IDF or embedding similarity if FAQs exceed ~50 entries    |
+| 4  | No retry CLI for `.failures/` records        | Operators can inspect failures but not replay them | Add a safe retry command that reuses stored delivery context |
+| 5  | S3 storage for transcripts is not supported  | Transcript retention is local-only           | Add a transcript storage backend parallel to recording storage   |
+| 6  | Silence timeout goodbye is not cancelable once scheduled | Caller returning during goodbye still gets disconnected | Add a late cancel path before SIP BYE/delete-room termination |
 
 ### Low Priority / Nice to Have
 
 | #  | Issue                                        | Impact                                      | Suggested Fix                                                    |
 | -- | -------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------- |
-| 7  | No admin dashboard or web UI                 | Config changes require file editing          | Build a web UI (FastAPI + React) for config management           |
-| 8  | No integration tests for agent.py            | Core module untested                         | Mock LiveKit and OpenAI SDKs; test tool invocation paths         |
-| 9  | No structured logging                        | Harder to debug in production                | Add structured JSON logging with correlation IDs per call        |
+| 7  | No admin dashboard or web UI                 | Config changes require file editing          | Build a web UI for config/artifact management                    |
+| 8  | Live SIP/OpenAI/Egress coverage is manual-only | Some production regressions require smoke tests | Keep `tests/MANUAL.md` current; add harnesses where feasible |
+| 9  | No structured JSON logging                   | Harder to query production logs              | Add structured logging with call_id/component fields everywhere  |
 
 ---
 
 ## 13. Planned Future Work
 
-These items come from the design document at `docs/plans/2026-03-02-ai-receptionist-design.md`:
+Current next-work candidates, combining the original design backlog with production validation findings:
 
 ### Near-Term
 
-1. **Webhook message delivery**: Implement `_send_webhook()` to POST messages to external endpoints (CRM, Slack, etc.).
-2. **Call recordings**: Use the LiveKit Egress API to record calls for quality assurance and compliance.
-3. **Call transcripts**: Capture the text output from the OpenAI Realtime API to generate searchable transcripts.
-4. **Email notifications**: Send email alerts when a message is taken (SMTP or SendGrid).
+1. **RingCentral/RingEX reception-group integration**: Document the Twilio DID -> LiveKit SIP -> named agent dispatch path; use hand-curated claims-rep transfer targets in YAML.
+2. **Law-firm production config**: Add a private or example law-firm YAML once the firm display name, Twilio DID, and selected claims-rep routes are known.
+3. **Failure replay**: Add a CLI to retry `.failures/` delivery records after webhook/email configuration is fixed.
+4. **Live smoke runbook**: Keep Playground/SIP/manual checklist current for CallerID, `end_call`, idle safety nets, recording, transcripts, and ChatGPT OAuth refresh.
 
 ### Medium-Term
 
-5. **Cascaded pipeline mode**: Offer an alternative pipeline using Deepgram STT + Claude/GPT-4o + ElevenLabs TTS. This would be cheaper (~$0.05-0.10/min vs. ~$0.20-0.30/min) at the cost of slightly higher latency.
-6. **Web widget channel**: Allow businesses to embed a voice widget on their website. Uses browser WebRTC directly (no telephony needed), lowering per-call costs.
+5. **Better FAQ retrieval**: Replace substring matching with TF-IDF or embeddings if businesses grow beyond roughly 50 FAQ entries.
+6. **Microsoft 365 / Outlook calendar**: Mirror the Google Calendar booking path for firms that live in Microsoft 365.
+7. **Cascaded pipeline mode**: Offer a lower-cost Deepgram/LLM/TTS path for deployments that prefer cost over native Realtime turn-taking.
+8. **Web widget channel**: Add browser WebRTC entry for website visitors without telephony costs.
 
 ### Long-Term
 
-7. **Admin dashboard**: Web UI for managing business configs, viewing messages, listening to recordings, and viewing analytics.
-8. **Analytics**: Track call volume, common questions, transfer rates, message rates, peak hours.
-9. **Multi-language support**: Leverage OpenAI Realtime's multilingual capabilities.
+9. **Admin dashboard**: Web UI for managing business configs, artifacts, failures, and retention settings.
+10. **Analytics**: Track call volume, common questions, transfer rates, message rates, peak hours, and agent-ended reasons.
+11. **SMS notifications/reminders**: Add provider-backed reminders and confirmations once caller verification policy is defined.
 
 ---
 
@@ -609,6 +615,7 @@ These items come from the design document at `docs/plans/2026-03-02-ai-reception
 
 ### Cost Reduction Strategies
 
+- **ChatGPT/Codex OAuth**: Can use eligible ChatGPT subscription entitlements for Realtime instead of OpenAI Platform API-key billing. This depends on the signed-in account and model entitlement; keep API-key fallback available for production certainty.
 - **Cascaded pipeline** (Deepgram + Claude + ElevenLabs): Could reduce AI cost to ~$0.05-0.10/min.
 - **Web widget** (no telephony): Eliminates SIP trunk costs entirely.
 - **Shorter calls**: Optimize prompts and FAQ coverage to resolve calls faster.
@@ -617,29 +624,27 @@ These items come from the design document at `docs/plans/2026-03-02-ai-reception
 
 ## 15. Git History
 
-The repository has 9 commits on the `main` branch, listed newest to oldest:
+The repository now uses Conventional Commits on `main`. Use `git log --oneline -10` for the exact current list; the latest notable commits before this handoff refresh were:
 
 ```
-713c212 docs: add README with setup guide and configuration reference
-1201e07 fix: harden agent against path traversal, error leaks, and blocking I/O
-865cb62 feat: receptionist agent with function tools and server entry point
-9673f30 feat: message storage with file-based delivery
-953dfb8 feat: system prompt builder from business config
-6acbdfc fix: add config validation for delivery fields, time format, and UTF-8 encoding
-7d70f91 feat: business config Pydantic models with YAML loading and validation
-89578d6 docs: add design doc and implementation plan
-bddec57 chore: initial project scaffolding with dependencies
+bdf0bda docs: add ChatGPT OAuth setup guide
+178f6e0 fix: harden oauth refresh and idle guards
+3a79c04 feat: idle safety nets - silence timeout, max duration, unproductive turns (closes #11)
+5a5131c feat: end_call function tool and agent_ended outcome (closes #10)
+c76ce12 fix: capture caller id regardless of participant kind (closes #9)
+19ea8f9 feat: configurable openai realtime auth with codex oauth refresh
+be68cb8 fix: resolve caller id from sip participant metadata
+b4b3d38 fix: show transfer target in call summaries
 ```
 
 ### Development Progression
 
-1. **Scaffolding** (`bddec57`): Initial project structure, `pyproject.toml`, dependencies.
-2. **Design** (`89578d6`): Design document and implementation plan written before coding.
-3. **Config** (`7d70f91`, `6acbdfc`): Pydantic models for business config, then hardened with validation.
-4. **Prompts** (`953dfb8`): System prompt builder from business config.
-5. **Messages** (`9673f30`): File-based message storage.
-6. **Agent** (`865cb62`, `1201e07`): Core agent with tools, then hardened for security.
-7. **Docs** (`713c212`): README with setup guide.
+1. **MVP foundation**: config schema, system prompt, file-backed messages, LiveKit agent server, and initial hardening.
+2. **Call artifacts + delivery**: transcripts, recordings, multi-channel message delivery, retention, failure records, and email triggers.
+3. **Booking**: Google Calendar availability + booking tools, setup CLI, and booking-specific email trigger.
+4. **SIP/production hardening**: configurable transfer URI, CallerID race/fallback fixes, transfer-summary visibility, and operator troubleshooting logs.
+5. **Lifecycle safety**: `end_call`, `agent_ended` metadata, silence/max-duration/unproductive-turn hangups, and hardened idle guards.
+6. **Realtime auth**: per-business `voice.auth`, ChatGPT/Codex OAuth refresh, setup CLI, and docs.
 
 ---
 
@@ -686,7 +691,7 @@ python -m receptionist.agent dev
 1. Go to the LiveKit Cloud dashboard.
 2. Open the "Playground" or "Agent Playground" tool.
 3. Connect to the same LiveKit project.
-4. The agent should accept the session (since `agent_name=""` accepts all dispatches).
+4. For wildcard Playground testing, start the agent with `RECEPTIONIST_AGENT_NAME=""` so it accepts unnamed dispatches.
 5. Speak to test the conversation flow.
 
 ### Testing with a Real Phone Call
@@ -701,7 +706,7 @@ python -m receptionist.agent dev
 
 ### "Browser not supported" or agent not picking up calls
 
-- Ensure `agent_name=""` in the code (for dev) or that dispatch rules match the agent name (for production).
+- Ensure `RECEPTIONIST_AGENT_NAME` matches `roomConfig.agents[].agentName` in the dispatch rule. For local wildcard/dev dispatch only, set `RECEPTIONIST_AGENT_NAME=""`.
 - Check that the `.env` file has correct `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`.
 - Verify the agent is running and connected: the console should show a registration message.
 
@@ -790,7 +795,7 @@ Floor bumps: `livekit-agents>=1.5.0`, `livekit-plugins-openai>=1.5.0`.
 ### Known issues still open
 
 - Python 3.14 compatibility uncertain (`.python-version` now pins 3.12; deploy on 3.11 or 3.12).
-- `agent_name=""` for dev; production needs `agent_name="receptionist"` + LiveKit dispatch rules.
+- Production dispatch rules must use `roomConfig.agents[].agentName` matching `RECEPTIONIST_AGENT_NAME` (default `receptionist`); `RECEPTIONIST_AGENT_NAME=""` is only for local wildcard/dev dispatch.
 - `lookup_faq` uses substring matching — replace with embedding similarity if FAQs >50 per business.
 - No retry CLI for `.failures/` (visibility only).
 - No admin dashboard / web UI.

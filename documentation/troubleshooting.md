@@ -229,7 +229,7 @@ copy of the file.
 
 **Solution**:
 1. Verify your SIP trunk is configured in LiveKit (Cloud dashboard or server config).
-2. Check the SIP dispatch rule routes calls to your agent.
+2. Check the SIP dispatch rule has `roomConfig.agents[].agentName` matching `RECEPTIONIST_AGENT_NAME` on the running worker. The default is `receptionist`; use `RECEPTIONIST_AGENT_NAME=""` only for local wildcard/dev dispatch.
 3. Verify your SIP provider (Twilio/Telnyx) is sending calls to the correct LiveKit SIP endpoint.
 4. Check SIP trunk provider logs for failed connection attempts.
 5. Ensure the agent is running and connected to LiveKit when the call arrives.

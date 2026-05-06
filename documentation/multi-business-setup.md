@@ -141,44 +141,47 @@ This is the critical step. Each dispatch rule maps an inbound call to a business
 
 #### Using LiveKit CLI
 
-```bash
-# Dispatch rule for Acme Dental
-lk sip dispatch-rule create \
-  --trunk-id "ST_acme_trunk_id" \
-  --type "individual" \
-  --room-prefix "call-acme-" \
-  --metadata '{"config": "acme-dental"}'
+Create one JSON file per business and change `agentName` only if the worker's `RECEPTIONIST_AGENT_NAME` is not `receptionist`:
 
-# Dispatch rule for Smith Law
-lk sip dispatch-rule create \
-  --trunk-id "ST_smith_trunk_id" \
-  --type "individual" \
-  --room-prefix "call-smith-" \
-  --metadata '{"config": "smith-law"}'
-
-# Dispatch rule for City Clinic
-lk sip dispatch-rule create \
-  --trunk-id "ST_clinic_trunk_id" \
-  --type "individual" \
-  --room-prefix "call-clinic-" \
-  --metadata '{"config": "city-clinic"}'
+```json
+{
+  "dispatch_rule": {
+    "name": "Acme Dental Receptionist",
+    "trunk_ids": ["ST_acme_trunk_id"],
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "call-acme-"
+      }
+    },
+    "roomConfig": {
+      "agents": [
+        {
+          "agentName": "receptionist",
+          "metadata": "{\"config\": \"acme-dental\"}"
+        }
+      ]
+    }
+  }
+}
 ```
+
+Then create the rule with `lk sip dispatch create acme-dental-dispatch.json`. Repeat for `smith-law` and `city-clinic`, changing the trunk ID, room prefix, and metadata config slug.
 
 **Key parameters**:
 
 | Parameter | Purpose |
 |-----------|---------|
-| `--trunk-id` | Matches inbound calls from a specific SIP trunk |
-| `--type "individual"` | Creates a new room for each call |
-| `--room-prefix` | Prefix for room names (useful for monitoring) |
-| `--metadata` | JSON with the `"config"` key specifying the business slug |
+| `trunk_ids` | Matches inbound calls from specific SIP trunks |
+| `rule.dispatchRuleIndividual.roomPrefix` | Prefix for per-call room names |
+| `roomConfig.agents[].agentName` | Dispatches the named worker; default is `receptionist` |
+| `roomConfig.agents[].metadata` | JSON string with the `"config"` key specifying the business slug |
 
 #### Using LiveKit Cloud Dashboard
 
 1. Go to **SIP > Dispatch Rules**.
 2. Create a new rule for each business.
-3. Set the trunk, room prefix, and metadata.
-4. The metadata JSON must include `{"config": "<slug>"}`.
+3. Use the JSON editor so you can set `roomConfig.agents[].agentName` and metadata.
+4. The agent metadata JSON string must include `{"config": "<slug>"}`.
 
 ### Step 5: Deploy the Agent
 

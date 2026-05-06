@@ -91,7 +91,7 @@ pip install -e .
 ```bash
 cp .env.example .env
 # Edit .env with your LiveKit keys:
-#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET
+#   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, RECEPTIONIST_AGENT_NAME
 # Add OPENAI_API_KEY, or configure ChatGPT OAuth in your business YAML.
 ```
 
@@ -113,6 +113,8 @@ Follow the [LiveKit SIP Trunk Setup Guide](https://docs.livekit.io/telephony/sta
 ```bash
 python -m receptionist.agent dev
 ```
+
+`RECEPTIONIST_AGENT_NAME` defaults to `receptionist` for production LiveKit dispatch rules. For local Playground sessions that should be accepted without named dispatch, run with an empty value, for example: `RECEPTIONIST_AGENT_NAME="" python -m receptionist.agent dev`.
 
 Call your phone number -- you should hear your AI receptionist answer with your custom greeting.
 
@@ -259,10 +261,11 @@ The sweeper never touches `.failures/` directories.
 
 ## Multi-Business Setup
 
-One running agent can serve multiple businesses. Each inbound phone number maps to a business config via SIP dispatch rule metadata:
+One running agent can serve multiple businesses. Each inbound phone number maps to a business config via the agent metadata on its SIP dispatch rule:
 
 ```json
 {
+  "agentName": "receptionist",
   "metadata": "{\"config\": \"my-business\"}"
 }
 ```

@@ -66,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   room (Telnyx INVITE → PRACK delay, Asterisk diversion-header late update).
 
 ### Changed
+- **LiveKit agent dispatch default** now registers the worker as
+  `receptionist` via `RECEPTIONIST_AGENT_NAME`, matching production dispatch
+  rules by default. Local Playground/wildcard testing can still set
+  `RECEPTIONIST_AGENT_NAME=""` for the current process.
 - **Always-on `agent.callerid` INFO logs** record the snapshot at
   `handle_call` start, the participant identity/kind/attribute keys for
   every capture attempt, and a clear positive/negative result line. Operators

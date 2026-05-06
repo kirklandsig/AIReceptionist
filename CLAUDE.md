@@ -90,7 +90,7 @@ AIReceptionist/
 ### Configuration
 
 - Business configs live in `config/businesses/*.yaml`.
-- The `agent_name` is currently `""` (empty string) for development — this makes the agent accept all dispatches. In production, set `agent_name="receptionist"` and configure LiveKit dispatch rules.
+- `RECEPTIONIST_AGENT_NAME` controls the LiveKit agent dispatch name. It defaults to `"receptionist"` for production; set `RECEPTIONIST_AGENT_NAME=""` only for local wildcard/dev dispatch testing.
 - Environment variables are loaded from `.env.local` (takes priority) then `.env`.
 
 ---

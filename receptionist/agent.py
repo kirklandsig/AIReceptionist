@@ -37,6 +37,11 @@ load_dotenv(".env")
 logger = logging.getLogger("receptionist")
 
 DEFAULT_CONFIG_DIR = Path("config/businesses")
+DEFAULT_AGENT_NAME = "receptionist"
+
+
+def _resolve_agent_name() -> str:
+    return os.environ.get("RECEPTIONIST_AGENT_NAME", DEFAULT_AGENT_NAME)
 
 
 def _format_friendly_date(dt: datetime) -> str:
@@ -1044,7 +1049,7 @@ class Receptionist(Agent):
 server = AgentServer()
 
 
-@server.rtc_session()
+@server.rtc_session(agent_name=_resolve_agent_name())
 async def handle_call(ctx: agents.JobContext):
     config = load_business_config(ctx)
 

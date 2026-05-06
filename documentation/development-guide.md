@@ -91,6 +91,7 @@ Edit `.env` with your actual credentials:
 LIVEKIT_URL=wss://your-project.livekit.cloud
 LIVEKIT_API_KEY=your-api-key
 LIVEKIT_API_SECRET=your-api-secret
+RECEPTIONIST_AGENT_NAME=receptionist
 OPENAI_API_KEY=sk-your-openai-key
 ```
 
@@ -154,6 +155,12 @@ python -m receptionist.agent dev
 Development mode provides:
 - Verbose logging output
 - Helpful for debugging configuration and connection issues
+
+The worker registers as `receptionist` by default so it matches production dispatch rules. For local LiveKit Playground testing without named dispatch, run that process with an empty value:
+
+```bash
+RECEPTIONIST_AGENT_NAME="" python -m receptionist.agent dev
+```
 
 ### Making Test Calls
 

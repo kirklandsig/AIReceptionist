@@ -13,6 +13,7 @@ from receptionist.agent import (
     _get_caller_identity,
     _get_caller_phone,
     _get_sip_participant_phone,
+    _resolve_agent_name,
     _resolve_relative_date,
 )
 from receptionist.lifecycle import CallLifecycle
@@ -73,6 +74,21 @@ def test_resolve_case_insensitive(sun_apr_26_2026):
 
 def _participant(kind, attrs=None, identity=""):
     return SimpleNamespace(kind=kind, attributes=attrs or {}, identity=identity)
+
+
+def test_resolve_agent_name_defaults_to_production_name(monkeypatch):
+    monkeypatch.delenv("RECEPTIONIST_AGENT_NAME", raising=False)
+    assert _resolve_agent_name() == "receptionist"
+
+
+def test_resolve_agent_name_allows_blank_for_dev_wildcard(monkeypatch):
+    monkeypatch.setenv("RECEPTIONIST_AGENT_NAME", "")
+    assert _resolve_agent_name() == ""
+
+
+def test_resolve_agent_name_allows_custom_name(monkeypatch):
+    monkeypatch.setenv("RECEPTIONIST_AGENT_NAME", "night-shift")
+    assert _resolve_agent_name() == "night-shift"
 
 
 def test_get_sip_participant_phone_reads_sip_attribute():

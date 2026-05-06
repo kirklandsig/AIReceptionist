@@ -55,6 +55,12 @@ Required variables for all deployments:
 | `LIVEKIT_API_KEY` | LiveKit API key for authentication | `APIxxxxxxxxxxxxxxx` |
 | `LIVEKIT_API_SECRET` | LiveKit API secret for authentication | `your-api-secret` |
 
+Agent dispatch defaults:
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `RECEPTIONIST_AGENT_NAME` | LiveKit agent name registered by `@server.rtc_session`; defaults to `receptionist` when unset | `receptionist` |
+
 Required for API-key auth only:
 
 | Variable | Description | Example |
@@ -330,24 +336,40 @@ lk sip trunk create \
 
 A dispatch rule tells LiveKit what to do when a SIP call arrives:
 
-```bash
-lk sip dispatch-rule create \
-  --trunk-id "ST_xxxxxxxx" \
-  --type "individual" \
-  --room-prefix "call-" \
-  --metadata '{"config": "my-business"}'
+```json
+{
+  "dispatch_rule": {
+    "name": "AI Receptionist",
+    "trunk_ids": ["ST_xxxxxxxx"],
+    "rule": {
+      "dispatchRuleIndividual": {
+        "roomPrefix": "call-"
+      }
+    },
+    "roomConfig": {
+      "agents": [
+        {
+          "agentName": "receptionist",
+          "metadata": "{\"config\": \"my-business\"}"
+        }
+      ]
+    }
+  }
+}
 ```
+
+Create the rule from JSON with `lk sip dispatch create dispatch-rule.json`, or use the LiveKit Cloud JSON editor and omit the outer `dispatch_rule` wrapper. The `agentName` value must match `RECEPTIONIST_AGENT_NAME` on the running worker.
 
 Key parameters:
 
 | Parameter | Description |
 |-----------|-------------|
-| `--trunk-id` | The SIP trunk to match against |
-| `--type` | `"individual"` creates a new room per call |
-| `--room-prefix` | Prefix for auto-generated room names |
-| `--metadata` | JSON metadata passed to the agent (used for config selection) |
+| `trunk_ids` | SIP trunk IDs to match against |
+| `rule.dispatchRuleIndividual.roomPrefix` | Prefix for auto-generated per-call room names |
+| `roomConfig.agents[].agentName` | Agent worker name to dispatch; default worker value is `receptionist` |
+| `roomConfig.agents[].metadata` | JSON string passed to the agent job (used for config selection) |
 
-The `metadata` field is how you specify which business config the agent should use. The `"config"` key in the metadata maps to a YAML file in `config/businesses/`. See [Multi-Business Setup](multi-business-setup.md) for details.
+The agent metadata field is how you specify which business config the agent should use. The `"config"` key maps to a YAML file in `config/businesses/`. See [Multi-Business Setup](multi-business-setup.md) for details.
 
 ---
 
@@ -362,6 +384,12 @@ python -m receptionist.agent dev
 ```
 
 This is suitable for local testing and development. The agent connects to LiveKit and processes calls, but with development-friendly defaults.
+
+The worker registers as `receptionist` by default. For local LiveKit Playground sessions that should be accepted without a named dispatch rule, set an empty agent name for that process:
+
+```bash
+RECEPTIONIST_AGENT_NAME="" python -m receptionist.agent dev
+```
 
 ### Production Mode
 

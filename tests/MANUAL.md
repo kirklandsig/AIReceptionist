@@ -7,7 +7,7 @@ Each checkbox should be checked off in the PR description or release notes; unch
 ## Prerequisites
 - [ ] Virtualenv active and deps installed (`pip install -e ".[dev]"`)
 - [ ] `.env` populated with `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and either `OPENAI_API_KEY` or per-business `voice.auth`
-- [ ] Agent starts cleanly: `python -m receptionist.agent dev` shows `starting worker` with no errors
+- [ ] Agent starts cleanly: `python -m receptionist.agent dev` shows `starting worker` with no errors; for Playground-only wildcard dispatch, start with `RECEPTIONIST_AGENT_NAME=""`
 
 ## Core call flow
 - [ ] Place a LiveKit Playground call → greeting is heard in the configured voice (default `marin`)

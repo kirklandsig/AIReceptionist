@@ -63,8 +63,8 @@ receptionist/
 
 ### 1. Arrival
 1. Caller dials number → SIP trunk routes to LiveKit Cloud
-2. LiveKit Cloud creates a room and dispatches to the registered agent
-3. `@server.rtc_session()` fires `handle_call(ctx)`
+2. LiveKit Cloud creates a room and dispatches to the registered agent name (`RECEPTIONIST_AGENT_NAME`, default `receptionist`)
+3. `@server.rtc_session(agent_name=...)` fires `handle_call(ctx)`
 
 ### 2. Session initialization
 1. `load_business_config(ctx)` picks a YAML based on `job.metadata["config"]` (or first YAML as fallback)

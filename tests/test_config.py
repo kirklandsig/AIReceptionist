@@ -61,6 +61,20 @@ def test_load_config_from_file(tmp_path):
     assert config.business.name == "Test Dental"
 
 
+def test_licomplaw_config_loads_with_resend_env(monkeypatch):
+    monkeypatch.setenv("LICOMPLAW_RESEND_API_KEY", "test-resend-key")
+    config = load_config(Path("config/businesses/example-licomplaw.yaml"))
+    assert config.business.name == "L.I. Compensation Law"
+    assert config.greeting.startswith("Thank you for calling L.I. Compensation Law")
+    assert len(config.routing) == 15
+    assert config.messages.channels[1].to == ["reception@licomplaw.com"]
+    assert config.recording is not None
+    assert config.recording.enabled is True
+    assert config.recording.consent_preamble.enabled is False
+    assert config.transcripts is not None
+    assert config.transcripts.enabled is True
+
+
 def test_hours_closed_day():
     config = BusinessConfig.from_yaml_string(EXAMPLE_YAML)
     assert config.hours.wednesday is None

@@ -193,6 +193,8 @@ python -m receptionist.agent start
 
 The agent automatically selects the correct configuration for each call based on the dispatch rule metadata. No code changes are needed to support multiple businesses.
 
+For the RingCentral law-firm path, see [RingCentral + Twilio Setup](ringcentral-setup.md). That guide uses the same metadata pattern with `{"config":"licomplaw"}` and a Twilio DID added to the RingCentral reception group as an external member.
+
 ---
 
 ## Configuration Organization

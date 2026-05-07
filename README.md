@@ -108,6 +108,8 @@ Follow the [LiveKit SIP Trunk Setup Guide](https://docs.livekit.io/telephony/sta
 - Create an inbound SIP trunk pointing to your Twilio/Telnyx number
 - Create a dispatch rule to route calls to the `receptionist` agent
 
+For RingCentral/RingEX reception groups that should ring the AI alongside human receptionists, see [`documentation/ringcentral-setup.md`](documentation/ringcentral-setup.md).
+
 5. **Run:**
 
 ```bash

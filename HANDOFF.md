@@ -457,7 +457,7 @@ logic, lifecycle metadata, messaging channels, email rendering/senders,
 recording, transcript capture/formatting/writing, retention, Google Calendar
 booking, and integration-level call/booking flows.
 
-**Current result:** `377 passed, 2 skipped` via
+**Current result:** `378 passed, 2 skipped` via
 `.\venv\Scripts\python.exe -m pytest -q` on 2026-05-06.
 
 ### What Is NOT Tested
@@ -574,8 +574,8 @@ Current next-work candidates, combining the original design backlog with product
 
 ### Near-Term
 
-1. **RingCentral/RingEX reception-group integration**: Document the Twilio DID -> LiveKit SIP -> named agent dispatch path; use hand-curated claims-rep transfer targets in YAML.
-2. **Law-firm production config**: Add a private or example law-firm YAML once the firm display name, Twilio DID, and selected claims-rep routes are known.
+1. **Finalize RingCentral/RingEX reception-group integration**: Verify this RingEX Standard tenant supports adding the Twilio AI bridge DID as an external reception-group member.
+2. **Replace law-firm placeholders**: Copy `config/businesses/example-licomplaw.yaml` to local `config/businesses/licomplaw.yaml`, then update the final firm display name, Twilio DID/trunk IDs, real claims-rep DIDs, and working email sender env.
 3. **Failure replay**: Add a CLI to retry `.failures/` delivery records after webhook/email configuration is fixed.
 4. **Live smoke runbook**: Keep Playground/SIP/manual checklist current for CallerID, `end_call`, idle safety nets, recording, transcripts, and ChatGPT OAuth refresh.
 
@@ -1120,3 +1120,35 @@ CallerID helper tests, `end_call`/termination helper tests, lifecycle/email/
 transcript metadata tests, and `voice.idle` schema + unproductive-counter tests.
 The full suite after review hardening passes at `374 passed, 2 skipped` via
 `.\venv\Scripts\python.exe -m pytest -q`.
+
+---
+
+## Addendum — 2026-05-06: RingCentral/Twilio law-firm template
+
+Added the first concrete RingCentral/RingEX deployment path for the L.I.
+Compensation Law use case:
+
+- `config/businesses/example-licomplaw.yaml` defines Adriana as the receptionist,
+  leaves AI-disclosure language out of the greeting, enables local recording
+  and JSON/Markdown transcripts, disables the recording consent preamble, and
+  sends message/call-end emails to `reception@licomplaw.com` through Resend via
+  `LICOMPLAW_RESEND_API_KEY`.
+- The config includes 15 placeholder claims-rep transfer targets. They are
+  intentionally obvious `+1555...` numbers and must be replaced with real
+  E.164 direct-dial DIDs before any live transfer testing.
+- `documentation/ringcentral-setup.md` documents the v1 architecture: add a
+  Twilio AI bridge DID as an external member of the RingCentral reception group,
+  forward that DID to LiveKit SIP, and dispatch the named `receptionist` worker
+  with metadata `{"config":"licomplaw"}`. It also notes the tenant-specific
+  open item: verify RingEX Standard can include external numbers in the
+  reception call queue/ring group.
+- `tests/MANUAL.md` now has a RingCentral/Twilio law-firm smoke checklist.
+
+Still needed before go-live: final firm display name confirmation, Twilio DID
+and LiveKit trunk IDs, real claims-rep transfer targets, and a working Resend or
+SMTP sender.
+
+Automated coverage: `tests/test_config.py::test_licomplaw_config_loads_with_resend_env`
+asserts the config loads with the required email env var, contains 15 transfer
+targets, has recording enabled, has consent preamble disabled, and has
+transcripts enabled. Full suite after this change: `378 passed, 2 skipped`.

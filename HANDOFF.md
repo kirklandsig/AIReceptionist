@@ -1,6 +1,6 @@
 # AIReceptionist -- Project Handoff Document
 
-> **Last updated:** 2026-05-06
+> **Last updated:** 2026-05-07
 > **Purpose:** Transfer complete project context to a new developer or agent with zero knowledge loss.
 > **Read time:** ~20 minutes for full comprehension.
 
@@ -1152,3 +1152,32 @@ Automated coverage: `tests/test_config.py::test_licomplaw_config_loads_with_rese
 asserts the config loads with the required email env var, contains 15 transfer
 targets, has recording enabled, has consent preamble disabled, and has
 transcripts enabled. Full suite after this change: `378 passed, 2 skipped`.
+
+---
+
+## Addendum — 2026-05-07: Silence fallback and post-close warning filter
+
+Follow-up fixes for Trinicom issues #10/#11:
+
+- `VoiceIdleConfig` now accepts `absolute_silence_seconds: int | None`, default
+  `None`. This keeps existing configs unchanged. Suggested production value is
+  `120` for SIP trunks that send comfort noise while a caller is muted or gone.
+- `handle_call()` now runs two coordinated silence watchers. The existing
+  LiveKit `user_state == "away"` path still uses
+  `away_seconds + silence_grace_seconds`; the optional absolute fallback resets
+  on each non-empty final user transcript and fires `silence_timeout` when no
+  final transcript arrives before the configured threshold. Both silence paths
+  share a one-shot guard so only one goodbye/hangup task is scheduled.
+- The session close handler now cancels both the LiveKit user-state silence
+  timer and the absolute silence timer before running `lifecycle.on_call_ended()`.
+- `receptionist.agent` installs a narrow logging filter for the exact benign
+  LiveKit post-close warning `engine: connection error: engine is closed` at
+  warning level. Other engine connection errors still log normally.
+- Documentation updated: `documentation/configuration-reference.md`,
+  `documentation/architecture.md`, `documentation/function-tools-reference.md`,
+  `documentation/troubleshooting.md`, and `documentation/CHANGELOG.md`.
+
+Automated coverage added for `voice.idle.absolute_silence_seconds` validation,
+final transcript detection for the wall-clock fallback, and the narrow
+engine-closed warning filter. Full suite after this change:
+`383 passed, 2 skipped` via `.\venv\Scripts\python.exe -m pytest -q`.

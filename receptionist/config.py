@@ -98,9 +98,16 @@ class VoiceIdleConfig(BaseModel):
     # ---- Max call duration ----------------------------------------------
     max_call_duration_seconds: int | None = Field(default=None, gt=0)
     """Optional ceiling on the total call duration. None disables the cap
-    entirely (default — preserve original behavior). Set to e.g. 900 to
+    entirely (default - preserve original behavior). Set to e.g. 900 to
     cap calls at 15 minutes; the agent will say goodbye and disconnect
     when the cap is reached."""
+
+    # ---- Wall-clock silence fallback ------------------------------------
+    absolute_silence_seconds: int | None = Field(default=None, gt=0)
+    """Optional wall-clock silence fallback. None disables the fallback
+    (default - preserve original behavior). Set to e.g. 120 to hang up when
+    no final user transcript arrives for two minutes, even if SIP comfort
+    noise keeps LiveKit's user_state from becoming away."""
 
     # ---- Unproductive turn ceiling --------------------------------------
     unproductive_hangup_enabled: bool = True

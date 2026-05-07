@@ -38,10 +38,37 @@ logger = logging.getLogger("receptionist")
 
 DEFAULT_CONFIG_DIR = Path("config/businesses")
 DEFAULT_AGENT_NAME = "receptionist"
+_BENIGN_ENGINE_CLOSED_MESSAGE = "engine: connection error: engine is closed"
+
+
+def _is_benign_engine_closed_warning(record: logging.LogRecord) -> bool:
+    return (
+        record.levelno == logging.WARNING
+        and record.getMessage().strip() == _BENIGN_ENGINE_CLOSED_MESSAGE
+    )
+
+
+class _PostCloseEngineWarningFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not _is_benign_engine_closed_warning(record)
+
+
+_post_close_engine_warning_filter = _PostCloseEngineWarningFilter()
+for _logger_name in ("livekit", "livekit.agents", "livekit.plugins.openai"):
+    logging.getLogger(_logger_name).addFilter(_post_close_engine_warning_filter)
 
 
 def _resolve_agent_name() -> str:
     return os.environ.get("RECEPTIONIST_AGENT_NAME", DEFAULT_AGENT_NAME)
+
+
+def _is_final_user_transcript(ev) -> bool:
+    if not getattr(ev, "is_final", False):
+        return False
+    transcript = getattr(ev, "transcript", None)
+    if transcript is None:
+        return True
+    return bool(str(transcript).strip())
 
 
 def _format_friendly_date(dt: datetime) -> str:
@@ -1129,26 +1156,44 @@ async def handle_call(ctx: agents.JobContext):
     session.on("function_tools_executed", receptionist._on_function_tools_executed)
     session.on("conversation_item_added", receptionist._on_conversation_item_added)
 
-    # Issue #11 silence-timeout watcher. Holds a single TimerHandle that
-    # the user_state_changed listener resets as the caller goes
-    # away/listening/speaking. The closure captures `session` and
-    # `lifecycle` so it doesn't need to walk through Receptionist.
-    silence_state = {"timer": None, "scheduled": False}
+    # Issue #11 silence-timeout watchers. The primary path follows
+    # LiveKit's user_state machine; the optional absolute path is a
+    # wall-clock fallback for SIP comfort noise that prevents `away`.
+    silence_grace_timer: asyncio.TimerHandle | None = None
+    absolute_silence_timer: asyncio.TimerHandle | None = None
+    silence_timeout_scheduled = False
 
-    def _cancel_silence_timer() -> None:
-        timer = silence_state["timer"]
-        if timer is not None:
-            timer.cancel()
-            silence_state["timer"] = None
+    def _cancel_silence_grace_timer() -> None:
+        nonlocal silence_grace_timer
+        if silence_grace_timer is not None:
+            silence_grace_timer.cancel()
+            silence_grace_timer = None
 
-    def _on_silence_grace_expired() -> None:
-        # Re-check user_state at fire time; the user may have come back.
-        if session.user_state != "away":
+    def _cancel_absolute_silence_timer() -> None:
+        nonlocal absolute_silence_timer
+        if absolute_silence_timer is not None:
+            absolute_silence_timer.cancel()
+            absolute_silence_timer = None
+
+    def _schedule_silence_timeout(source: str, elapsed_seconds: float) -> None:
+        nonlocal silence_timeout_scheduled
+        if silence_timeout_scheduled:
             return
-        if silence_state["scheduled"]:
-            return
-        silence_state["scheduled"] = True
+        silence_timeout_scheduled = True
+        _cancel_silence_grace_timer()
+        _cancel_absolute_silence_timer()
         lifecycle.record_agent_ended("silence_timeout")
+        logger.warning(
+            "silence_timeout: %s triggered after %.1fs, ending call",
+            source,
+            elapsed_seconds,
+            extra={
+                "call_id": lifecycle.metadata.call_id,
+                "component": "agent.silence",
+                "source": source,
+                "elapsed_seconds": elapsed_seconds,
+            },
+        )
 
         async def _run() -> None:
             await _speak_goodbye_and_terminate(
@@ -1157,14 +1202,30 @@ async def handle_call(ctx: agents.JobContext):
 
         asyncio.create_task(_run())
 
+    def _on_silence_grace_expired() -> None:
+        # Re-check user_state at fire time; the user may have come back.
+        if session.user_state != "away":
+            return
+        _schedule_silence_timeout(
+            "user_state",
+            idle_cfg.away_seconds + idle_cfg.silence_grace_seconds,
+        )
+
+    def _on_absolute_silence_expired() -> None:
+        _schedule_silence_timeout(
+            "absolute",
+            float(idle_cfg.absolute_silence_seconds or 0),
+        )
+
     def _on_user_state_changed(ev) -> None:
+        nonlocal silence_grace_timer
         if not idle_cfg.silence_hangup_enabled:
             return
         new_state = getattr(ev, "new_state", None)
         if new_state == "away":
-            _cancel_silence_timer()
+            _cancel_silence_grace_timer()
             loop = asyncio.get_event_loop()
-            silence_state["timer"] = loop.call_later(
+            silence_grace_timer = loop.call_later(
                 idle_cfg.silence_grace_seconds, _on_silence_grace_expired,
             )
             logger.info(
@@ -1177,9 +1238,28 @@ async def handle_call(ctx: agents.JobContext):
                 },
             )
         else:
-            _cancel_silence_timer()
+            _cancel_silence_grace_timer()
 
     session.on("user_state_changed", _on_user_state_changed)
+
+    def _on_absolute_silence_user_input(ev) -> None:
+        nonlocal absolute_silence_timer
+        if not idle_cfg.silence_hangup_enabled:
+            return
+        if not idle_cfg.absolute_silence_seconds:
+            return
+        if silence_timeout_scheduled:
+            return
+        if not _is_final_user_transcript(ev):
+            return
+        _cancel_absolute_silence_timer()
+        loop = asyncio.get_event_loop()
+        absolute_silence_timer = loop.call_later(
+            idle_cfg.absolute_silence_seconds,
+            _on_absolute_silence_expired,
+        )
+
+    session.on("user_input_transcribed", _on_absolute_silence_user_input)
 
     # Issue #11 max-duration cap. Single one-shot timer scheduled at
     # session start; cancelled by the close handler so a normal hangup
@@ -1229,7 +1309,8 @@ async def handle_call(ctx: agents.JobContext):
     def _handle_close(_event) -> None:
         # Issue #11: cancel any pending silence/duration timers so a normal
         # hangup doesn't accidentally fire goodbye-after-disconnect later.
-        _cancel_silence_timer()
+        _cancel_silence_grace_timer()
+        _cancel_absolute_silence_timer()
         timer = duration_state["timer"]
         if timer is not None:
             timer.cancel()

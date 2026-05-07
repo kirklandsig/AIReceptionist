@@ -308,12 +308,12 @@ Exactly one of `token` or `token_env` is required.
 
 #### `voice.idle` (issue #11 safety nets)
 
-`voice.idle` configures three independent safety nets so the agent doesn't
+`voice.idle` configures independent safety nets so the agent doesn't
 hold a SIP and Realtime session open indefinitely. Defaults are conservative
-— silence hangup is on (45s total silence), max duration is off, and the
-unproductive-turn ceiling is 5 — so omitting the block preserves the
-prior behavior for the silence and unproductive paths and disables the
-duration cap.
+- silence hangup is on (45s total silence), the wall-clock silence fallback
+and max duration cap are off, and the unproductive-turn ceiling is 5 - so
+omitting the block preserves prior behavior except for the enabled silence
+and unproductive defaults.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -321,6 +321,7 @@ duration cap.
 | `away_seconds` | float | `15.0` | Seconds of silence before LiveKit's `user_state` flips to `away`. |
 | `silence_grace_seconds` | float | `30.0` | Additional seconds the agent waits after `away` before hanging up. |
 | `max_call_duration_seconds` | int or null | `null` | Optional ceiling on total call duration in seconds. `null` disables. Must be greater than 0 when set. |
+| `absolute_silence_seconds` | int or null | `null` | Optional wall-clock fallback for SIP trunks where comfort noise prevents `user_state` from becoming `away`. Measures time since the last non-empty final user transcript. Suggested production value: `120`. Must be greater than 0 when set. |
 | `unproductive_hangup_enabled` | bool | `true` | Master switch for the unproductive-turn ceiling. |
 | `unproductive_turn_threshold` | int | `5` | Consecutive unproductive replies before the agent ends. |
 | `unproductive_phrases` | list[str] | tuned defaults | Substrings (case-insensitive) that mark a reply as a deflection. |
@@ -342,6 +343,15 @@ voice:
   voice_id: "marin"
   idle:
     max_call_duration_seconds: 600
+```
+
+```yaml
+# Add a wall-clock fallback for muted SIP calls. The normal user_state path
+# still runs; this catches trunks that send comfort noise instead of silence.
+voice:
+  voice_id: "marin"
+  idle:
+    absolute_silence_seconds: 120
 ```
 
 ```yaml

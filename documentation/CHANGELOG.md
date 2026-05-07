@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls instead of an OpenAI Platform API key. README, deployment,
   development, configuration, troubleshooting, `.env.example`, and docs index
   pages now link to the flow.
-- **`voice.idle` safety nets** (issue #11): three new defaults stop the
+- **`voice.idle` safety nets** (issue #11): configurable guards stop the
   agent from running indefinitely on silent or off-topic callers.
   - **Silence hangup** (default ON, 15s away + 30s grace = 45s total
     silence). Wires `AgentSession.user_away_timeout` and a `user_state_changed`
@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `voice.idle.max_call_duration_seconds: 900` to cap calls at 15 minutes;
     the agent will say goodbye and disconnect with reason
     `max_duration_reached` when the cap is reached.
+  - **Absolute silence fallback** (default OFF). Set
+    `voice.idle.absolute_silence_seconds: 120` to end with reason
+    `silence_timeout` when no non-empty final user transcript arrives for two
+    minutes, even if SIP comfort noise prevents LiveKit's `user_state` from
+    becoming `away`.
   - **Unproductive-turn ceiling** (default ON, threshold 5). Counts
     consecutive agent replies that match a tunable list of "stuck"
     phrases (`unproductive_phrases`) AND did not invoke any function tool
@@ -58,6 +63,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   render it next to the outcome row.
 
 ### Fixed
+- **Muted-call silence timeout fallback** (issue #11): SIP trunks that send
+  comfort noise can keep LiveKit's `user_state` from becoming `away`, which
+  bypassed the original silence watcher. The optional
+  `voice.idle.absolute_silence_seconds` timer now measures wall-clock time
+  since the last non-empty final user transcript and uses the same
+  `silence_timeout` hangup path.
+- **Benign post-close LiveKit engine warning** (issue #10): the exact
+  `WARNING ... engine: connection error: engine is closed` line emitted after
+  intentional call teardown is now suppressed while other engine connection
+  errors still log normally.
 - **CallerID resolution for non-SIP-kind participants** (issue #9):
   the SIP participant resolver no longer requires
   `participant.kind == PARTICIPANT_KIND_SIP`. Some BYOC/Asterisk SIP trunks

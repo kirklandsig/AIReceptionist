@@ -207,6 +207,21 @@ copy of the file.
 3. The agent serializes concurrent refreshes with a per-file lock. If multiple worker processes share a business, ensure they all mount the same token file path so refresh rotation and the lock file are visible to every worker.
 4. If refresh continues to fail, run `codex login status` to confirm the base Codex login is still valid, then rerun setup.
 
+### `engine: connection error: engine is closed` after the call ends
+
+**Symptom**: A warning appears shortly after an agent-ended hangup or room
+delete, even though the call summary, transcript, and email artifacts finish
+normally.
+
+**Cause**: LiveKit can emit this exact warning while the realtime engine is
+already closing after an intentional disconnect. It is benign when it appears
+as `WARNING ... engine: connection error: engine is closed` after the call is
+being torn down.
+
+**Solution**: Current builds suppress only that exact benign warning. Other
+engine connection errors still log normally. If you still see this exact line,
+confirm the running process has the latest `receptionist/agent.py`.
+
 ### Codex CLI not found during voice setup
 
 **Symptom**: `python -m receptionist.voice setup <business>` exits with
@@ -266,9 +281,10 @@ copy of the file.
 phone — the agent stays on the line indefinitely, racking up SIP and
 Realtime usage.
 
-**Cause**: `voice.idle.silence_hangup_enabled` is `false`, or the
+**Cause**: `voice.idle.silence_hangup_enabled` is `false`, the
 `away_seconds + silence_grace_seconds` total is too long for the
-business's tolerance.
+business's tolerance, or the SIP trunk sends comfort noise that prevents
+LiveKit's `user_state` from becoming `away`.
 
 **Solution**:
 1. Confirm `voice.idle.silence_hangup_enabled: true` in the business YAML
@@ -276,7 +292,12 @@ business's tolerance.
 2. Tune `voice.idle.away_seconds` (default 15s) and
    `voice.idle.silence_grace_seconds` (default 30s); the total is the
    maximum silence before the agent says goodbye.
-3. The hangup is recorded as `outcomes: ["agent_ended"]` with
+3. For SIP trunks with comfort noise, set
+   `voice.idle.absolute_silence_seconds: 120`. This wall-clock fallback
+   resets on each non-empty final user transcript and ends with the same
+   `silence_timeout` reason if no final transcript arrives before the
+   threshold.
+4. The hangup is recorded as `outcomes: ["agent_ended"]` with
    `agent_end_reason: "silence_timeout"`. Check the call summary email
    to confirm the new path fired.
 

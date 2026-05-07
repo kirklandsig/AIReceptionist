@@ -69,7 +69,7 @@ receptionist/
 ### 2. Session initialization
 1. `load_business_config(ctx)` picks a YAML based on `job.metadata["config"]` (or first YAML as fallback)
 2. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from SIP participant metadata when available (`sip.phoneNumber`, `sip.fromUser`, `sip.from`, or `sip_<digits>` identity fallback), and filled later from the `participant_connected` event if the SIP participant had not joined yet
-3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id, api_key=await resolve_voice_bearer_async(config.voice.auth))`; explicit `oauth_codex` tokens refresh before session construction when needed
+3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id, api_key=await resolve_voice_bearer_async(config.voice.auth))`; explicit `oauth_codex` tokens refresh before session construction when needed. `voice.idle.away_seconds` feeds `AgentSession.user_away_timeout`, and `voice.idle.absolute_silence_seconds` can add a wall-clock final-transcript fallback for SIP trunks that send comfort noise.
 4. `lifecycle.attach_transcript_capture(session)` subscribes to `user_input_transcribed`, `conversation_item_added`, `function_tools_executed` events
 5. `session.on("close", _handle_close)` registered — cancels idle timers and schedules `lifecycle.on_call_ended()`
 6. `lifecycle.start_recording_if_enabled(ctx.room.name)` starts LiveKit Egress if `config.recording.enabled`
@@ -89,6 +89,7 @@ receptionist/
   - `end_call` → `lifecycle.record_agent_ended(reason)` → outcome="agent_ended" + `agent_end_reason`, then background goodbye + SIP BYE/delete-room termination
 - Idle safety nets run outside the LLM tool path:
   - Silence timeout (`voice.idle.away_seconds + silence_grace_seconds`) → reason="silence_timeout"
+  - Optional wall-clock silence fallback (`voice.idle.absolute_silence_seconds`) → same `silence_timeout` reason when no non-empty final user transcript arrives before the threshold
   - Max-duration cap (`voice.idle.max_call_duration_seconds`, when set) → reason="max_duration_reached"
   - Consecutive unproductive replies (`voice.idle.unproductive_turn_threshold`) → reason="unproductive_turns_exhausted"
 
@@ -152,7 +153,7 @@ If this becomes a real operational need (e.g., a language-distribution dashboard
 
 ## Testing boundaries
 
-- **Unit tests** cover every subpackage's public surface (~120 tests total)
+- **Unit tests** cover every subpackage's public surface (~380 tests total)
 - **One integration test** (`tests/integration/test_call_flow.py`) exercises Dispatcher + CallLifecycle wiring without LiveKit
 - **`agent.py` and `Receptionist` tool methods** are validated manually (`tests/MANUAL.md`) — mocking LiveKit's session machinery is not cost-effective
 - **`on_enter`** is unit-tested via a class-level property patch on `Agent.session` (`monkeypatch.setattr(Agent, "session", property(...))`)

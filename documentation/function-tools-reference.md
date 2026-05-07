@@ -482,7 +482,7 @@ async def end_call(self, ctx: RunContext, reason: str = "caller_goodbye") -> str
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `reason` | str | No (default `caller_goodbye`) | Short label recording *why* the agent ended the call. Must be one of `caller_goodbye`, `silence_timeout`, `unproductive_turns_exhausted`, `max_duration_reached`. Any other value is silently replaced with `caller_goodbye` so the metadata field stays a closed vocabulary. The non-default reasons are typically not invoked from the LLM directly — they are recorded by the silence/duration/unproductive watchers configured under [`voice.idle`](configuration-reference.md#voiceidle-issue-11-safety-nets). |
+| `reason` | str | No (default `caller_goodbye`) | Short label recording *why* the agent ended the call. Must be one of `caller_goodbye`, `silence_timeout`, `unproductive_turns_exhausted`, `max_duration_reached`. Any other value is silently replaced with `caller_goodbye` so the metadata field stays a closed vocabulary. The non-default reasons are typically not invoked from the LLM directly - they are recorded by the silence/duration/unproductive watchers configured under [`voice.idle`](configuration-reference.md#voiceidle-issue-11-safety-nets), including the optional absolute silence fallback. |
 
 ### Return Value
 
@@ -529,9 +529,9 @@ Caller: "Great, thanks for your help. Goodbye!"
 Caller: [pauses for 4 seconds]
 
 # Model should NOT call end_call here. The caller is just thinking.
-# Issue #11 adds an explicit silence-timeout path so the agent can end
+# Issue #11 adds explicit silence-timeout paths so the agent can end
 # the call when the caller has been quiet long enough that they've
-# clearly walked away.
+# clearly walked away, including a wall-clock fallback for SIP comfort noise.
 ```
 
 ---

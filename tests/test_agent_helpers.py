@@ -1,6 +1,7 @@
 # tests/test_agent_helpers.py
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from receptionist.agent import (
     _get_caller_identity,
     _get_caller_phone,
     _get_sip_participant_phone,
+    _is_benign_engine_closed_warning,
     _resolve_agent_name,
     _resolve_relative_date,
 )
@@ -89,6 +91,26 @@ def test_resolve_agent_name_allows_blank_for_dev_wildcard(monkeypatch):
 def test_resolve_agent_name_allows_custom_name(monkeypatch):
     monkeypatch.setenv("RECEPTIONIST_AGENT_NAME", "night-shift")
     assert _resolve_agent_name() == "night-shift"
+
+
+def test_benign_engine_closed_warning_filter_is_narrow():
+    record = logging.LogRecord(
+        "livekit.agents", logging.WARNING, __file__, 1,
+        "engine: connection error: engine is closed", (), None,
+    )
+    assert _is_benign_engine_closed_warning(record) is True
+
+    error_record = logging.LogRecord(
+        "livekit.agents", logging.ERROR, __file__, 1,
+        "engine: connection error: engine is closed", (), None,
+    )
+    assert _is_benign_engine_closed_warning(error_record) is False
+
+    other_warning = logging.LogRecord(
+        "livekit.agents", logging.WARNING, __file__, 1,
+        "engine: connection error: websocket closed", (), None,
+    )
+    assert _is_benign_engine_closed_warning(other_warning) is False
 
 
 def test_get_sip_participant_phone_reads_sip_attribute():

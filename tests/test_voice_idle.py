@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from receptionist.agent import _extract_message_text
+from receptionist.agent import _extract_message_text, _is_final_user_transcript
 from receptionist.config import BusinessConfig, VoiceIdleConfig
 from receptionist.lifecycle import CallLifecycle
 
@@ -28,6 +28,7 @@ def test_voice_idle_defaults_match_design_spec():
     assert cfg.away_seconds == 15.0
     assert cfg.silence_grace_seconds == 30.0
     assert cfg.max_call_duration_seconds is None
+    assert cfg.absolute_silence_seconds is None
     assert cfg.unproductive_hangup_enabled is True
     assert cfg.unproductive_turn_threshold == 5
     # Default phrase list covers Trinicom's Blade Runner-style deflections
@@ -53,6 +54,12 @@ def test_voice_idle_max_duration_must_be_positive_when_set():
         VoiceIdleConfig(max_call_duration_seconds=0)
 
 
+def test_voice_idle_absolute_silence_must_be_positive_when_set():
+    from pydantic import ValidationError
+    with pytest.raises(ValidationError):
+        VoiceIdleConfig(absolute_silence_seconds=0)
+
+
 def test_voice_idle_away_seconds_must_be_positive():
     from pydantic import ValidationError
     with pytest.raises(ValidationError):
@@ -71,6 +78,7 @@ voice:
     away_seconds: 20
     silence_grace_seconds: 45
     max_call_duration_seconds: 600
+    absolute_silence_seconds: 120
     unproductive_turn_threshold: 3
 languages: { primary: "en", allowed: ["en"] }
 greeting: "Hi"
@@ -87,6 +95,7 @@ messages: { channels: [{type: "file", file_path: "./m/"}] }
     assert idle.away_seconds == 20.0
     assert idle.silence_grace_seconds == 45.0
     assert idle.max_call_duration_seconds == 600
+    assert idle.absolute_silence_seconds == 120
     assert idle.unproductive_turn_threshold == 3
 
 
@@ -121,6 +130,27 @@ def test_extract_message_text_falls_back_to_transcript():
 def test_extract_message_text_empty_returns_empty():
     item = SimpleNamespace(content=None)
     assert _extract_message_text(item) == ""
+
+
+# ---- _is_final_user_transcript ---------------------------------------------
+
+
+def test_is_final_user_transcript_accepts_final_text():
+    ev = SimpleNamespace(is_final=True, transcript="hello")
+    assert _is_final_user_transcript(ev) is True
+
+
+def test_is_final_user_transcript_rejects_partial_and_blank_finals():
+    assert _is_final_user_transcript(
+        SimpleNamespace(is_final=False, transcript="hello"),
+    ) is False
+    assert _is_final_user_transcript(
+        SimpleNamespace(is_final=True, transcript="   "),
+    ) is False
+
+
+def test_is_final_user_transcript_accepts_final_when_transcript_missing():
+    assert _is_final_user_transcript(SimpleNamespace(is_final=True)) is True
 
 
 # ---- Unproductive-turn counter on Receptionist -----------------------------

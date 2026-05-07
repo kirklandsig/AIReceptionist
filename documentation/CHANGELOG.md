@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **RingCentral + Twilio law-firm deployment guide**:
+  `documentation/ringcentral-setup.md` documents the RingEX reception-group
+  path where a Twilio DID acts as the AI bridge into LiveKit SIP, using named
+  agent dispatch with `metadata={"config":"licomplaw"}`.
+- **`example-licomplaw` business config template**: adds Adriana as the receptionist,
+  intake email to `reception@licomplaw.com`, local recording + transcript
+  storage, disabled recording consent preamble, and 15 placeholder claims-rep
+  transfer targets to replace before go-live.
 - **ChatGPT OAuth setup documentation**: new
   `documentation/chatgpt-oauth-setup.md` explains how to use a ChatGPT/Codex
   login token for OpenAI Realtime so eligible ChatGPT subscriptions can power

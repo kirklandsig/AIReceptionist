@@ -13,6 +13,16 @@ Each checkbox should be checked off in the PR description or release notes; unch
 - [ ] Place a LiveKit Playground call → greeting is heard in the configured voice (default `marin`)
 - [ ] Greeting matches `config.greeting` for the loaded business YAML
 
+## RingCentral / Twilio law-firm smoke
+- [ ] `config/businesses/example-licomplaw.yaml` has been copied to local `config/businesses/licomplaw.yaml`
+- [ ] `LICOMPLAW_RESEND_API_KEY` is set, or local `config/businesses/licomplaw.yaml` has been switched to a working SMTP sender
+- [ ] `RECEPTIONIST_CONFIG=licomplaw python -m receptionist.agent dev` starts and Adriana uses the L.I. Compensation Law greeting
+- [ ] Direct call to the Twilio AI bridge DID reaches LiveKit and dispatches metadata `{"config":"licomplaw"}`
+- [ ] RingCentral reception group rings both human receptionists and the Twilio AI bridge DID; first-answer-wins behavior is confirmed
+- [ ] All `+1555...` claims-rep placeholders have been replaced before testing transfers
+- [ ] Recording starts with `consent_preamble.enabled: false` and no preamble is spoken before the greeting
+- [ ] Call-end email and taken-message email arrive at `reception@licomplaw.com`
+
 ## Consent preamble
 - [ ] With `recording.enabled: true` and `consent_preamble.enabled: true`: preamble is heard BEFORE the greeting, not after
 - [ ] With `recording.enabled: true` and `consent_preamble.enabled: false`: only greeting is heard

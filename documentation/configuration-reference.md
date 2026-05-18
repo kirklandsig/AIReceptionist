@@ -12,6 +12,7 @@ This document is a complete reference for the YAML business configuration file u
 - [Field Reference](#field-reference)
   - [business](#business)
   - [voice](#voice)
+  - [languages](#languages)
   - [greeting](#greeting)
   - [personality](#personality)
   - [hours](#hours)
@@ -19,6 +20,11 @@ This document is a complete reference for the YAML business configuration file u
   - [routing](#routing)
   - [faqs](#faqs)
   - [messages](#messages)
+  - [email](#email)
+  - [recording](#recording)
+  - [transcripts](#transcripts)
+  - [retention](#retention)
+  - [sip](#sip)
 - [Validation Rules](#validation-rules)
 - [Loading Behavior](#loading-behavior)
 - [Tips and Best Practices](#tips-and-best-practices)
@@ -65,7 +71,14 @@ business:
   timezone: "America/New_York"
 
 voice:
-  voice_id: "coral"
+  voice_id: "marin"
+  model: "gpt-realtime-1.5"
+  idle:
+    absolute_silence_seconds: 120
+
+languages:
+  primary: "en"
+  allowed: ["en", "es"]
 
 greeting: "Thank you for calling Acme Dental. How can I help you today?"
 
@@ -76,30 +89,18 @@ personality: |
   uses it first.
 
 hours:
-  monday:
-    open: "08:00"
-    close: "17:00"
-  tuesday:
-    open: "08:00"
-    close: "17:00"
-  wednesday:
-    open: "08:00"
-    close: "17:00"
-  thursday:
-    open: "08:00"
-    close: "17:00"
-  friday:
-    open: "08:00"
-    close: "15:00"
-  saturday: "closed"
-  sunday: "closed"
+  monday:    { open: "08:00", close: "17:00" }
+  tuesday:   { open: "08:00", close: "17:00" }
+  wednesday: { open: "08:00", close: "17:00" }
+  thursday:  { open: "08:00", close: "17:00" }
+  friday:    { open: "08:00", close: "15:00" }
+  saturday:  closed
+  sunday:    closed
 
 after_hours_message: |
-  I'm sorry, but Acme Dental is currently closed. Our regular office hours
-  are Monday through Thursday from 8 AM to 5 PM, and Friday from 8 AM to
-  3 PM. If this is a dental emergency, please call 911 or go to your nearest
-  emergency room. I'd be happy to take a message and have someone call you
-  back during business hours.
+  Acme Dental is currently closed. I can take a message and someone will
+  follow up during our next business day. If this is a dental emergency,
+  please go to your nearest emergency room.
 
 routing:
   - name: "Scheduling"
@@ -108,23 +109,69 @@ routing:
   - name: "Billing"
     number: "+15551234002"
     description: "Insurance, payments, and billing questions"
-  - name: "Clinical"
-    number: "+15551234003"
-    description: "Speak with a dental assistant about treatment questions"
 
 faqs:
   - question: "What insurance do you accept?"
-    answer: "We accept most major dental insurance plans including Delta Dental, Cigna, Aetna, MetLife, and United Healthcare. We also offer a discount for patients paying out of pocket."
+    answer: "We accept most major dental insurance plans including Delta Dental, Cigna, Aetna, MetLife, and United Healthcare."
   - question: "Where are you located?"
-    answer: "We are located at 123 Main Street, Suite 200, Springfield. We're in the medical plaza next to Springfield General Hospital."
-  - question: "Do you accept new patients?"
-    answer: "Yes, we are currently accepting new patients! We'd love to schedule your first visit."
-  - question: "What is your cancellation policy?"
-    answer: "We ask that you give us at least 24 hours notice if you need to cancel or reschedule your appointment."
+    answer: "We are at 123 Main Street, Suite 200."
 
+# Message delivery: each entry in `channels` is independent. File channel
+# fires synchronously so the take_message tool can confirm "saved" to the
+# caller. Email channel is deferred to call-end so the email body embeds
+# the full transcript.
 messages:
-  delivery: "file"
-  file_path: "messages/"
+  channels:
+    - type: "file"
+      file_path: "./messages/acme-dental/"
+    - type: "email"
+      to: ["owner@acme-dental.example.com"]
+      include_transcript: true
+      include_recording_link: true
+
+# Top-level email config used by any `type: "email"` channel and by the
+# call-end / booking email triggers.
+email:
+  from: "Receptionist <noreply@acme-dental.example.com>"
+  sender:
+    type: "smtp"
+    smtp:
+      host: "smtp.gmail.com"
+      port: 587
+      username: "noreply@acme-dental.example.com"
+      password: ${ACME_DENTAL_SMTP_PASSWORD}   # env-var interpolation
+      use_tls: true
+  triggers:
+    on_message: true
+    on_call_end: true
+    on_booking: false
+
+recording:
+  enabled: false   # set to true once cloud storage is configured below
+  storage:
+    type: "s3"
+    s3:
+      bucket: "acme-dental-recordings"
+      region: "us-east-1"
+      # endpoint_url: "https://<account>.r2.cloudflarestorage.com"   # for R2/B2/MinIO
+  consent_preamble:
+    enabled: false
+    text: "This call may be recorded for quality and training."
+
+transcripts:
+  enabled: true
+  storage:
+    type: "local"
+    path: "./transcripts/acme-dental/"
+  formats: ["json", "markdown"]
+
+retention:
+  recordings_days: 90
+  transcripts_days: 90
+  messages_days: 0   # 0 = keep forever
+
+sip:
+  transfer_uri_template: "tel:{number}"
 ```
 
 ---
@@ -371,6 +418,29 @@ for the full vocabulary.
 
 ---
 
+### languages
+
+Optional. Multi-language hint for the receptionist. The agent auto-detects
+the caller's language at runtime; this block constrains which detections are
+acceptable and which language the agent should default to.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `languages.primary` | string | No | `"en"` | ISO-639 code of the agent's default language. |
+| `languages.allowed` | list[string] | No | `["en"]` | ISO-639 codes the agent may switch to if the caller speaks one of them. The detected language is appended to call metadata as `languages_detected`. |
+
+If a caller speaks a language not in `allowed`, the agent stays in `primary`
+and does not announce the limitation; it just answers normally in the
+configured language.
+
+```yaml
+languages:
+  primary: "en"
+  allowed: ["en", "es"]
+```
+
+---
+
 ### greeting
 
 The first thing the receptionist says when answering the call.
@@ -568,55 +638,219 @@ faqs:
 
 ### messages
 
-Configuration for how caller messages are stored and delivered.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `messages` | object | Yes | Message delivery configuration. |
-| `messages.delivery` | string | Yes | Delivery method: `"file"` or `"webhook"`. |
-| `messages.file_path` | string | Conditional | Directory path for file-based message storage. **Required when delivery is `"file"`**. |
-| `messages.webhook_url` | string | Conditional | URL endpoint for webhook delivery. **Required when delivery is `"webhook"`**. |
-
-#### File Delivery
-
-Messages are saved as individual JSON files in the specified directory:
+`messages.channels` is a list of independent delivery destinations. Each
+caller message produced by the `take_message` tool fans out to every
+configured channel.
 
 ```yaml
 messages:
-  delivery: "file"
-  file_path: "messages/"
+  channels:
+    - type: "file"
+      file_path: "./messages/acme-dental/"
+    - type: "email"
+      to: ["owner@example.com", "back-office@example.com"]
+      include_transcript: true
+      include_recording_link: true
+    - type: "webhook"
+      url: "https://your-app.example.com/api/messages"
+      headers:
+        Authorization: "Bearer ${SLACK_TOKEN}"
 ```
 
-File naming: `message_YYYYMMDD_HHMMSS_ffffff.json` (microsecond precision to avoid collisions).
+#### Dispatch behavior
 
-File content:
+Within one `dispatch_message` call the dispatcher picks one channel to await
+synchronously and runs the rest as background tasks. Preference order is
+**file > webhook > email**. The synchronous channel's success is what the
+caller-facing tool confirms with "saved"; failures of background channels are
+recorded under `.failures/` for later replay.
+
+The `take_message` tool deliberately skips the email channel mid-call (it
+passes `skip_email_channel=True` to the dispatcher). The lifecycle queues
+the email and fires it at call-end with the freshly-written transcript path,
+so the email body can embed the full conversation. File and webhook channels
+still fire mid-call.
+
+#### Channel: `type: "file"`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | const `"file"` | Yes | Discriminator. |
+| `file_path` | string | Yes | Directory where each message is written as a JSON file. The directory is created if it doesn't exist. |
+
+File naming: `message_YYYYMMDD_HHMMSS_ffffff.json`. The JSON shape:
+
 ```json
 {
-  "caller_name": "John Smith",
-  "callback_number": "555-123-4567",
+  "caller_name": "Jane Doe",
+  "callback_number": "+15551234567",
   "message": "I need to reschedule my appointment for next Tuesday.",
   "business_name": "Acme Dental",
   "timestamp": "2026-03-02T14:30:25.123456+00:00"
 }
 ```
 
-#### Webhook Delivery (Planned)
+#### Channel: `type: "email"`
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `type` | const `"email"` | Yes | — | Discriminator. |
+| `to` | list[string] | Yes | — | One or more recipient addresses. |
+| `include_transcript` | bool | No | `true` | When true and a markdown transcript exists, the full conversation is embedded at the bottom of every email this channel sends (message email + call-end email + booking email). |
+| `include_recording_link` | bool | No | `true` | When true and the call has a recording artifact, the recording URL/path is rendered. Set false for tenants who don't want bucket links in mail. |
+
+The email channel also requires the top-level `email:` block, which holds the
+sender configuration and trigger flags. See [`email`](#email) below.
+
+#### Channel: `type: "webhook"`
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | const `"webhook"` | Yes | Discriminator. |
+| `url` | string | Yes | HTTP(S) endpoint to POST the message JSON. Must use `http://` or `https://` — other schemes are rejected. Loopback / private / link-local hosts are allowed but warned at config load (catches accidental references to AWS metadata at `169.254.169.254`, etc.). |
+| `headers` | dict[string, string] | No | Optional headers added to the POST request. Supports `${VAR}` env-var interpolation. |
+
+The webhook channel sends a JSON POST with the same Message shape shown
+under the file channel. Retries follow `WebhookChannel`'s retry policy
+(exponential backoff with jitter); persistent failures land in `.failures/`.
+
+---
+
+### email
+
+Top-level email configuration consumed by any `messages.channels[type=email]`
+entry and by the call-end / booking email triggers. Omit the whole block if
+your config has no email channels and no email triggers.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `from` | string | Yes | — | RFC 5322 From address; typically `"Friendly Name <noreply@example.com>"`. |
+| `sender.type` | enum `"smtp"` \| `"resend"` | Yes | — | Backend that actually sends. |
+| `sender.smtp` | object | Conditional | — | Required when `sender.type=smtp`. |
+| `sender.smtp.host` | string | Yes | — | SMTP server hostname, e.g. `smtp.gmail.com`. |
+| `sender.smtp.port` | int | No | `587` | Typically 587 (STARTTLS) or 465 (TLS). |
+| `sender.smtp.username` | string | Yes | — | Login username, often the same as the From address. |
+| `sender.smtp.password` | string | Yes | — | Password / app password. Use `${VAR}` interpolation; do not paste secrets into YAML. |
+| `sender.smtp.use_tls` | bool | No | `true` | STARTTLS on; set false only for self-hosted relays you control. |
+| `sender.resend` | object | Conditional | — | Required when `sender.type=resend`. |
+| `sender.resend.api_key` | string | Yes | — | Resend API key, typically `${VAR}` interpolated. |
+| `triggers.on_message` | bool | No | `true` | Fire an email per `take_message` invocation (deferred to call-end so the transcript is embedded). |
+| `triggers.on_call_end` | bool | No | `false` | Fire a call summary email at the end of every call. |
+| `triggers.on_booking` | bool | No | `false` | Fire an email when `book_appointment` succeeds (requires `calendar` configured). |
+
+#### SMTP example (Gmail app password)
 
 ```yaml
-messages:
-  delivery: "webhook"
-  webhook_url: "https://your-app.com/api/messages"
+email:
+  from: "Receptionist <noreply@acme-dental.example.com>"
+  sender:
+    type: "smtp"
+    smtp:
+      host: "smtp.gmail.com"
+      port: 587
+      username: "noreply@acme-dental.example.com"
+      password: ${ACME_DENTAL_SMTP_PASSWORD}
+      use_tls: true
+  triggers:
+    on_message: true
+    on_call_end: true
+    on_booking: false
 ```
 
-**Note**: Webhook delivery is defined in the configuration schema but the implementation currently raises `NotImplementedError`. This is planned for a future release.
+#### Resend example
 
-#### Cross-Field Validation
+```yaml
+email:
+  from: "Receptionist <noreply@acme-dental.example.com>"
+  sender:
+    type: "resend"
+    resend:
+      api_key: ${ACME_DENTAL_RESEND_API_KEY}
+  triggers:
+    on_message: true
+    on_call_end: true
+```
 
-The `MessagesConfig` model enforces these rules:
+---
 
-- If `delivery` is `"file"`, then `file_path` must be provided.
-- If `delivery` is `"webhook"`, then `webhook_url` must be provided.
-- Providing mismatched fields (e.g., `delivery: "file"` with only `webhook_url`) will raise a validation error.
+### recording
+
+Optional. When enabled, calls are recorded via LiveKit Egress and the URL
+(or local path) is attached to the call-end email and transcript metadata.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | bool | Yes | — | Master switch. Omit `recording:` entirely OR set false to disable. |
+| `storage.type` | enum `"local"` \| `"s3"` | Yes | — | Where the recording file lands. **LiveKit Cloud rejects `local`** — use `s3` (or a self-hosted LiveKit). |
+| `storage.local.path` | string | Conditional | — | Required when `storage.type=local`. Directory the recording WAV/OGG is written to. Self-hosted LiveKit only. |
+| `storage.s3.bucket` | string | Conditional | — | Required when `storage.type=s3`. |
+| `storage.s3.region` | string | Conditional | — | AWS region or equivalent. |
+| `storage.s3.endpoint_url` | string | No | omitted | S3-compatible endpoint for R2 / B2 / MinIO. Leave unset for AWS S3. |
+| `consent_preamble.enabled` | bool | No | `false` | When true, the agent speaks `consent_preamble.text` before the greeting. Two-party-consent jurisdictions usually need this on. |
+| `consent_preamble.text` | string | Conditional | — | Required when `consent_preamble.enabled=true`. |
+
+AWS credentials for S3 storage are read from process environment
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION`) as
+LiveKit Egress expects.
+
+```yaml
+recording:
+  enabled: true
+  storage:
+    type: "s3"
+    s3:
+      bucket: "acme-recordings"
+      region: "us-east-1"
+  consent_preamble:
+    enabled: true
+    text: "This call may be recorded for quality and training."
+```
+
+---
+
+### transcripts
+
+Per-call JSON (source of truth) and Markdown (human-readable) transcripts.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | bool | Yes | — | Master switch. |
+| `storage.type` | const `"local"` | Yes | — | Only local-disk storage today. |
+| `storage.path` | string | Yes | — | Directory both formats are written to. |
+| `formats` | list[enum] | No | `["json", "markdown"]` | Subset of `["json", "markdown"]`. The Markdown format is what the email template embeds. |
+
+```yaml
+transcripts:
+  enabled: true
+  storage:
+    type: "local"
+    path: "./transcripts/acme-dental/"
+  formats: ["json", "markdown"]
+```
+
+---
+
+### retention
+
+Optional. Background sweeper deletes recordings, transcripts, and messages
+older than the configured number of days. Run the sweeper via
+`python -m receptionist.retention sweep [--dry-run] [--business <slug>]`.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `recordings_days` | int | `90` | Days to keep recording files. `0` keeps forever. |
+| `transcripts_days` | int | `90` | Days to keep transcript JSON+Markdown. `0` keeps forever. |
+| `messages_days` | int | `0` | Days to keep message JSON files. `0` keeps forever (the typical default — voicemail-style intake is usually retained indefinitely). |
+
+`.failures/` directories are skipped by the sweeper so failed-delivery
+records aren't lost while you triage them.
+
+```yaml
+retention:
+  recordings_days: 90
+  transcripts_days: 90
+  messages_days: 0
+```
 
 ---
 
@@ -661,11 +895,16 @@ The following validation rules are enforced by the Pydantic models in `config.py
 | HH:MM format | hours.*.open, hours.*.close | Custom validation error |
 | Valid day values | hours.* | Must be DayHours object or "closed" |
 | All 7 days present | hours | All days monday-sunday required |
-| Delivery method valid | messages.delivery | Must be "file" or "webhook" |
-| file_path required for file delivery | messages.file_path | Cross-field validation error |
-| webhook_url required for webhook delivery | messages.webhook_url | Cross-field validation error |
+| Channel type valid | messages.channels[*].type | Must be one of `"file"`, `"email"`, `"webhook"` |
+| Email channel requires top-level email config | email | `EmailChannel configured but no EmailConfig provided` |
+| SMTP/Resend config matches sender.type | email.sender | `email.sender.smtp required when type is 'smtp'` etc. |
+| Webhook URL scheme | messages.channels[type=webhook].url | Must be `http://` or `https://`; other schemes rejected |
+| Recording S3 requires bucket+region | recording.storage.s3 | Required when `storage.type=s3` |
+| Consent preamble text required when enabled | recording.consent_preamble | Cross-field validation error |
+| Transfer URI template contains `{number}` | sip.transfer_uri_template | Must contain literal `{number}` placeholder |
 | Non-empty strings | routing.*.name, routing.*.number, etc. | Must not be empty |
 | Config slug format | Runtime slug | Must match `^[a-zA-Z0-9_-]+$` |
+| `${VAR}` env-var interpolation | Any string value | Variable must exist in the process env at load time |
 
 ---
 
@@ -734,6 +973,18 @@ business:
 
 ### Message File Paths
 
-- Use a relative path like `messages/` — it will be relative to the project root.
-- Ensure the directory exists and the process has write permissions.
-- For multi-business setups, consider per-business directories: `messages/acme-dental/`.
+- Use a relative path like `./messages/<slug>/` — it will be relative to the process working directory.
+- The directory is created on first write; the process just needs write permissions on the parent.
+- For multi-business deployments, use per-business directories: `./messages/acme-dental/`, `./messages/smith-law/`, etc.
+
+### Where to put secrets
+
+- `.env` file in the project root (gitignored) is the canonical home for
+  passwords, API keys, and OAuth tokens that the YAML references via
+  `${VAR}` interpolation. `.env.example` is safe to commit; it lists the
+  variable *names* but never values.
+- Per-business OAuth token files live under `secrets/<slug>/openai_auth.json`.
+  `secrets/*` is gitignored except `secrets/.gitkeep`.
+- Tenant-specific YAML files live at `config/businesses/<slug>.yaml` and are
+  gitignored by pattern, with the exception `config/businesses/example-*.yaml`
+  which is the only YAML committed to the repo.

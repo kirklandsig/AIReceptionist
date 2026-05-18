@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Configuration reference rewritten for the channels-based schema.**
+  `documentation/configuration-reference.md` previously described the
+  long-gone `messages.delivery: file|webhook` shape. It now documents the
+  current `messages.channels: [...]` list (with the file, email, and
+  webhook channel sub-schemas), the top-level `email:` block (SMTP /
+  Resend, triggers), the `recording:` block (local + S3-compatible
+  storage, consent preamble), the `transcripts:` block, the `retention:`
+  block, and the `languages:` block. Complete Example, Table of Contents,
+  and Validation Rules updated to match.
+- **Linux systemd deployment guide tightened for issue #14.** The previous
+  recipe referenced `/opt/ai-receptionist` while `git clone` actually
+  produces `/opt/AIReceptionist`, and didn't show the
+  `python -m venv .venv` step. The agent appeared to start but couldn't
+  import its own modules under the service user (`ModuleNotFoundError`).
+  Updated the deployment guide to use `/opt/AIReceptionist` consistently,
+  to create the service user explicitly, to set up the venv with
+  `python3 -m venv .venv` before `pip install -e .`, to lock `.env` to
+  `chmod 600` and `chown ai-receptionist`, and to document the
+  lowercased-alias symlink as the optional last step instead of an
+  implicit assumption.
+
 ### Added
 - **Full transcript embedded in caller-message emails too** (parallel to
   the call-end email). When the caller invokes `take_message` mid-call,

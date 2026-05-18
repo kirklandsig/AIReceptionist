@@ -48,6 +48,13 @@ class CallLifecycle:
         # every configured EmailChannel during on_call_ended, AFTER the
         # transcript files have been written.
         self._pending_message_emails: list[Message] = []
+        # Guard against double-firing the end-of-call fan-out. The
+        # agent-initiated end_call path explicitly invokes on_call_ended
+        # before removing the SIP participant (so emails fire while the
+        # asyncio executor is still healthy); the LiveKit session-close
+        # handler then invokes it again on natural disconnect. The second
+        # call must be a no-op or operators receive duplicate emails.
+        self._finalized: bool = False
 
     def _build_email_channels(self) -> list:
         """Pre-construct EmailChannel instances when email triggers will need them.
@@ -150,6 +157,32 @@ class CallLifecycle:
     # --- disconnect ---
 
     async def on_call_ended(self) -> None:
+        # Idempotent: agent-initiated end_call invokes this explicitly before
+        # tearing down the SIP leg (so emails fire while the executor is
+        # alive), and the LiveKit session-close handler will then call it
+        # again on natural disconnect. The second invocation must do nothing.
+        logger.info(
+            "on_call_ended entered (finalized=%s, pending_emails=%d, channels=%d)",
+            self._finalized,
+            len(self._pending_message_emails),
+            len(self._email_channels),
+            extra={
+                "call_id": self.metadata.call_id,
+                "business_name": self.metadata.business_name,
+                "component": "lifecycle.on_call_ended",
+            },
+        )
+        if self._finalized:
+            logger.info(
+                "on_call_ended: already finalized, skipping",
+                extra={
+                    "call_id": self.metadata.call_id,
+                    "business_name": self.metadata.business_name,
+                    "component": "lifecycle.finalized",
+                },
+            )
+            return
+        self._finalized = True
         self.metadata.mark_finalized()
 
         artifact: RecordingArtifact | None = None

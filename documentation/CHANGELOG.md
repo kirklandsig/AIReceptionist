@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Agent-initiated `end_call` no longer drops the call-end and deferred
+  message emails.** When the **caller** hung up first, `on_call_ended`
+  ran fine; when the **agent** ended the call (via the `end_call` tool —
+  caller goodbye, silence timeout, max duration, unproductive turns),
+  the LiveKit job process started tearing down asyncio's default
+  ThreadPoolExecutor before our `on_call_ended` could finish, and
+  `aiosmtplib`'s DNS lookup failed with `Executor shutdown has been
+  called`. Result: zero emails delivered on agent-ended calls.
+  - `_speak_goodbye_and_terminate` now `await`s
+    `lifecycle.on_call_ended()` **before** invoking `_terminate_room`,
+    so transcript writes + deferred message emails + call-end emails
+    fire while the event loop and executor are still healthy.
+  - `CallLifecycle` gains a `_finalized` flag. The LiveKit session-close
+    handler still invokes `on_call_ended` on natural disconnect, but
+    the second call is now a guarded no-op (no duplicate emails, no
+    duplicate transcript writes).
+  - INFO-level diagnostic logging on both sides
+    (`agent_end: invoking lifecycle.on_call_ended pre-terminate
+    (pending=N, channels=M)`, `on_call_ended entered (finalized=…)`)
+    so the same race is one log read away if it ever recurs.
+  - Regression test in `tests/test_lifecycle.py::test_on_call_ended_is_idempotent`
+    proves a double-call yields exactly one email and one transcript write.
+
 ### Changed (privacy / housekeeping)
 - **Sanitized the tracked law-firm template.** The previous
   `config/businesses/example-licomplaw.yaml` carried client-identifying

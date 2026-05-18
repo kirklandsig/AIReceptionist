@@ -14,14 +14,19 @@ Each checkbox should be checked off in the PR description or release notes; unch
 - [ ] Greeting matches `config.greeting` for the loaded business YAML
 
 ## RingCentral / Twilio law-firm smoke
-- [ ] `config/businesses/example-licomplaw.yaml` has been copied to local `config/businesses/licomplaw.yaml`
-- [ ] `LICOMPLAW_RESEND_API_KEY` is set, or local `config/businesses/licomplaw.yaml` has been switched to a working SMTP sender
-- [ ] `RECEPTIONIST_CONFIG=licomplaw python -m receptionist.agent dev` starts and Adriana uses the L.I. Compensation Law greeting
-- [ ] Direct call to the Twilio AI bridge DID reaches LiveKit and dispatches metadata `{"config":"licomplaw"}`
+
+Substitute `<slug>` with your tenant-specific business slug (the tracked
+template is `example-workers-comp`).
+
+- [ ] `config/businesses/example-workers-comp.yaml` has been copied to local `config/businesses/<slug>.yaml`
+- [ ] The email sender env var your local YAML references (e.g. `<TENANT>_RESEND_API_KEY`) is set, or the local YAML has been switched to a working SMTP sender
+- [ ] `RECEPTIONIST_CONFIG=<slug> python -m receptionist.agent dev` starts and the agent uses the configured greeting/persona
+- [ ] Direct call to the Twilio AI bridge DID reaches LiveKit and dispatches metadata `{"config":"<slug>"}`
 - [ ] RingCentral reception group rings both human receptionists and the Twilio AI bridge DID; first-answer-wins behavior is confirmed
 - [ ] All `+1555...` claims-rep placeholders have been replaced before testing transfers
+- [ ] Twilio trunk has `TransferMode=enable-all` so SIP REFER works (without this, transfers fail with `403 Forbidden`)
 - [ ] Recording starts with `consent_preamble.enabled: false` and no preamble is spoken before the greeting
-- [ ] Call-end email and taken-message email arrive at `reception@licomplaw.com`
+- [ ] Call-end email and taken-message email arrive at the configured intake address
 
 ## Consent preamble
 - [ ] With `recording.enabled: true` and `consent_preamble.enabled: true`: preamble is heard BEFORE the greeting, not after

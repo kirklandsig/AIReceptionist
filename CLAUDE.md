@@ -51,8 +51,6 @@ AIReceptionist/
 │   ├── CHANGELOG.md
 │   └── ... (additional docs)
 │
-├── docs/plans/                  # Internal design documents and plans
-│
 ├── scripts/                     # Developer tooling
 │   ├── install-hooks.sh         # Installs git pre-commit hook
 │   └── pre-commit               # The pre-commit hook script

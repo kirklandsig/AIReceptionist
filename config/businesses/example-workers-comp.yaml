@@ -1,12 +1,17 @@
-# config/businesses/example-licomplaw.yaml
+# config/businesses/example-workers-comp.yaml
 #
-# Public RingCentral/Twilio law-firm template. Copy to licomplaw.yaml for local
-# deployment; non-example business YAML files are gitignored by design.
-# Replace all +1555... routing placeholders with real claims-rep DIDs before
-# connecting live calls.
+# Public template for a workers' compensation law firm using the
+# RingCentral + Twilio + LiveKit path described in
+# `documentation/ringcentral-setup.md`. Copy to a tenant-specific local
+# YAML (e.g. `config/businesses/<slug>.yaml`) for deployment; any business
+# YAML other than `example-*.yaml` is gitignored by design.
+#
+# Replace every +1555... routing placeholder with a real claims-rep DID
+# before connecting live calls. The 15 entries below are obvious dummies
+# so an unfinished template can never accidentally dial a real number.
 
 business:
-  name: "L.I. Compensation Law"
+  name: "Example Workers' Comp Law"
   type: "workers' compensation law firm"
   timezone: "America/New_York"
 
@@ -18,10 +23,10 @@ languages:
   primary: "en"
   allowed: ["en", "es"]
 
-greeting: "Thank you for calling L.I. Compensation Law, this is Adriana. How can I help you today?"
+greeting: "Thank you for calling Example Workers' Comp Law, this is Alex. How can I help you today?"
 
 personality: |
-  Your name is Adriana. You are the firm's phone receptionist.
+  Your name is Alex. You are the firm's phone receptionist.
   Be calm, professional, and concise. Do not provide legal advice, evaluate
   claim value, promise outcomes, or create an attorney-client relationship.
   If a caller needs legal guidance, transfer them to the appropriate claims
@@ -110,9 +115,9 @@ faqs:
 messages:
   channels:
     - type: "file"
-      file_path: "./messages/licomplaw/"
+      file_path: "./messages/example-workers-comp/"
     - type: "email"
-      to: ["reception@licomplaw.com"]
+      to: ["intake@example.com"]
       include_transcript: true
       include_recording_link: true
 
@@ -121,7 +126,7 @@ recording:
   storage:
     type: "local"
     local:
-      path: "./recordings/licomplaw/"
+      path: "./recordings/example-workers-comp/"
   consent_preamble:
     enabled: false
     text: ""
@@ -130,15 +135,15 @@ transcripts:
   enabled: true
   storage:
     type: "local"
-    path: "./transcripts/licomplaw/"
+    path: "./transcripts/example-workers-comp/"
   formats: ["json", "markdown"]
 
 email:
-  from: "Adriana <reception@licomplaw.com>"
+  from: "Alex <intake@example.com>"
   sender:
     type: "resend"
     resend:
-      api_key: ${LICOMPLAW_RESEND_API_KEY}
+      api_key: ${EXAMPLE_RESEND_API_KEY}
   triggers:
     on_message: true
     on_call_end: true

@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
 HANDOFF.md
+# Internal design specs, implementation plans, and superpowers workflow
+# artifacts. Operator-local; not part of the public-facing documentation
+# in `documentation/`. Keep on disk for development history.
+docs/
 .env
 .env.local
 *.egg-info/

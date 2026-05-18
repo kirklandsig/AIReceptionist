@@ -111,11 +111,10 @@ AIReceptionist/
 │   └── messages.py                   # Message taking and delivery
 ├── config/businesses/
 │   └── example-dental.yaml           # Example business configuration
-├── tests/                            # Test suite (15 tests)
-│   ├── test_config.py                # Config model tests (6)
-│   ├── test_prompts.py               # Prompt generation tests (6)
-│   └── test_messages.py              # Message handling tests (3)
-└── docs/plans/                       # Design documents
+└── tests/                            # Test suite (15 tests)
+    ├── test_config.py                # Config model tests (6)
+    ├── test_prompts.py               # Prompt generation tests (6)
+    └── test_messages.py              # Message handling tests (3)
 ```
 
 ---

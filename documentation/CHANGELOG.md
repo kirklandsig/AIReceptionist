@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (privacy / housekeeping)
+- **Sanitized the tracked law-firm template.** The previous
+  `config/businesses/example-licomplaw.yaml` carried client-identifying
+  values (business display name, receptionist persona name, intake email
+  domain, and a tenant-specific Resend env-var name). Renamed to
+  `config/businesses/example-workers-comp.yaml` and replaced every
+  identifying string with a generic placeholder:
+  - business display name → `Example Workers' Comp Law`
+  - persona name → `Alex`
+  - intake email → `intake@example.com`
+  - Resend env var → `EXAMPLE_RESEND_API_KEY`
+  - file/recording/transcript paths → `./{messages,recordings,transcripts}/example-workers-comp/`
+
+  Updated `tests/test_config.py` to match (with a regression guard that
+  asserts the public template contains no `licomplaw` / `nycomplaw`
+  substring), and updated `.env.example`, `documentation/ringcentral-setup.md`,
+  `documentation/multi-business-setup.md`, `documentation/configuration-reference.md`,
+  and `tests/MANUAL.md` to reference the new template name and `<slug>`
+  placeholders instead of tenant-specific values. Operators copying the
+  template into a tenant-local YAML still override every placeholder, so
+  no behavior changes — only the surface that ends up on GitHub.
+- **Stopped tracking `/docs/`.** That directory holds internal design
+  specs, implementation plans, and superpowers workflow artifacts that
+  aren't user-facing reference docs. Added `docs/` to `.gitignore` and
+  ran `git rm -r --cached docs/` so the files stay on disk locally for
+  development history but no longer ship in the public repository. The
+  three tracked references to `docs/plans/` (in `CLAUDE.md`,
+  `documentation/CHANGELOG.md`'s artifact list, and `documentation/index.md`'s
+  file-tree) were removed.
+
 ### Added
 - **Telephony setup guide for non-default paths** (closes #4).
   New `documentation/telephony-setup.md` documents the three realistic
@@ -83,11 +113,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **RingCentral + Twilio law-firm deployment guide**:
   `documentation/ringcentral-setup.md` documents the RingEX reception-group
   path where a Twilio DID acts as the AI bridge into LiveKit SIP, using named
-  agent dispatch with `metadata={"config":"licomplaw"}`.
-- **`example-licomplaw` business config template**: adds Adriana as the receptionist,
-  intake email to `reception@licomplaw.com`, local recording + transcript
-  storage, disabled recording consent preamble, and 15 placeholder claims-rep
-  transfer targets to replace before go-live.
+  agent dispatch with `metadata={"config":"<slug>"}` where `<slug>` is the
+  tenant's chosen business slug.
+- **`example-workers-comp` business config template**: tracked template for
+  a workers' compensation law firm using the RingCentral + Twilio + LiveKit
+  path. Uses generic placeholder values (business name
+  `Example Workers' Comp Law`, persona `Alex`, intake email
+  `intake@example.com`, Resend env var `EXAMPLE_RESEND_API_KEY`) so the
+  public template never carries client identity; operators override every
+  placeholder when they copy the template into their gitignored local YAML.
+  Enables local recording + transcript storage, disables the recording
+  consent preamble, and ships 15 placeholder claims-rep transfer targets
+  to replace before go-live. Originally tracked as `example-licomplaw.yaml`
+  but renamed for sanitization.
 - **ChatGPT OAuth setup documentation**: new
   `documentation/chatgpt-oauth-setup.md` explains how to use a ChatGPT/Codex
   login token for OpenAI Realtime so eligible ChatGPT subscriptions can power
@@ -423,4 +461,3 @@ Initial release of the AI Receptionist.
 - `HANDOFF.md` — comprehensive project handoff document
 - `documentation/index.md` — documentation landing page
 - `documentation/architecture.md` — system architecture and design decisions
-- `docs/plans/` — design document and implementation plan

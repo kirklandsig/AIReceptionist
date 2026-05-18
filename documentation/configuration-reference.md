@@ -51,14 +51,20 @@ The `<slug>` is an alphanumeric identifier (plus hyphens and underscores) used t
 
 ```
 config/businesses/example-dental.yaml
-config/businesses/example-licomplaw.yaml
+config/businesses/example-workers-comp.yaml
 config/businesses/smith-law-firm.yaml
 config/businesses/downtown_clinic.yaml
 ```
 
 **Slug validation**: Must match `^[a-zA-Z0-9_-]+$`. No spaces, no path separators, no special characters. This is enforced for security (path traversal prevention).
 
-The checked-in `example-licomplaw.yaml` is a concrete RingCentral/Twilio law-firm template. Copy it to local, gitignored `licomplaw.yaml` for deployment. It uses `RECEPTIONIST_CONFIG=licomplaw`, enables local recordings and transcripts, sends intake email to `reception@licomplaw.com`, and requires `LICOMPLAW_RESEND_API_KEY` unless you switch its `email.sender` block to SMTP.
+The checked-in `example-workers-comp.yaml` is a concrete RingCentral/Twilio
+workers' compensation law-firm template using generic placeholder values
+(business name `Example Workers' Comp Law`, persona `Alex`, intake email
+`intake@example.com`, Resend env var `EXAMPLE_RESEND_API_KEY`). Copy it to
+a tenant-specific local YAML (e.g. `config/businesses/<your-slug>.yaml`) for
+deployment, then replace those placeholders with real values. Any business
+YAML other than the tracked `example-*.yaml` files is gitignored by design.
 
 ---
 

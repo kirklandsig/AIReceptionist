@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Full transcript embedded in call-end emails** (and `include_transcript` /
+  `include_recording_link` per-channel toggles now actually do something).
+  Previously the two flags on `messages.channels[type=email]` were dead — the
+  call-end template only ever rendered the transcript file *path*. Now, when
+  `include_transcript: true` (default) and a markdown transcript exists, the
+  agent reads the file and embeds the conversation directly into the email
+  body (plain text + a monospace `<pre>` block in HTML), so the operator can
+  read the call without opening another file. If the markdown file is missing
+  or unreadable the email still sends with the path plus a
+  `(transcript_unavailable)` marker — the call-end flow never crashes over
+  an unreadable transcript. `include_recording_link: false` now suppresses
+  the recording URL/failure row entirely for tenants who don't want bucket
+  links in mail. New regression coverage in `tests/email/test_templates.py`
+  and `tests/messaging/test_email_channel.py`; full suite `390 passed, 2 skipped`.
 - **RingCentral + Twilio law-firm deployment guide**:
   `documentation/ringcentral-setup.md` documents the RingEX reception-group
   path where a Twilio DID acts as the AI bridge into LiveKit SIP, using named

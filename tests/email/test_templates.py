@@ -210,3 +210,80 @@ def test_call_end_email_omits_agent_end_reason_when_unset():
     _, body_text, body_html = build_call_end_email(md, DispatchContext())
     assert "Agent end reason" not in body_text
     assert "Agent end reason" not in body_html
+
+
+def test_call_end_email_embeds_transcript_content_when_include_transcript_true(tmp_path):
+    """include_transcript=True embeds the actual transcript content into the
+    email body, not just the file path. Operators reading the call summary
+    should see the conversation without opening another file or another link.
+    """
+    transcript_md = tmp_path / "transcript.md"
+    transcript_md.write_text(
+        "# Call transcript — Acme Dental\n\n"
+        "**Agent:** Thanks for calling Acme Dental.\n\n"
+        "**Caller:** I need to reschedule my Tuesday appointment.\n",
+        encoding="utf-8",
+    )
+    md = _metadata()
+    context = DispatchContext(transcript_markdown_path=str(transcript_md))
+
+    subject, body_text, body_html = build_call_end_email(
+        md, context, include_transcript=True,
+    )
+
+    # Whole transcript appears verbatim in plain-text body
+    assert "Thanks for calling Acme Dental." in body_text
+    assert "I need to reschedule my Tuesday appointment." in body_text
+    # And in the HTML body (escaped where appropriate)
+    assert "Thanks for calling Acme Dental." in body_html
+    assert "I need to reschedule my Tuesday appointment." in body_html
+
+
+def test_call_end_email_omits_transcript_when_include_transcript_false(tmp_path):
+    """include_transcript=False keeps the transcript path off the email
+    entirely so operators relying on the YAML knob get exactly what they
+    asked for."""
+    transcript_md = tmp_path / "transcript.md"
+    transcript_md.write_text("**Agent:** sensitive content\n", encoding="utf-8")
+    md = _metadata()
+    context = DispatchContext(transcript_markdown_path=str(transcript_md))
+
+    subject, body_text, body_html = build_call_end_email(
+        md, context, include_transcript=False,
+    )
+
+    assert "sensitive content" not in body_text
+    assert "sensitive content" not in body_html
+    assert "Transcript:" not in body_text
+    assert "Transcript" not in body_html
+
+
+def test_call_end_email_falls_back_to_path_when_transcript_file_missing(tmp_path):
+    """If the markdown file is missing for some reason, the email should still
+    send and include the path so the operator can find the JSON copy. Do not
+    crash the call-end flow over an unreadable transcript."""
+    missing = tmp_path / "does-not-exist.md"
+    md = _metadata()
+    context = DispatchContext(transcript_markdown_path=str(missing))
+
+    subject, body_text, body_html = build_call_end_email(
+        md, context, include_transcript=True,
+    )
+
+    assert str(missing) in body_text
+    assert "transcript_unavailable" in body_text.lower() or "could not read" in body_text.lower()
+
+
+def test_call_end_email_omits_recording_link_when_include_recording_link_false():
+    """include_recording_link=False suppresses the recording URL row even if
+    LiveKit produced one. Useful when the operator doesn't want links to a
+    private bucket leaking into mail."""
+    md = _metadata()
+    context = DispatchContext(recording_url="https://example.com/r/123.mp3")
+
+    _, body_text, body_html = build_call_end_email(
+        md, context, include_recording_link=False,
+    )
+
+    assert "example.com/r/123.mp3" not in body_text
+    assert "example.com/r/123.mp3" not in body_html

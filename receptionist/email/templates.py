@@ -78,8 +78,28 @@ def build_message_email(
     return subject, body_text, body_html
 
 
+def _read_transcript(path: str) -> tuple[str | None, str | None]:
+    """Return (content, error) for a transcript markdown path.
+
+    On success, content is the file text and error is None. On failure,
+    content is None and error is a short token like 'transcript_unavailable'
+    that callers can render. We never raise from here — a missing or
+    unreadable transcript must not break the call-end email path.
+    """
+    try:
+        from pathlib import Path
+
+        return Path(path).read_text(encoding="utf-8"), None
+    except (OSError, UnicodeDecodeError):
+        return None, "transcript_unavailable"
+
+
 def build_call_end_email(
-    metadata: CallMetadata, context: DispatchContext
+    metadata: CallMetadata,
+    context: DispatchContext,
+    *,
+    include_transcript: bool = True,
+    include_recording_link: bool = True,
 ) -> tuple[str, str, str]:
     outcomes_str = _outcomes_display(metadata.outcomes)
     subject_outcomes = _outcomes_display(
@@ -111,12 +131,22 @@ def build_call_end_email(
         body_text += f"FAQs answered: {', '.join(metadata.faqs_answered)}\n"
     if metadata.languages_detected:
         body_text += f"Languages: {', '.join(sorted(metadata.languages_detected))}\n"
-    if metadata.recording_failed:
-        body_text += f"\nRecording: failed\n"
-    elif context.recording_url:
-        body_text += f"\nRecording: {context.recording_url}\n"
-    if context.transcript_markdown_path:
+    if include_recording_link:
+        if metadata.recording_failed:
+            body_text += f"\nRecording: failed\n"
+        elif context.recording_url:
+            body_text += f"\nRecording: {context.recording_url}\n"
+    if include_transcript and context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
+        content, err = _read_transcript(context.transcript_markdown_path)
+        if content is not None:
+            body_text += "\n--- Transcript ---\n"
+            body_text += content
+            if not content.endswith("\n"):
+                body_text += "\n"
+            body_text += "--- End transcript ---\n"
+        else:
+            body_text += f"({err})\n"
 
     def e(s: object) -> str:
         return html.escape(str(s) if s is not None else "", quote=True)
@@ -146,12 +176,24 @@ def build_call_end_email(
     if metadata.languages_detected:
         body_html += f"<tr><td><strong>Languages</strong></td><td>{e(', '.join(sorted(metadata.languages_detected)))}</td></tr>"
     body_html += f"</table>"
-    if metadata.recording_failed:
-        body_html += f"<p><strong>Recording:</strong> failed</p>"
-    elif context.recording_url:
-        body_html += f"<p><strong>Recording:</strong> <a href='{e(context.recording_url)}'>{e(context.recording_url)}</a></p>"
-    if context.transcript_markdown_path:
+    if include_recording_link:
+        if metadata.recording_failed:
+            body_html += f"<p><strong>Recording:</strong> failed</p>"
+        elif context.recording_url:
+            body_html += f"<p><strong>Recording:</strong> <a href='{e(context.recording_url)}'>{e(context.recording_url)}</a></p>"
+    if include_transcript and context.transcript_markdown_path:
         body_html += f"<p><strong>Transcript:</strong> {e(context.transcript_markdown_path)}</p>"
+        content, err = _read_transcript(context.transcript_markdown_path)
+        if content is not None:
+            # Preserve markdown formatting using a monospace <pre> block.
+            # html.escape keeps any < > & inside the transcript from breaking
+            # the surrounding HTML structure.
+            body_html += (
+                "<hr><h3>Transcript</h3>"
+                f"<pre style='white-space:pre-wrap;font-family:monospace'>{e(content)}</pre>"
+            )
+        else:
+            body_html += f"<p><em>({e(err)})</em></p>"
 
     return subject, body_text, body_html
 

@@ -48,7 +48,12 @@ class EmailChannel:
     async def deliver_call_end(
         self, metadata: CallMetadata, context: DispatchContext
     ) -> None:
-        subject, body_text, body_html = build_call_end_email(metadata, context)
+        subject, body_text, body_html = build_call_end_email(
+            metadata,
+            context,
+            include_transcript=self.channel_config.include_transcript,
+            include_recording_link=self.channel_config.include_recording_link,
+        )
         await self._send_with_retry(subject, body_text, body_html)
 
     async def deliver_booking(

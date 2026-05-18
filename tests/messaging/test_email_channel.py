@@ -156,3 +156,81 @@ async def test_email_channel_deliver_booking_retries_on_transient(mocker):
     await channel.deliver_booking(md, DispatchContext())
 
     assert sender_send.call_count == 2
+
+
+# ---- include_transcript / include_recording_link wiring ----
+
+
+@pytest.mark.asyncio
+async def test_deliver_call_end_embeds_transcript_when_include_transcript_true(
+    mocker, tmp_path,
+):
+    """The YAML knob `include_transcript: true` must reach the template so the
+    actual transcript content lands in the email body, not just the path."""
+    transcript_md = tmp_path / "t.md"
+    transcript_md.write_text(
+        "**Agent:** hi\n**Caller:** I want to reschedule.\n",
+        encoding="utf-8",
+    )
+    cfg = EmailChannelConfig(
+        type="email", to=["owner@acme.com"], include_transcript=True,
+    )
+    email_cfg = _email_config_smtp()
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+
+    channel = EmailChannel(cfg, email_cfg)
+    md = _call_metadata_for_booking()
+    md.outcomes = {"hung_up"}
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+    await channel.deliver_call_end(md, ctx)
+
+    kwargs = sender_send.call_args.kwargs
+    assert "I want to reschedule." in kwargs["body_text"]
+    assert "I want to reschedule." in kwargs["body_html"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_call_end_suppresses_transcript_when_include_transcript_false(
+    mocker, tmp_path,
+):
+    transcript_md = tmp_path / "t.md"
+    transcript_md.write_text("**Agent:** confidential\n", encoding="utf-8")
+    cfg = EmailChannelConfig(
+        type="email", to=["owner@acme.com"], include_transcript=False,
+    )
+    email_cfg = _email_config_smtp()
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+
+    channel = EmailChannel(cfg, email_cfg)
+    md = _call_metadata_for_booking()
+    md.outcomes = {"hung_up"}
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+    await channel.deliver_call_end(md, ctx)
+
+    kwargs = sender_send.call_args.kwargs
+    assert "confidential" not in kwargs["body_text"]
+    assert "confidential" not in kwargs["body_html"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_call_end_suppresses_recording_when_include_recording_link_false(
+    mocker,
+):
+    cfg = EmailChannelConfig(
+        type="email", to=["owner@acme.com"], include_recording_link=False,
+    )
+    email_cfg = _email_config_smtp()
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+
+    channel = EmailChannel(cfg, email_cfg)
+    md = _call_metadata_for_booking()
+    md.outcomes = {"hung_up"}
+    ctx = DispatchContext(recording_url="https://example.com/r/123.mp3")
+    await channel.deliver_call_end(md, ctx)
+
+    kwargs = sender_send.call_args.kwargs
+    assert "example.com/r/123.mp3" not in kwargs["body_text"]
+    assert "example.com/r/123.mp3" not in kwargs["body_html"]

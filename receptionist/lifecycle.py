@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from receptionist.config import BusinessConfig
-from receptionist.messaging.models import DispatchContext
+from receptionist.messaging.models import DispatchContext, Message
 from receptionist.recording.egress import (
     RecordingArtifact, RecordingHandle, start_recording, stop_recording,
 )
@@ -43,6 +43,11 @@ class CallLifecycle:
         # Pre-build email channel instances if any email triggers are enabled,
         # so the call-end fan-out doesn't reconstruct them per fire.
         self._email_channels = self._build_email_channels()
+        # take_message defers its email portion to call-end time so the full
+        # transcript can be embedded. Each enqueued Message is fired once via
+        # every configured EmailChannel during on_call_ended, AFTER the
+        # transcript files have been written.
+        self._pending_message_emails: list[Message] = []
 
     def _build_email_channels(self) -> list:
         """Pre-construct EmailChannel instances when email triggers will need them.
@@ -77,6 +82,19 @@ class CallLifecycle:
     def record_message_taken(self) -> None:
         self.metadata.message_taken = True
         self._add_outcome("message_taken")
+
+    def enqueue_message_email(self, message: Message) -> None:
+        """Queue a Message for email dispatch at call-end.
+
+        The file/webhook channels fire synchronously from the take_message
+        tool path (so the caller hears immediate confirmation and the data
+        is durable on disk). The email portion is queued here and drained
+        in on_call_ended() with a DispatchContext that includes the real
+        transcript path, so the email template can embed the full
+        conversation. Without this deferral the email would fire mid-call
+        and the transcript file would not yet exist.
+        """
+        self._pending_message_emails.append(message)
 
     def record_appointment_booked(self, details: dict) -> None:
         """Called by the book_appointment tool after a successful event.insert.
@@ -149,6 +167,37 @@ class CallLifecycle:
 
         # Fan out email triggers
         if self.config.email:
+            # Deferred message emails go first: they're a per-take_message
+            # invocation, and we want them paired with the same transcript
+            # context the call-end and booking emails get.
+            if (
+                self.config.email.triggers.on_message
+                and self._pending_message_emails
+                and self._email_channels
+            ):
+                context = self._build_dispatch_context(artifact, transcript_result)
+                for msg in self._pending_message_emails:
+                    for channel in self._email_channels:
+                        try:
+                            await channel.deliver(msg, context)
+                            logger.info(
+                                "Deferred message email sent for caller_name=%s",
+                                msg.caller_name,
+                                extra={
+                                    "call_id": self.metadata.call_id,
+                                    "business_name": self.metadata.business_name,
+                                    "component": "lifecycle.message_email",
+                                },
+                            )
+                        except Exception as e:
+                            logger.error(
+                                "Deferred message email failed: %s", e,
+                                extra={
+                                    "call_id": self.metadata.call_id,
+                                    "business_name": self.metadata.business_name,
+                                    "component": "lifecycle.message_email",
+                                },
+                            )
             if self.config.email.triggers.on_call_end:
                 await self._fire_email_trigger(
                     "call_end", lambda ch, ctx: ch.deliver_call_end(self.metadata, ctx),

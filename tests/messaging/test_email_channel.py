@@ -234,3 +234,56 @@ async def test_deliver_call_end_suppresses_recording_when_include_recording_link
     kwargs = sender_send.call_args.kwargs
     assert "example.com/r/123.mp3" not in kwargs["body_text"]
     assert "example.com/r/123.mp3" not in kwargs["body_html"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_embeds_transcript_when_include_transcript_true(
+    mocker, tmp_path,
+):
+    """When a take_message email fires with a transcript path in context
+    (i.e. dispatched at call-end, not mid-call), the full transcript must
+    be embedded in the message email body."""
+    transcript_md = tmp_path / "t.md"
+    transcript_md.write_text(
+        "**Caller:** Please tell Alex I'll call back tomorrow.\n",
+        encoding="utf-8",
+    )
+    cfg = EmailChannelConfig(
+        type="email", to=["owner@acme.com"], include_transcript=True,
+    )
+    email_cfg = _email_config_smtp()
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+
+    channel = EmailChannel(cfg, email_cfg)
+    msg = Message("Jane", "+15551112222", "Call me back tomorrow", "Acme", "2026-04-23T14:30:00+00:00")
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+    await channel.deliver(msg, ctx)
+
+    kwargs = sender_send.call_args.kwargs
+    assert "Please tell Alex I'll call back tomorrow." in kwargs["body_text"]
+    assert "Please tell Alex I&#x27;ll call back tomorrow." in kwargs["body_html"] \
+        or "Please tell Alex I'll call back tomorrow." in kwargs["body_html"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_message_suppresses_transcript_when_include_transcript_false(
+    mocker, tmp_path,
+):
+    transcript_md = tmp_path / "t.md"
+    transcript_md.write_text("**Caller:** super private\n", encoding="utf-8")
+    cfg = EmailChannelConfig(
+        type="email", to=["owner@acme.com"], include_transcript=False,
+    )
+    email_cfg = _email_config_smtp()
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+
+    channel = EmailChannel(cfg, email_cfg)
+    msg = Message("Jane", "+15551112222", "Call me", "Acme", "2026-04-23T14:30:00+00:00")
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+    await channel.deliver(msg, ctx)
+
+    kwargs = sender_send.call_args.kwargs
+    assert "super private" not in kwargs["body_text"]
+    assert "super private" not in kwargs["body_html"]

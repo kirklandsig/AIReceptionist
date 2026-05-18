@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Full transcript embedded in caller-message emails too** (parallel to
+  the call-end email). When the caller invokes `take_message` mid-call,
+  the file/webhook channels still fire synchronously (caller hears
+  "saved", message data is durable on disk before we return), but the
+  EmailChannel portion is intentionally deferred to call-end so the
+  message email can embed the full conversation that led up to the
+  message. New plumbing:
+  - `Dispatcher.dispatch_message` accepts `skip_email_channel=True`,
+    which the `take_message` tool now sets.
+  - `CallLifecycle.enqueue_message_email(msg)` queues messages; the
+    queue drains in `on_call_ended` after the transcript file is written,
+    firing `EmailChannel.deliver(msg, ctx)` for each configured channel
+    when the `on_message` email trigger is enabled.
+  - `build_message_email` mirrors `build_call_end_email`: it accepts
+    `include_transcript` / `include_recording_link` and embeds the
+    transcript with the same `(transcript_unavailable)` fallback when
+    the file can't be read. `EmailChannel.deliver` passes the per-channel
+    flags through from `channel_config`.
+  - 8 new regression tests across templates, channel, dispatcher, and
+    lifecycle; full suite `400 passed, 2 skipped`.
 - **Full transcript embedded in call-end emails** (and `include_transcript` /
   `include_recording_link` per-channel toggles now actually do something).
   Previously the two flags on `messages.channels[type=email]` were dead — the

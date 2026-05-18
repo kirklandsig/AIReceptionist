@@ -79,6 +79,67 @@ async def test_dispatcher_no_channels_is_noop():
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_skip_email_channel_omits_email_dispatch(tmp_path, mocker):
+    """take_message uses skip_email_channel=True so the email portion is
+    deferred to call-end (which can embed the full transcript). The file
+    channel still fires synchronously so the caller gets confirmation."""
+    from receptionist.config import EmailChannel as EmailChannelConfig, EmailConfig, EmailSenderConfig, SMTPConfig, EmailTriggers
+
+    file_cfg = FileChannelConfig(type="file", file_path=str(tmp_path))
+    email_cfg = EmailChannelConfig(type="email", to=["owner@acme.com"])
+    email_top = EmailConfig(
+        **{"from": "noreply@acme.com"},
+        sender=EmailSenderConfig(
+            type="smtp",
+            smtp=SMTPConfig(host="h", port=587, username="u", password="p", use_tls=True),
+        ),
+        triggers=EmailTriggers(),
+    )
+    email_deliver = AsyncMock()
+    mocker.patch(
+        "receptionist.messaging.channels.email.EmailChannel.deliver",
+        email_deliver,
+    )
+
+    dispatcher = Dispatcher(
+        channels=[file_cfg, email_cfg], business_name="Acme", email_config=email_top,
+    )
+    await dispatcher.dispatch_message(
+        _make_message(), DispatchContext(), skip_email_channel=True,
+    )
+
+    # File channel still wrote the message synchronously
+    assert len(list(tmp_path.glob("*.json"))) == 1
+    # Email channel was skipped entirely — even after draining background tasks
+    await _drain_pending_tasks()
+    email_deliver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_skip_email_channel_still_fires_webhook(tmp_path, mocker):
+    """skip_email_channel only suppresses email; other background channels
+    (webhook) still fire normally."""
+    file_cfg = FileChannelConfig(type="file", file_path=str(tmp_path))
+    webhook_cfg = WebhookChannelConfig(type="webhook", url="https://example.com", headers={})
+    webhook_deliver = AsyncMock()
+    mocker.patch(
+        "receptionist.messaging.channels.webhook.WebhookChannel.deliver",
+        webhook_deliver,
+    )
+
+    dispatcher = Dispatcher(
+        channels=[file_cfg, webhook_cfg], business_name="Acme",
+    )
+    await dispatcher.dispatch_message(
+        _make_message(), DispatchContext(), skip_email_channel=True,
+    )
+
+    assert len(list(tmp_path.glob("*.json"))) == 1
+    await _drain_pending_tasks()
+    webhook_deliver.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_sync_fallback_prefers_webhook_when_no_file(tmp_path, mocker):
     """When no file channel configured, dispatcher awaits webhook synchronously."""
     webhook_cfg = WebhookChannelConfig(type="webhook", url="https://example.com", headers={})

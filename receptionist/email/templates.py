@@ -37,9 +37,21 @@ def _outcomes_display(
 
 
 def build_message_email(
-    message: Message, context: DispatchContext
+    message: Message,
+    context: DispatchContext,
+    *,
+    include_transcript: bool = True,
+    include_recording_link: bool = True,
 ) -> tuple[str, str, str]:
-    """Return (subject, body_text, body_html)."""
+    """Return (subject, body_text, body_html).
+
+    When `include_transcript=True` (the default) and a markdown transcript
+    path exists in the dispatch context, the full conversation is embedded at
+    the bottom of the message email — so the recipient can read the call that
+    led to the message without opening another file. The `take_message` flow
+    defers email dispatch to call-end so the transcript file is on disk by
+    the time the email is composed.
+    """
     subject = f"New message from {message.caller_name} — {message.business_name}"
 
     body_text = (
@@ -52,10 +64,19 @@ def build_message_email(
         f"Message:\n"
         f"{message.message}\n"
     )
-    if context.recording_url:
+    if include_recording_link and context.recording_url:
         body_text += f"\nRecording: {context.recording_url}\n"
-    if context.transcript_markdown_path:
+    if include_transcript and context.transcript_markdown_path:
         body_text += f"Transcript: {context.transcript_markdown_path}\n"
+        content, err = _read_transcript(context.transcript_markdown_path)
+        if content is not None:
+            body_text += "\n--- Transcript ---\n"
+            body_text += content
+            if not content.endswith("\n"):
+                body_text += "\n"
+            body_text += "--- End transcript ---\n"
+        else:
+            body_text += f"({err})\n"
 
     def e(s: str | None) -> str:
         return html.escape(s or "", quote=True)
@@ -70,10 +91,18 @@ def build_message_email(
         f"<h3>Message</h3>"
         f"<blockquote>{e(message.message)}</blockquote>"
     )
-    if context.recording_url:
+    if include_recording_link and context.recording_url:
         body_html += f"<p><strong>Recording:</strong> <a href='{e(context.recording_url)}'>{e(context.recording_url)}</a></p>"
-    if context.transcript_markdown_path:
+    if include_transcript and context.transcript_markdown_path:
         body_html += f"<p><strong>Transcript:</strong> {e(context.transcript_markdown_path)}</p>"
+        content, err = _read_transcript(context.transcript_markdown_path)
+        if content is not None:
+            body_html += (
+                "<hr><h3>Transcript</h3>"
+                f"<pre style='white-space:pre-wrap;font-family:monospace'>{e(content)}</pre>"
+            )
+        else:
+            body_html += f"<p><em>({e(err)})</em></p>"
 
     return subject, body_text, body_html
 

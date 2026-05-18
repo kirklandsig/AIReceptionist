@@ -44,12 +44,32 @@ class Dispatcher:
         self.email_config = email_config
         self.failures_dir = resolve_failures_dir(self.channels, business_name)
 
-    async def dispatch_message(self, message: Message, context: DispatchContext) -> None:
-        if not self.channels:
+    async def dispatch_message(
+        self,
+        message: Message,
+        context: DispatchContext,
+        *,
+        skip_email_channel: bool = False,
+    ) -> None:
+        """Dispatch a Message across configured channels.
+
+        `skip_email_channel=True` omits any `EmailChannel` from the fan-out.
+        The `take_message` tool sets this so the email portion can be
+        deferred to call-end time (where the lifecycle has a transcript
+        path available and can embed the full conversation). File and
+        webhook channels still fire normally.
+        """
+        channels = self.channels
+        if skip_email_channel:
+            channels = [
+                c for c in self.channels if not isinstance(c, EmailChannelConfig)
+            ]
+
+        if not channels:
             logger.info("Dispatcher has no channels; dispatch_message is a no-op")
             return
 
-        sync_channel, background_channels = self._split_channels()
+        sync_channel, background_channels = self._split_channels(channels)
 
         # Sync channel: await, propagate errors to caller (take_message)
         sync_channel_name = sync_channel.type
@@ -60,14 +80,15 @@ class Dispatcher:
         for ch_cfg in background_channels:
             asyncio.create_task(self._run_background(ch_cfg, message, context))
 
-    def _split_channels(self):
+    def _split_channels(self, channels=None):
         """Pick one sync channel (file preferred), return the rest as background."""
+        active = channels if channels is not None else self.channels
         for cls in _SYNC_PREFERENCE:
-            for ch in self.channels:
+            for ch in active:
                 if isinstance(ch, cls):
-                    return ch, [c for c in self.channels if c is not ch]
+                    return ch, [c for c in active if c is not ch]
         # Should be unreachable: all channel types are in _SYNC_PREFERENCE
-        return self.channels[0], self.channels[1:]
+        return active[0], active[1:]
 
     async def _run_background(self, ch_cfg, message: Message, context: DispatchContext) -> None:
         channel_name = ch_cfg.type

@@ -380,6 +380,34 @@ async def _speak_goodbye_and_terminate(
                 "to terminate", reason, extra=log_extra,
             )
 
+    # Finalize the call lifecycle BEFORE removing the SIP participant. The
+    # LiveKit job process tears down the asyncio default executor shortly
+    # after the participant disconnects, which breaks aiosmtplib's DNS
+    # lookup with "Executor shutdown has been called". Running the call-end
+    # fan-out (transcript write + deferred message emails + call-end email)
+    # here keeps it inside the healthy event-loop window. The session-close
+    # handler still invokes on_call_ended afterward; CallLifecycle is
+    # idempotent and the second call is a no-op.
+    logger.info(
+        "agent_end: invoking lifecycle.on_call_ended pre-terminate "
+        "(pending=%d, channels=%d)",
+        len(lifecycle._pending_message_emails),
+        len(lifecycle._email_channels),
+        extra=log_extra,
+    )
+    try:
+        await lifecycle.on_call_ended()
+        logger.info(
+            "agent_end: lifecycle.on_call_ended returned cleanly",
+            extra=log_extra,
+        )
+    except Exception:
+        logger.exception(
+            "agent_end: lifecycle.on_call_ended raised before terminate; "
+            "proceeding to terminate anyway",
+            extra=log_extra,
+        )
+
     caller_identity = _get_caller_identity(job_ctx)
     await _terminate_room(
         job_ctx, caller_identity, job_ctx.room.name, call_id=call_id,

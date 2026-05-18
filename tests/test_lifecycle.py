@@ -313,6 +313,67 @@ async def test_lifecycle_message_queue_empty_means_no_deferred_emails(config, mo
 
 
 @pytest.mark.asyncio
+async def test_on_call_ended_is_idempotent(tmp_path, config, mocker):
+    """on_call_ended must be safe to call more than once. The agent-initiated
+    end-of-call path calls it explicitly BEFORE removing the SIP participant
+    so emails fire while the asyncio executor is still healthy; the natural
+    session-close handler later calls it again. The second invocation must
+    be a no-op (no duplicate emails, no double transcript writes), or we'd
+    deliver two copies of every email to the operator."""
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig, EmailConfig, EmailTriggers,
+        SMTPConfig, EmailSenderConfig, TranscriptsConfig, TranscriptStorageConfig,
+    )
+    from receptionist.messaging.models import Message
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    config = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@acme.com"]),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            "triggers": {"on_message": True, "on_call_end": True},
+        }),
+        "transcripts": TranscriptsConfig(
+            enabled=True,
+            storage=TranscriptStorageConfig(type="local", path=str(tmp_path)),
+            formats=["json", "markdown"],
+        ),
+    })
+
+    deliver_mock = AsyncMock()
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+
+    lifecycle = CallLifecycle(config=config, call_id="room-x", caller_phone="+15551112222")
+    lifecycle.enqueue_message_email(Message("Jane", "+15551112222", "msg", "Test Dental"))
+
+    # First call: full pipeline runs, message email + call-end email fire.
+    await lifecycle.on_call_ended()
+    assert deliver_mock.call_count == 1
+    assert deliver_call_end_mock.call_count == 1
+    transcripts_after_first = len(list(tmp_path.glob("*.md")))
+    assert transcripts_after_first == 1
+
+    # Second call (e.g. from session-close handler after agent-initiated end):
+    # must NOT fire emails or rewrite transcripts.
+    await lifecycle.on_call_ended()
+    assert deliver_mock.call_count == 1, "duplicate message email after idempotent re-call"
+    assert deliver_call_end_mock.call_count == 1, "duplicate call-end email after idempotent re-call"
+    assert len(list(tmp_path.glob("*.md"))) == transcripts_after_first, \
+        "transcript file count changed after idempotent re-call"
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_message_queue_does_not_fire_when_on_message_disabled(
     config, mocker,
 ):

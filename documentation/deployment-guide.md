@@ -414,6 +414,54 @@ For production deployments, use a process manager to keep the agent running.
 
 ### systemd (Linux)
 
+#### Step 1: Create the service user
+
+```bash
+sudo useradd --system --create-home --shell /usr/sbin/nologin ai-receptionist
+```
+
+#### Step 2: Install the application
+
+`git clone` preserves the repo's case, so cloning into `/opt` produces
+`/opt/AIReceptionist`. Either use that path consistently in the service
+file, or symlink to a lowercased alias if you prefer.
+
+```bash
+cd /opt
+sudo git clone https://github.com/kirklandsig/AIReceptionist.git
+cd AIReceptionist
+```
+
+Create the Python venv and install the package into it. **This is the step
+that's easy to skip** — `pip install -e .` does NOT create a venv for you,
+and a global install will not be visible to the service user unless you
+configure `PATH` explicitly.
+
+```bash
+sudo python3 -m venv .venv
+sudo .venv/bin/pip install -U pip
+sudo .venv/bin/pip install -e .
+```
+
+Hand ownership to the service user so the agent can write to
+`messages/`, `transcripts/`, `recordings/`, and `.failures/`:
+
+```bash
+sudo chown -R ai-receptionist:ai-receptionist /opt/AIReceptionist
+```
+
+Provision the `.env` file (per [Environment Variables](#environment-variables)).
+Restrict its permissions because it holds secrets:
+
+```bash
+sudo cp .env.example .env
+sudo nano .env   # fill in real values
+sudo chown ai-receptionist:ai-receptionist .env
+sudo chmod 600 .env
+```
+
+#### Step 3: Create the systemd unit
+
 Create `/etc/systemd/system/ai-receptionist.service`:
 
 ```ini
@@ -425,9 +473,9 @@ After=network.target
 Type=simple
 User=ai-receptionist
 Group=ai-receptionist
-WorkingDirectory=/opt/ai-receptionist
-EnvironmentFile=/opt/ai-receptionist/.env
-ExecStart=/opt/ai-receptionist/.venv/bin/python -m receptionist.agent start
+WorkingDirectory=/opt/AIReceptionist
+EnvironmentFile=/opt/AIReceptionist/.env
+ExecStart=/opt/AIReceptionist/.venv/bin/python -m receptionist.agent start
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -437,17 +485,34 @@ StandardError=journal
 WantedBy=multi-user.target
 ```
 
-Enable and start:
+> **Path consistency** — `WorkingDirectory`, `EnvironmentFile`, and the
+> `ExecStart` venv must all point at the same actual directory you cloned
+> into. Mixing `/opt/AIReceptionist` and `/opt/ai-receptionist` is a
+> common foot-gun; use one and stick with it.
+
+#### Step 4: Enable and start
+
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable ai-receptionist
-sudo systemctl start ai-receptionist
+sudo systemctl enable --now ai-receptionist
 ```
 
 View logs:
 ```bash
 sudo journalctl -u ai-receptionist -f
 ```
+
+#### Step 5 (optional): Lowercased path alias
+
+If your team prefers `/opt/ai-receptionist`, symlink rather than re-cloning:
+
+```bash
+sudo ln -s /opt/AIReceptionist /opt/ai-receptionist
+```
+
+Then either path works in the unit file. Pick one in the unit and stick
+with it — both is what causes the `ModuleNotFoundError` / "agent never
+picks up calls" symptom reported in issue #14.
 
 ### Docker
 

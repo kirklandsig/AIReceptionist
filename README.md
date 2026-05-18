@@ -104,9 +104,20 @@ cp config/businesses/example-dental.yaml config/businesses/my-business.yaml
 
 4. **Set up telephony:**
 
-Follow the [LiveKit SIP Trunk Setup Guide](https://docs.livekit.io/telephony/start/sip-trunk-setup/) to:
-- Create an inbound SIP trunk pointing to your Twilio/Telnyx number
-- Create a dispatch rule to route calls to the `receptionist` agent
+For an end-to-end walkthrough including provider trade-offs, FXS-gateway
++ on-prem PBX scenarios, and the BYOC pattern, read
+[`documentation/telephony-setup.md`](documentation/telephony-setup.md).
+The short version:
+
+- New deployments: pick a SIP trunk provider (Twilio Elastic SIP,
+  Telnyx, Signalwire), buy or port a DID to them, and point their
+  Origination URI at LiveKit's SIP endpoint
+  (`sip:<project-id>.sip.livekit.cloud;transport=tcp`). Enable SIP
+  REFER on the trunk so call transfers work.
+- Then create a LiveKit inbound trunk that matches your DID, and a
+  dispatch rule that routes calls to the `receptionist` agent. See
+  [LiveKit's SIP Trunk Setup Guide](https://docs.livekit.io/telephony/start/sip-trunk-setup/)
+  for the LiveKit-side resource shapes.
 
 For RingCentral/RingEX reception groups that should ring the AI alongside human receptionists, see [`documentation/ringcentral-setup.md`](documentation/ringcentral-setup.md).
 

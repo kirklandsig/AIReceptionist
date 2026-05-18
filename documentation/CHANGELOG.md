@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Telephony setup guide for non-default paths** (closes #4).
+  New `documentation/telephony-setup.md` documents the three realistic
+  ways a PSTN number reaches AIReceptionist: porting to a SIP trunk
+  provider (Path A — the tested default), Bring Your Own Carrier with a
+  transit provider like Telnyx BYOC (Path B), and keeping a copper
+  landline via an FXS gateway (Grandstream HT813 or similar) plus an
+  on-prem PBX (Path C). Includes a starter Asterisk `pjsip.conf` +
+  `extensions.conf` snippet for Path C, a trade-off table comparing the
+  three, and explicit E911 / power-outage / internet-outage caveats.
+  Linked from README and `documentation/index.md`. Path C is explicitly
+  marked as untested by the project's CI; treat the snippet as a
+  starting point.
+
 ### Changed
 - **Configuration reference rewritten for the channels-based schema.**
   `documentation/configuration-reference.md` previously described the

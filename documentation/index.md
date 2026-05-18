@@ -23,7 +23,8 @@ Traditional IVR systems frustrate callers with rigid menus. Human receptionists 
 | [Configuration Reference](configuration-reference.md) | Complete reference for the YAML business configuration file — every field, every validation rule, every default. |
 | [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) | Use a ChatGPT/Codex login token for OpenAI Realtime so businesses can run from ChatGPT subscription entitlements instead of an API key. |
 | [Deployment Guide](deployment-guide.md) | Step-by-step instructions for deploying with LiveKit Cloud or self-hosted LiveKit, including SIP trunk setup with Twilio and Telnyx. |
-| [RingCentral + Twilio Setup](ringcentral-setup.md) | Law-firm reception-group deployment using a Twilio DID as the RingCentral external member and LiveKit SIP bridge. |
+| [Telephony Setup](telephony-setup.md) | Trade-offs between porting your number to a SIP trunk provider (Path A), bringing your own carrier via BYOC (Path B), and keeping a copper landline via an FXS gateway + on-prem PBX (Path C). |
+| [RingCentral + Twilio Setup](ringcentral-setup.md) | Reception-group deployment using a Twilio DID as the RingCentral external member and LiveKit SIP bridge. |
 | [Development Guide](development-guide.md) | Local development setup, running tests, code organization, and contribution guidelines. |
 | [Function Tools Reference](function-tools-reference.md) | Detailed reference for each of the four agent function tools: `lookup_faq`, `transfer_call`, `take_message`, and `get_business_hours`. |
 | [Troubleshooting](troubleshooting.md) | Common issues, error messages, and their solutions. |

@@ -42,7 +42,12 @@ class EmailChannel:
         self.policy = RetryPolicy(max_attempts=3, initial_delay=initial_delay, factor=2.0)
 
     async def deliver(self, message: Message, context: DispatchContext) -> None:
-        subject, body_text, body_html = build_message_email(message, context)
+        subject, body_text, body_html = build_message_email(
+            message,
+            context,
+            include_transcript=self.channel_config.include_transcript,
+            include_recording_link=self.channel_config.include_recording_link,
+        )
         await self._send_with_retry(subject, body_text, body_html)
 
     async def deliver_call_end(

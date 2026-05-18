@@ -621,16 +621,23 @@ class Receptionist(Agent):
             business_name=self.config.business.name,
         )
         try:
+            # Email portion is deferred to call-end so the message email can
+            # embed the full transcript (which doesn't exist on disk yet
+            # because the call is still in progress). File and webhook
+            # channels fire immediately so the caller gets confirmation
+            # and the message is durable on disk before we say "saved".
             await self._dispatcher.dispatch_message(
                 msg, DispatchContext(
                     business_name=self.config.business.name,
                     call_id=self.lifecycle.metadata.call_id,
                 ),
+                skip_email_channel=True,
             )
         except Exception as e:
             logger.error("take_message: synchronous dispatch failed: %s", e)
             return "I'm having trouble saving messages right now. Would you like me to transfer you to someone instead?"
 
+        self.lifecycle.enqueue_message_email(msg)
         self.lifecycle.record_message_taken()
         return f"Message saved from {caller_name}. Let them know their message has been recorded and someone will get back to them."
 

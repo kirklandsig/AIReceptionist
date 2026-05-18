@@ -212,3 +212,141 @@ async def test_lifecycle_on_call_ended_writes_transcript(tmp_path, config):
     await lifecycle.on_call_ended()
     assert len(list(tmp_path.glob("*.json"))) == 1
     assert len(list(tmp_path.glob("*.md"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_queues_message_email_and_fires_at_call_end(
+    tmp_path, config, mocker,
+):
+    """The take_message tool defers the email portion to call-end by
+    enqueueing on the lifecycle. At on_call_ended, the lifecycle fires the
+    queued message email(s) AFTER the transcript file has been written, so
+    the email's DispatchContext carries the real transcript path and the
+    template can embed the full conversation."""
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig, EmailConfig, EmailTriggers,
+        SMTPConfig, EmailSenderConfig, TranscriptsConfig, TranscriptStorageConfig,
+    )
+    from receptionist.messaging.models import Message
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    config = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(
+                    type="email", to=["owner@acme.com"], include_transcript=True,
+                ),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            "triggers": {"on_message": True, "on_call_end": False},
+        }),
+        "transcripts": TranscriptsConfig(
+            enabled=True,
+            storage=TranscriptStorageConfig(type="local", path=str(tmp_path)),
+            formats=["json", "markdown"],
+        ),
+    })
+
+    deliver_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+
+    lifecycle = CallLifecycle(config=config, call_id="room-x", caller_phone="+15551112222")
+    msg = Message("Jane", "+15551112222", "Tell Alex I called", "Test Dental")
+
+    # Mid-call: take_message tool enqueues the email instead of firing it
+    lifecycle.enqueue_message_email(msg)
+    deliver_mock.assert_not_called()  # not yet — call still in progress
+
+    # Call ends: transcript gets written, then queued message emails fire
+    await lifecycle.on_call_ended()
+
+    deliver_mock.assert_called_once()
+    fired_msg, fired_ctx = deliver_mock.call_args.args
+    assert fired_msg is msg
+    # The context passed to deliver carries the transcript path so the
+    # template can read it and embed the conversation.
+    assert fired_ctx.transcript_markdown_path is not None
+    assert fired_ctx.transcript_markdown_path.endswith(".md")
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_message_queue_empty_means_no_deferred_emails(config, mocker):
+    """No message taken = no deferred message emails fired at call end."""
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig, EmailConfig, EmailTriggers,
+        SMTPConfig, EmailSenderConfig,
+    )
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    config = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@acme.com"]),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            # on_message must be True so the queue is even consulted; we want
+            # to assert the queue is empty when no take_message ran.
+            "triggers": {"on_message": True, "on_call_end": False},
+        }),
+    })
+
+    deliver_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    await lifecycle.on_call_ended()
+    deliver_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_message_queue_does_not_fire_when_on_message_disabled(
+    config, mocker,
+):
+    """If a business has on_message=False, the lifecycle should NOT fire
+    deferred message emails even if the queue has entries (defensive: the
+    operator opted out of email notifications for caller messages)."""
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig, EmailConfig, EmailTriggers,
+        SMTPConfig, EmailSenderConfig,
+    )
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
+
+    config = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@acme.com"]),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            "triggers": {"on_message": False, "on_call_end": True},
+        }),
+    })
+
+    deliver_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.enqueue_message_email(Message("Jane", "+1", "msg", "Test Dental"))
+    await lifecycle.on_call_ended()
+    deliver_mock.assert_not_called()

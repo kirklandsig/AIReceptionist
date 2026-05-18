@@ -274,6 +274,52 @@ def test_call_end_email_falls_back_to_path_when_transcript_file_missing(tmp_path
     assert "transcript_unavailable" in body_text.lower() or "could not read" in body_text.lower()
 
 
+def test_message_email_embeds_transcript_content_when_include_transcript_true(tmp_path):
+    """When a caller leaves a message, the message email should carry the
+    same conversational context the call-end email gets, so the recipient
+    can see what was discussed before the take_message tool fired."""
+    transcript_md = tmp_path / "t.md"
+    transcript_md.write_text(
+        "**Agent:** Thanks for calling.\n"
+        "**Caller:** I need to leave a message for Alex.\n"
+        "**Agent:** Got it, what would you like me to tell them?\n",
+        encoding="utf-8",
+    )
+    msg = _message()
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+
+    subject, body_text, body_html = build_message_email(
+        msg, ctx, include_transcript=True,
+    )
+
+    assert "I need to leave a message for Alex." in body_text
+    assert "I need to leave a message for Alex." in body_html
+
+
+def test_message_email_omits_transcript_when_include_transcript_false(tmp_path):
+    transcript_md = tmp_path / "t.md"
+    transcript_md.write_text("**Caller:** confidential aside\n", encoding="utf-8")
+    msg = _message()
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+
+    subject, body_text, body_html = build_message_email(
+        msg, ctx, include_transcript=False,
+    )
+
+    assert "confidential aside" not in body_text
+    assert "confidential aside" not in body_html
+
+
+def test_message_email_omits_recording_link_when_include_recording_link_false():
+    msg = _message()
+    ctx = DispatchContext(recording_url="https://example.com/r/m.mp3")
+    _, body_text, body_html = build_message_email(
+        msg, ctx, include_recording_link=False,
+    )
+    assert "example.com/r/m.mp3" not in body_text
+    assert "example.com/r/m.mp3" not in body_html
+
+
 def test_call_end_email_omits_recording_link_when_include_recording_link_false():
     """include_recording_link=False suppresses the recording URL row even if
     LiveKit produced one. Useful when the operator doesn't want links to a

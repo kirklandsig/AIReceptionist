@@ -41,7 +41,7 @@ echo ""
 SECRETS_FOUND=false
 
 # Files to skip when scanning for secrets
-SKIP_PATTERN='\.env\.example$|\.gitignore$|LICENSE$|\.md$|\.yaml$|\.yml$'
+SKIP_PATTERN='\.env\.example$|\.gitignore$|LICENSE$|\.md$'
 
 for file in $(git diff --cached --name-only --diff-filter=ACDMR 2>/dev/null || true); do
     # Skip excluded files
@@ -86,8 +86,16 @@ for file in $(git diff --cached --name-only --diff-filter=ACDMR 2>/dev/null || t
     fi
 
     # Generic: KEY=, SECRET=, TOKEN= with real values (not placeholders)
-    if echo "$CONTENT" | grep -qE '(API_KEY|API_SECRET|SECRET_KEY|ACCESS_TOKEN)=['\''"]?[A-Za-z0-9+/=_-]{20,}' | grep -qvE 'your-|example|placeholder|changeme|xxx'; then
+    if echo "$CONTENT" | grep -E '(API_KEY|API_SECRET|SECRET_KEY|ACCESS_TOKEN)=['\''"]?[A-Za-z0-9+/=_-]{20,}' | grep -qvE 'your-|example|placeholder|changeme|xxx'; then
         echo -e "${RED}${BOLD}[pre-commit] SECRET DETECTED${NC}${RED} in ${file}: Possible API key in variable assignment${NC}"
+        SECRETS_FOUND=true
+    fi
+
+    # YAML/raw config values: allow ${ENV_VAR} placeholders, flag pasted secrets.
+    if echo "$file" | grep -qE '\.ya?ml$' && \
+       echo "$CONTENT" | grep -E '(^|[[:space:]])(password|api[_-]?key|secret|token|private[_-]?key|client[_-]?secret|bearer|auth[_-]?token|webhook[_-]?token):[[:space:]]*['\''"]?[A-Za-z0-9+/=_-]{16,}' | \
+       grep -qvE '\$\{|your-|example|placeholder|changeme|xxx'; then
+        echo -e "${RED}${BOLD}[pre-commit] SECRET DETECTED${NC}${RED} in ${file}: Possible raw secret in YAML${NC}"
         SECRETS_FOUND=true
     fi
 done

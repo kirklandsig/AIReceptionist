@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Annotated, Literal, Union
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -28,9 +29,20 @@ class ConfigError(Exception):
 # ---------------------------------------------------------------------------
 
 class BusinessInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     type: str
     timezone: str
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except ZoneInfoNotFoundError as e:
+            raise ValueError(f"Invalid IANA timezone: {v!r}") from e
+        return v
 
 
 class APIKeyVoiceAuth(BaseModel):
@@ -150,6 +162,8 @@ class VoiceConfig(BaseModel):
 
 
 class DayHours(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     open: str
     close: str
 
@@ -162,6 +176,8 @@ class DayHours(BaseModel):
 
 
 class WeeklyHours(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     monday: DayHours | None = None
     tuesday: DayHours | None = None
     wednesday: DayHours | None = None
@@ -179,12 +195,16 @@ class WeeklyHours(BaseModel):
 
 
 class RoutingEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     number: str
     description: str
 
 
 class FAQEntry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str
     answer: str
 
@@ -194,6 +214,8 @@ class FAQEntry(BaseModel):
 # ---------------------------------------------------------------------------
 
 class LanguagesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     primary: str = "en"
     allowed: list[str] = Field(default_factory=lambda: ["en"])
 
@@ -218,11 +240,15 @@ class LanguagesConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class FileChannel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["file"]
     file_path: str
 
 
 class EmailChannel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["email"]
     to: list[str]
     include_transcript: bool = True
@@ -230,6 +256,8 @@ class EmailChannel(BaseModel):
 
 
 class WebhookChannel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["webhook"]
     url: str
     headers: dict[str, str] = Field(default_factory=dict)
@@ -258,23 +286,17 @@ class WebhookChannel(BaseModel):
         # IP-literal check (don't try to resolve DNS at config-load time)
         try:
             ip = ipaddress.ip_address(parsed.hostname)
-            if ip.is_loopback or ip.is_private or ip.is_link_local:
-                logger.warning(
-                    "Webhook URL %r points at a loopback/private/link-local "
-                    "address (%s). Fine in dev (ngrok / internal relays); in "
-                    "production this can leak data to the AWS metadata "
-                    "endpoint or other internal services.",
-                    v, ip,
-                )
         except ValueError:
             # Hostname is a domain — can't classify without DNS. Catch the
             # most common literal foot-guns by name.
             host = parsed.hostname.lower()
             if host in ("localhost",) or host.endswith(".localhost"):
-                logger.warning(
-                    "Webhook URL %r targets localhost. Fine in dev; in "
-                    "production this likely indicates a misconfiguration.",
-                    v,
+                raise ValueError("Webhook URL must not target localhost")
+        else:
+            if ip.is_loopback or ip.is_private or ip.is_link_local:
+                raise ValueError(
+                    "Webhook URL must not target private, loopback, or link-local "
+                    f"addresses; got {ip}"
                 )
         return v
 
@@ -286,6 +308,8 @@ MessageChannel = Annotated[
 
 
 class MessagesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     channels: list[MessageChannel]
 
     @model_validator(mode="before")
@@ -310,10 +334,14 @@ class MessagesConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class LocalStorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     path: str
 
 
 class S3StorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     bucket: str
     region: str
     prefix: str = ""
@@ -321,6 +349,8 @@ class S3StorageConfig(BaseModel):
 
 
 class RecordingStorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["local", "s3"]
     local: LocalStorageConfig | None = None
     s3: S3StorageConfig | None = None
@@ -335,11 +365,15 @@ class RecordingStorageConfig(BaseModel):
 
 
 class ConsentPreambleConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool = True
     text: str = "This call may be recorded for quality purposes."
 
 
 class RecordingConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool
     storage: RecordingStorageConfig
     consent_preamble: ConsentPreambleConfig = Field(default_factory=ConsentPreambleConfig)
@@ -350,11 +384,15 @@ class RecordingConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class TranscriptStorageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["local"]
     path: str
 
 
 class TranscriptsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool
     storage: TranscriptStorageConfig
     formats: list[Literal["json", "markdown"]] = Field(default_factory=lambda: ["json", "markdown"])
@@ -365,6 +403,8 @@ class TranscriptsConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class SMTPConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     host: str
     port: int = 587
     username: str
@@ -373,10 +413,14 @@ class SMTPConfig(BaseModel):
 
 
 class ResendConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     api_key: str
 
 
 class EmailSenderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["smtp", "resend"]
     smtp: SMTPConfig | None = None
     resend: ResendConfig | None = None
@@ -391,13 +435,15 @@ class EmailSenderConfig(BaseModel):
 
 
 class EmailTriggers(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     on_message: bool = True
     on_call_end: bool = False
     on_booking: bool = False
 
 
 class EmailConfig(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     from_: str = Field(alias="from")
     sender: EmailSenderConfig
@@ -409,6 +455,8 @@ class EmailConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class RetentionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     recordings_days: int = 90
     transcripts_days: int = 90
     messages_days: int = 0  # 0 = keep forever
@@ -470,13 +518,15 @@ CalendarAuth = Annotated[
 
 
 class CalendarConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     enabled: bool
     calendar_id: str = "primary"
     auth: CalendarAuth
     appointment_duration_minutes: int = Field(default=30, gt=0)
     buffer_minutes: int = Field(default=15, ge=0)
     buffer_placement: Literal["before", "after", "both"] = "after"
-    booking_window_days: int = Field(default=30, gt=0)
+    booking_window_days: int = Field(default=30, gt=0, le=90)
     earliest_booking_hours_ahead: int = Field(default=2, ge=0)
 
     @model_validator(mode="after")
@@ -506,6 +556,8 @@ class CalendarConfig(BaseModel):
 # ---------------------------------------------------------------------------
 
 class BusinessConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     business: BusinessInfo
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
     languages: LanguagesConfig = Field(default_factory=LanguagesConfig)
@@ -609,6 +661,12 @@ def _friendly_yaml_error(e: yaml.YAMLError, source: str) -> str:
 # ---------------------------------------------------------------------------
 
 _ENV_PATTERN = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+# Matches the *shape* of an env-var placeholder (`${...}`) so we can detect
+# lowercase or invalid placeholders that look like an interpolation attempt
+# but won't be expanded by _ENV_PATTERN. Anything else (e.g. plain "${" in a
+# greeting because it really is the literal characters "$" + "{") is left
+# alone because it does not look like a placeholder.
+_ENV_PLACEHOLDER_SHAPE = re.compile(r"\$\{[^}\s]*\}")
 
 
 def _interpolate_env_vars(node):
@@ -618,7 +676,14 @@ def _interpolate_env_vars(node):
             if var not in os.environ:
                 raise ValueError(f"Environment variable {var} referenced in config but not set")
             return os.environ[var]
-        return _ENV_PATTERN.sub(_replace, node)
+        interpolated = _ENV_PATTERN.sub(_replace, node)
+        remaining = _ENV_PLACEHOLDER_SHAPE.search(interpolated)
+        if remaining is not None:
+            raise ValueError(
+                f"Invalid environment variable placeholder {remaining.group(0)!r}. "
+                "Use ${UPPERCASE_NAME} with uppercase ASCII letters, digits, and underscores."
+            )
+        return interpolated
     if isinstance(node, dict):
         return {k: _interpolate_env_vars(v) for k, v in node.items()}
     if isinstance(node, list):

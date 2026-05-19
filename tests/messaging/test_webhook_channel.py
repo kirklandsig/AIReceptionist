@@ -51,6 +51,18 @@ async def test_webhook_4xx_is_permanent_no_retry():
 
 @pytest.mark.asyncio
 @respx.mock
+async def test_webhook_429_retries():
+    route = respx.post("https://example.com").mock(
+        side_effect=[Response(429, headers={"Retry-After": "0.001"}), Response(200)]
+    )
+    cfg = WebhookChannelConfig(type="webhook", url="https://example.com", headers={})
+    channel = WebhookChannel(cfg, initial_delay=0.001)
+    await channel.deliver(_make_message(), DispatchContext())
+    assert route.call_count == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
 async def test_webhook_5xx_retries():
     route = respx.post("https://example.com").mock(
         side_effect=[Response(503), Response(503), Response(200)]

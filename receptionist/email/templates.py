@@ -18,6 +18,10 @@ _OUTCOME_LABELS = {
 }
 
 
+def _subject_safe(value: str | None) -> str:
+    return " ".join((value or "").replace("\r", " ").replace("\n", " ").replace("\x00", " ").split())
+
+
 def _outcomes_display(
     outcomes: set[str] | list[str], *, transfer_target: str | None = None,
 ) -> str:
@@ -52,7 +56,7 @@ def build_message_email(
     defers email dispatch to call-end so the transcript file is on disk by
     the time the email is composed.
     """
-    subject = f"New message from {message.caller_name} — {message.business_name}"
+    subject = f"New message from {_subject_safe(message.caller_name)} — {_subject_safe(message.business_name)}"
 
     body_text = (
         f"A caller left a message for {message.business_name}.\n"
@@ -134,7 +138,7 @@ def build_call_end_email(
     subject_outcomes = _outcomes_display(
         metadata.outcomes, transfer_target=metadata.transfer_target,
     )
-    subject = f"Call from {metadata.caller_phone or 'Unknown'} — {subject_outcomes} [{metadata.business_name}]"
+    subject = f"Call from {_subject_safe(metadata.caller_phone or 'Unknown')} — {_subject_safe(subject_outcomes)} [{_subject_safe(metadata.business_name)}]"
 
     duration_str = _format_duration(metadata.duration_seconds)
 
@@ -236,7 +240,7 @@ def build_booking_email(
     html_link = details.get("html_link", "")
     caller = metadata.caller_phone or "Unknown"
 
-    subject = f"New appointment booked: {caller} — {start_iso} [{metadata.business_name}]"
+    subject = f"New appointment booked: {_subject_safe(caller)} — {_subject_safe(start_iso)} [{_subject_safe(metadata.business_name)}]"
 
     body_text = (
         f"A new appointment has been booked for {metadata.business_name}.\n"

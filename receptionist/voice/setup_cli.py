@@ -176,6 +176,12 @@ def _update_voice_auth_block(config_path: Path, auth_path: Path) -> None:
     voice = config.get("voice")
     if not isinstance(voice, dict):
         voice = {}
+    existing_auth = voice.get("auth")
+    if isinstance(existing_auth, dict) and existing_auth.get("type") != "oauth_codex":
+        print(
+            f"[WARN] Replacing existing voice.auth type {existing_auth.get('type')!r} "
+            "with oauth_codex. The voice block will be rewritten by setup.",
+        )
     voice["auth"] = {
         "type": "oauth_codex",
         "path": _yaml_path(auth_path),

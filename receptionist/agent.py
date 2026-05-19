@@ -5,7 +5,6 @@ import asyncio
 import json
 import logging
 import os
-import platform
 import re
 from collections import deque
 from datetime import datetime, timedelta
@@ -39,6 +38,15 @@ logger = logging.getLogger("receptionist")
 DEFAULT_CONFIG_DIR = Path("config/businesses")
 DEFAULT_AGENT_NAME = "receptionist"
 _BENIGN_ENGINE_CLOSED_MESSAGE = "engine: connection error: engine is closed"
+_LIVEKIT_OPERATION_TIMEOUT_SECONDS = 10.0
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _create_background_task(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
 
 
 def _is_benign_engine_closed_warning(record: logging.LogRecord) -> bool:
@@ -79,9 +87,8 @@ def _format_friendly_date(dt: datetime) -> str:
     `find_slots` produces tz-aware iso strings, so `datetime.fromisoformat`
     of those is safe.
     """
-    if platform.system() == "Windows":
-        return dt.strftime("%A, %B %#d at %#I:%M %p")
-    return dt.strftime("%A, %B %-d at %-I:%M %p")
+    hour = dt.hour % 12 or 12
+    return f"{dt.strftime('%A, %B')} {dt.day} at {hour}:{dt.strftime('%M %p')}"
 
 
 # Light email-shape regex — exists to catch obvious caller mishearings ("dot calm",
@@ -434,10 +441,13 @@ async def _terminate_room(
     log_extra = {"call_id": call_id, "component": "agent.terminate"}
     if caller_identity:
         try:
-            await job_ctx.api.room.remove_participant(
-                api.RoomParticipantIdentity(
-                    room=room_name, identity=caller_identity,
-                )
+            await asyncio.wait_for(
+                job_ctx.api.room.remove_participant(
+                    api.RoomParticipantIdentity(
+                        room=room_name, identity=caller_identity,
+                    )
+                ),
+                timeout=_LIVEKIT_OPERATION_TIMEOUT_SECONDS,
             )
             logger.info(
                 "end_call: removed participant %s from %s",
@@ -451,8 +461,11 @@ async def _terminate_room(
                 caller_identity, room_name, exc_info=True, extra=log_extra,
             )
     try:
-        await job_ctx.api.room.delete_room(
-            api.DeleteRoomRequest(room=room_name)
+        await asyncio.wait_for(
+            job_ctx.api.room.delete_room(
+                api.DeleteRoomRequest(room=room_name)
+            ),
+            timeout=_LIVEKIT_OPERATION_TIMEOUT_SECONDS,
         )
         logger.info("end_call: deleted room %s", room_name, extra=log_extra)
     except Exception:
@@ -490,11 +503,11 @@ def _capture_caller_phone_from_participant(
         lifecycle.set_caller_phone(phone)
         if already_set:
             logger.info(
-                "callerid: phone %s already captured; new candidate %s ignored",
-                lifecycle.metadata.caller_phone, phone, extra=extra,
+                "callerid: phone already captured; new candidate ignored",
+                extra=extra,
             )
         else:
-            logger.info("callerid: captured caller phone %s", phone, extra=extra)
+            logger.info("callerid: captured caller phone", extra=extra)
         return
     logger.info(
         "callerid: no phone resolvable from participant identity=%r attrs_keys=%s",
@@ -556,6 +569,9 @@ class Receptionist(Agent):
                 creds, calendar_id=self.config.calendar.calendar_id,
             )
         return self._calendar_client
+
+    async def _get_calendar_client_async(self):
+        return await asyncio.to_thread(self._get_calendar_client)
 
     def _record_offered_slots(self, iso_strings) -> None:
         """Add a batch of slot ISO strings to the bounded offer cache.
@@ -620,12 +636,15 @@ class Receptionist(Agent):
 
         job_ctx = get_job_context()
         try:
-            await job_ctx.api.sip.transfer_sip_participant(
-                api.TransferSIPParticipantRequest(
-                    room_name=job_ctx.room.name,
-                    participant_identity=_get_caller_identity(job_ctx),
-                    transfer_to=self.config.sip.transfer_uri_template.format(number=target.number),
-                )
+            await asyncio.wait_for(
+                job_ctx.api.sip.transfer_sip_participant(
+                    api.TransferSIPParticipantRequest(
+                        room_name=job_ctx.room.name,
+                        participant_identity=_get_caller_identity(job_ctx),
+                        transfer_to=self.config.sip.transfer_uri_template.format(number=target.number),
+                    )
+                ),
+                timeout=_LIVEKIT_OPERATION_TIMEOUT_SECONDS,
             )
             self.lifecycle.record_transfer(target.name)
             return f"Call transferred to {target.name}"
@@ -708,7 +727,7 @@ class Receptionist(Agent):
                 session, lifecycle, job_ctx, reason=safe_reason,
             )
 
-        asyncio.create_task(_run_end())
+        _create_background_task(_run_end())
         return f"Agent ending the call (reason={safe_reason})."
 
     # ------------------------------------------------------------------
@@ -820,7 +839,7 @@ class Receptionist(Agent):
                 reason="unproductive_turns_exhausted",
             )
 
-        asyncio.create_task(_run())
+        _create_background_task(_run())
 
     @function_tool()
     async def get_business_hours(self, ctx: RunContext) -> str:
@@ -904,7 +923,7 @@ class Receptionist(Agent):
             )
 
         try:
-            client = self._get_calendar_client()
+            client = await self._get_calendar_client_async()
             busy = await client.free_busy(earliest, latest)
         except CalendarAuthError:
             logger.exception("check_availability: auth error")
@@ -1010,7 +1029,7 @@ class Receptionist(Agent):
         if caller_email is not None:
             caller_email = caller_email.strip()
             if not _EMAIL_RE.match(caller_email):
-                logger.info("book_appointment: invalid caller_email %r", caller_email)
+                logger.info("book_appointment: invalid caller_email redacted")
                 return (
                     "That email address didn't sound quite right. Could you "
                     "spell it out for me, or should I proceed without sending "
@@ -1027,7 +1046,7 @@ class Receptionist(Agent):
         )
 
         try:
-            client = self._get_calendar_client()
+            client = await self._get_calendar_client_async()
             result = await _book(
                 slot=slot,
                 caller_name=caller_name,
@@ -1122,8 +1141,8 @@ async def handle_call(ctx: agents.JobContext):
     )
 
     logger.info(
-        "callerid: handle_call snapshot caller_phone=%s room=%s",
-        lifecycle.metadata.caller_phone, ctx.room.name,
+        "callerid: handle_call snapshot caller_phone_present=%s room=%s",
+        lifecycle.metadata.caller_phone is not None, ctx.room.name,
         extra={
             "call_id": lifecycle.metadata.call_id,
             "component": "agent.callerid",
@@ -1235,7 +1254,7 @@ async def handle_call(ctx: agents.JobContext):
                 session, lifecycle, ctx, reason="silence_timeout",
             )
 
-        asyncio.create_task(_run())
+        _create_background_task(_run())
 
     def _on_silence_grace_expired() -> None:
         # Re-check user_state at fire time; the user may have come back.
@@ -1322,7 +1341,7 @@ async def handle_call(ctx: agents.JobContext):
                 session, lifecycle, ctx, reason="max_duration_reached",
             )
 
-        asyncio.create_task(_run())
+        _create_background_task(_run())
 
     if idle_cfg.max_call_duration_seconds:
         loop = asyncio.get_event_loop()
@@ -1357,7 +1376,7 @@ async def handle_call(ctx: agents.JobContext):
             except Exception:
                 logger.exception("lifecycle.on_call_ended raised")
 
-        asyncio.create_task(_run())
+        _create_background_task(_run())
 
     session.on("close", _handle_close)
 

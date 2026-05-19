@@ -372,6 +372,59 @@ messages:
         BusinessConfig.from_yaml_string(yaml_text)
 
 
+def test_env_var_lowercase_placeholder_raises():
+    yaml_text = """
+business: { name: "X", type: "x", timezone: "UTC" }
+voice: { voice_id: "marin" }
+languages: { primary: "en", allowed: ["en"] }
+greeting: "Hi"
+personality: "Nice"
+hours: { monday: closed, tuesday: closed, wednesday: closed, thursday: closed, friday: closed, saturday: closed, sunday: closed }
+after_hours_message: "Closed"
+routing: []
+faqs: []
+messages:
+  channels:
+    - type: "webhook"
+      url: "https://example.com"
+      headers: { X-Api-Key: "${test_webhook_token}" }
+"""
+    with pytest.raises(Exception, match="Invalid environment variable placeholder"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_literal_dollar_brace_in_text_is_not_rejected():
+    """A literal '${' in caller-facing text that does NOT look like an env-var
+    placeholder must not be rejected. This avoids false positives where a
+    greeting or FAQ answer happens to mention `${...}` text."""
+    yaml_text = """
+business: { name: "X", type: "x", timezone: "UTC" }
+voice: { voice_id: "marin" }
+languages: { primary: "en", allowed: ["en"] }
+greeting: "Hi"
+personality: "Use placeholders like {name} not $ { lookup } in messages."
+hours: { monday: closed, tuesday: closed, wednesday: closed, thursday: closed, friday: closed, saturday: closed, sunday: closed }
+after_hours_message: "Closed"
+routing: []
+faqs: []
+messages: { channels: [{type: "file", file_path: "./m/"}] }
+"""
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert "{name}" in config.personality
+
+
+def test_invalid_timezone_rejected_at_config_load():
+    yaml_text = EXAMPLE_YAML.replace("America/New_York", "America/New_Yrok")
+    with pytest.raises(Exception, match="Invalid IANA timezone"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_top_level_extra_fields_rejected(v2_yaml):
+    yaml_text = v2_yaml + "\nunknown_section: true\n"
+    with pytest.raises(Exception):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
 def test_recording_config():
     yaml_text = """
 business: { name: "X", type: "x", timezone: "UTC" }
@@ -675,23 +728,27 @@ def test_webhook_channel_rejects_url_without_host():
     "169.254.169.254",  # AWS metadata service
     "[::1]",  # IPv6 loopback (URL-form requires brackets)
 ])
-def test_webhook_channel_warns_on_private_or_loopback_ip(host_in_url, caplog):
-    """These pass validation (legitimate in dev) but log a warning so prod
-    misconfigurations are visible at startup.
-    """
+def test_webhook_channel_rejects_private_or_loopback_ip(host_in_url):
     from receptionist.config import WebhookChannel
     url = f"http://{host_in_url}/hook"
-    with caplog.at_level("WARNING", logger="receptionist"):
-        cfg = WebhookChannel(type="webhook", url=url)
-    assert cfg.url == url
-    assert any("loopback/private/link-local" in r.message for r in caplog.records)
+    with pytest.raises(ValidationError, match="private|loopback|link-local"):
+        WebhookChannel(type="webhook", url=url)
 
 
-def test_webhook_channel_warns_on_localhost_hostname(caplog):
+def test_webhook_channel_rejects_localhost_hostname():
     from receptionist.config import WebhookChannel
-    with caplog.at_level("WARNING", logger="receptionist"):
+    with pytest.raises(ValidationError, match="localhost"):
         WebhookChannel(type="webhook", url="http://localhost:9000/hook")
-    assert any("localhost" in r.message.lower() for r in caplog.records)
+
+
+def test_calendar_booking_window_days_has_upper_bound(tmp_path):
+    sa_file = tmp_path / "sa.json"
+    sa_file.write_text("{}", encoding="utf-8")
+    yaml_text = _calendar_yaml_fragment(
+        f"auth: {{ type: \"service_account\", service_account_file: \"{_yaml_safe(sa_file)}\" }}"
+    ).replace("booking_window_days: 30", "booking_window_days: 365")
+    with pytest.raises(Exception):
+        BusinessConfig.from_yaml_string(yaml_text)
 
 
 def test_webhook_channel_quiet_on_public_host(caplog):

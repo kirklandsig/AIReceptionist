@@ -44,7 +44,10 @@ async def test_resend_429_is_transient_with_retry_after():
 @respx.mock
 async def test_resend_401_is_permanent():
     respx.post("https://api.resend.com/emails").mock(
-        return_value=Response(401, json={"message": "unauthorized"})
+        return_value=Response(
+            401,
+            json={"message": "unauthorized for jane@example.com", "name": "validation_error"},
+        )
     )
     sender = ResendSender(ResendConfig(api_key="re_bad"))
     with pytest.raises(EmailSendError) as exc:
@@ -52,6 +55,23 @@ async def test_resend_401_is_permanent():
             from_="a@b", to=["c@d"], subject="s", body_text="t", body_html=None
         )
     assert exc.value.transient is False
+    assert "jane@example.com" not in str(exc.value)
+    assert "validation_error" in str(exc.value)
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_resend_malformed_retry_after_uses_default():
+    respx.post("https://api.resend.com/emails").mock(
+        return_value=Response(429, headers={"Retry-After": "not-a-number"})
+    )
+    sender = ResendSender(ResendConfig(api_key="re_test"))
+    with pytest.raises(EmailSendError) as exc:
+        await sender.send(
+            from_="a@b", to=["c@d"], subject="s", body_text="t", body_html=None
+        )
+    assert exc.value.transient is True
+    assert exc.value.retry_after == 1.0
 
 
 @pytest.mark.asyncio

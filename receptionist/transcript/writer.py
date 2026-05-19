@@ -28,11 +28,19 @@ async def write_transcript_files(
     metadata: CallMetadata,
     segments: Sequence[TranscriptSegment],
 ) -> TranscriptWriteResult:
+    return await asyncio.to_thread(_write_transcript_files_sync, config, metadata, list(segments))
+
+
+def _write_transcript_files_sync(
+    config: TranscriptsConfig,
+    metadata: CallMetadata,
+    segments: Sequence[TranscriptSegment],
+) -> TranscriptWriteResult:
     if not config.enabled:
         return TranscriptWriteResult(None, None)
 
     directory = Path(config.storage.path)
-    await asyncio.to_thread(directory.mkdir, parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     safe_call_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", metadata.call_id or "unknown")
@@ -44,11 +52,7 @@ async def write_transcript_files(
     if "json" in config.formats:
         candidate = directory / f"{stem}.json"
         try:
-            await asyncio.to_thread(
-                candidate.write_text,
-                to_json(segments, metadata),
-                encoding="utf-8",
-            )
+            candidate.write_text(to_json(segments, metadata), encoding="utf-8")
             json_path = candidate
         except Exception:
             logger.exception("write_transcript_files: JSON write failed")
@@ -56,11 +60,7 @@ async def write_transcript_files(
     if "markdown" in config.formats:
         candidate = directory / f"{stem}.md"
         try:
-            await asyncio.to_thread(
-                candidate.write_text,
-                to_markdown(segments, metadata),
-                encoding="utf-8",
-            )
+            candidate.write_text(to_markdown(segments, metadata), encoding="utf-8")
             markdown_path = candidate
         except Exception:
             logger.exception("write_transcript_files: Markdown write failed")

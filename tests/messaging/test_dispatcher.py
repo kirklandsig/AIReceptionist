@@ -52,10 +52,12 @@ async def test_dispatcher_awaits_file_fires_others_as_tasks(tmp_path, mocker):
 
     # File channel fired synchronously
     assert len(list(tmp_path.glob("*.json"))) == 1
+    assert len(dispatcher._background_tasks) == 1
 
     # Webhook was scheduled as a background task; drain the loop deterministically
     await _drain_pending_tasks()
     webhook_deliver.assert_called_once()
+    assert dispatcher._background_tasks == set()
 
 
 @pytest.mark.asyncio

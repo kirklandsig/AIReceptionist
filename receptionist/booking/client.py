@@ -9,6 +9,7 @@ from typing import Any
 from googleapiclient.discovery import build
 
 logger = logging.getLogger("receptionist")
+_GOOGLE_API_TIMEOUT_SECONDS = 15.0
 
 
 class GoogleCalendarClient:
@@ -40,8 +41,9 @@ class GoogleCalendarClient:
             "timeMax": time_max.isoformat(),
             "items": [{"id": self.calendar_id}],
         }
-        response = await asyncio.to_thread(
-            lambda: self._service.freebusy().query(body=body).execute()
+        response = await asyncio.wait_for(
+            asyncio.to_thread(lambda: self._service.freebusy().query(body=body).execute()),
+            timeout=_GOOGLE_API_TIMEOUT_SECONDS,
         )
         busy_raw = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
         return [
@@ -98,12 +100,15 @@ class GoogleCalendarClient:
         else:
             send_updates = "none"
 
-        result = await asyncio.to_thread(
-            lambda: self._service.events().insert(
-                calendarId=self.calendar_id,
-                body=body,
-                sendUpdates=send_updates,
-            ).execute()
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                lambda: self._service.events().insert(
+                    calendarId=self.calendar_id,
+                    body=body,
+                    sendUpdates=send_updates,
+                ).execute()
+            ),
+            timeout=_GOOGLE_API_TIMEOUT_SECONDS,
         )
         logger.info(
             "GoogleCalendarClient: created event %s (%s)",

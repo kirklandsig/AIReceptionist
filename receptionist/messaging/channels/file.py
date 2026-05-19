@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -27,7 +28,7 @@ class FileChannel:
         directory.mkdir(parents=True, exist_ok=True)
 
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"message_{ts}.json"
+        filename = f"message_{ts}_{uuid.uuid4().hex[:8]}.json"
         path = directory / filename
         path.write_text(json.dumps(message.to_dict(), indent=2), encoding="utf-8")
         logger.info("FileChannel wrote %s", path)

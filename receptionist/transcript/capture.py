@@ -9,6 +9,7 @@ from typing import Any
 from receptionist.transcript.metadata import CallMetadata
 
 logger = logging.getLogger("receptionist")
+_MAX_SEGMENTS = 5000
 
 
 class SpeakerRole(str, Enum):
@@ -55,6 +56,7 @@ class TranscriptCapture:
                 created_at=event.created_at,
                 language=lang,
             ))
+            self._trim_segments()
             if lang:
                 self.metadata.languages_detected.add(lang)
         except Exception:
@@ -72,6 +74,7 @@ class TranscriptCapture:
                 text=text,
                 created_at=event.created_at,
             ))
+            self._trim_segments()
         except Exception:
             logger.exception("TranscriptCapture: error handling conversation_item_added")
 
@@ -88,5 +91,10 @@ class TranscriptCapture:
                     tool_arguments=getattr(call, "arguments", None),
                     tool_output=(getattr(out, "output", None) if out is not None else None),
                 ))
+            self._trim_segments()
         except Exception:
             logger.exception("TranscriptCapture: error handling function_tools_executed")
+
+    def _trim_segments(self) -> None:
+        if len(self.segments) > _MAX_SEGMENTS:
+            del self.segments[: len(self.segments) - _MAX_SEGMENTS]

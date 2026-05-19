@@ -58,14 +58,36 @@ class ResendSender:
             raise EmailSendError(f"Resend request error: {e}", transient=True) from e
 
         if resp.status_code == 429:
-            retry_after = float(resp.headers.get("Retry-After", "1"))
+            retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
             raise EmailSendError("Resend rate limited", transient=True, retry_after=retry_after)
         if 400 <= resp.status_code < 500:
             raise EmailSendError(
-                f"Resend rejected: {resp.status_code} {resp.text[:200]}",
+                f"Resend rejected: {resp.status_code} {_resend_error_name(resp)}",
                 transient=False,
             )
         if 500 <= resp.status_code < 600:
             raise EmailSendError(f"Resend server error: {resp.status_code}", transient=True)
 
         logger.info("ResendSender sent to=%s subject=%r", list(to), subject)
+
+
+def _parse_retry_after(value: str | None) -> float:
+    if value is None:
+        return 1.0
+    try:
+        parsed = float(value)
+    except ValueError:
+        return 1.0
+    return parsed if parsed > 0 else 1.0
+
+
+def _resend_error_name(resp: httpx.Response) -> str:
+    try:
+        data = resp.json()
+    except ValueError:
+        return "error"
+    if isinstance(data, dict):
+        name = data.get("name") or data.get("error") or data.get("type")
+        if isinstance(name, str) and name:
+            return name
+    return "error"

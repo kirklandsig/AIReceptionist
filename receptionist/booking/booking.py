@@ -10,6 +10,10 @@ from receptionist.booking.models import BookingResult, SlotProposal
 logger = logging.getLogger("receptionist")
 
 
+def _clean_field(value: str | None) -> str:
+    return " ".join((value or "").replace("\r", " ").replace("\n", " ").replace("\x00", " ").split())
+
+
 class SlotNoLongerAvailableError(Exception):
     """Raised when the proposed slot was free at check_availability time but is now busy.
 
@@ -57,6 +61,11 @@ async def book_appointment(
     # staff viewing the event need to see that the AI took this booking without
     # identity verification.
     booked_at = datetime.now(timezone.utc).isoformat()
+    caller_name = _clean_field(caller_name)
+    callback_number = _clean_field(callback_number)
+    caller_email = _clean_field(caller_email) or None
+    notes = _clean_field(notes) or None
+
     description_lines = [
         "[via AI receptionist / UNVERIFIED]",
         f"Caller: {caller_name}",
@@ -80,8 +89,8 @@ async def book_appointment(
     )
 
     logger.info(
-        "Appointment booked: event_id=%s for %s at %s",
-        result["id"], caller_name, slot.start_iso,
+        "Appointment booked: event_id=%s at %s",
+        result["id"], slot.start_iso,
         extra={"call_id": call_id, "component": "booking.booking"},
     )
 

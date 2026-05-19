@@ -187,16 +187,36 @@ class CallLifecycle:
 
         artifact: RecordingArtifact | None = None
         if self.recording_handle is not None:
-            artifact = await stop_recording(self.recording_handle)
-            if artifact is not None:
-                self.metadata.recording_artifact = artifact.url
+            try:
+                artifact = await stop_recording(self.recording_handle)
+                if artifact is not None:
+                    self.metadata.recording_artifact = artifact.url
+            except Exception:
+                logger.exception(
+                    "stop_recording failed during call finalization",
+                    extra={
+                        "call_id": self.metadata.call_id,
+                        "business_name": self.metadata.business_name,
+                        "component": "lifecycle.recording",
+                    },
+                )
 
         transcript_result: TranscriptWriteResult | None = None
         segments = self.transcript_capture.segments if self.transcript_capture else []
         if self.config.transcripts is not None:
-            transcript_result = await write_transcript_files(
-                self.config.transcripts, self.metadata, segments
-            )
+            try:
+                transcript_result = await write_transcript_files(
+                    self.config.transcripts, self.metadata, segments
+                )
+            except Exception:
+                logger.exception(
+                    "write_transcript_files failed during call finalization",
+                    extra={
+                        "call_id": self.metadata.call_id,
+                        "business_name": self.metadata.business_name,
+                        "component": "lifecycle.transcript",
+                    },
+                )
 
         # Fan out email triggers
         if self.config.email:
@@ -214,8 +234,7 @@ class CallLifecycle:
                         try:
                             await channel.deliver(msg, context)
                             logger.info(
-                                "Deferred message email sent for caller_name=%s",
-                                msg.caller_name,
+                                "Deferred message email sent",
                                 extra={
                                     "call_id": self.metadata.call_id,
                                     "business_name": self.metadata.business_name,
@@ -231,6 +250,11 @@ class CallLifecycle:
                                     "component": "lifecycle.message_email",
                                 },
                             )
+            # Always clear the pending queue once finalization runs, even if
+            # email is disabled or channels are missing — the lifecycle is
+            # finalized exactly once, so a leftover queue can only mislead
+            # operators reading lifecycle state in tests/diagnostics.
+            self._pending_message_emails.clear()
             if self.config.email.triggers.on_call_end:
                 await self._fire_email_trigger(
                     "call_end", lambda ch, ctx: ch.deliver_call_end(self.metadata, ctx),

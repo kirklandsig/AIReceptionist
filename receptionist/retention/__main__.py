@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.dry_run:
         print(f"\nTotal deleted: {total_deleted}, total errors: {total_errors}")
-        if total_errors > 0 and total_deleted == 0:
+        if total_errors > 0:
             return 1
     return 0
 

@@ -34,6 +34,14 @@ def test_message_email_subject_includes_caller_and_business():
     assert "Acme Dental" in subject
 
 
+def test_message_email_subject_normalizes_control_characters():
+    msg = Message("Jane\r\nInjected", "+1", "msg", "Acme\nDental")
+    subject, _, _ = build_message_email(msg, DispatchContext())
+    assert "\r" not in subject
+    assert "\n" not in subject
+    assert "Jane Injected" in subject
+
+
 def test_message_email_body_contains_all_fields():
     subject, body_text, body_html = build_message_email(_message(), DispatchContext())
     assert "Jane Doe" in body_text

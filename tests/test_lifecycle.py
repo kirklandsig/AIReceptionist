@@ -274,6 +274,59 @@ async def test_lifecycle_queues_message_email_and_fires_at_call_end(
     # template can read it and embed the conversation.
     assert fired_ctx.transcript_markdown_path is not None
     assert fired_ctx.transcript_markdown_path.endswith(".md")
+    assert lifecycle._pending_message_emails == []
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_transcript_failure_still_fires_deferred_message_email(
+    tmp_path, config, mocker,
+):
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig, EmailConfig,
+        TranscriptsConfig, TranscriptStorageConfig,
+    )
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
+
+    config = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@acme.com"]),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            "triggers": {"on_message": True, "on_call_end": False},
+        }),
+        "transcripts": TranscriptsConfig(
+            enabled=True,
+            storage=TranscriptStorageConfig(type="local", path=str(tmp_path)),
+            formats=["json", "markdown"],
+        ),
+    })
+    deliver_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+    mocker.patch(
+        "receptionist.lifecycle.write_transcript_files",
+        AsyncMock(side_effect=OSError("cannot create transcript dir")),
+    )
+
+    lifecycle = CallLifecycle(config=config, call_id="room-x", caller_phone=None)
+    msg = Message("Jane", "+15551112222", "Please call", "Test Dental")
+    lifecycle.enqueue_message_email(msg)
+
+    await lifecycle.on_call_ended()
+
+    deliver_mock.assert_called_once()
+    fired_msg, fired_ctx = deliver_mock.call_args.args
+    assert fired_msg is msg
+    assert fired_ctx.transcript_markdown_path is None
+    assert lifecycle._pending_message_emails == []
 
 
 @pytest.mark.asyncio

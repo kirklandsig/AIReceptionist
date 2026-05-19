@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -14,6 +15,27 @@ logger = logging.getLogger("receptionist")
 
 class _PermanentHTTPError(Exception):
     """4xx response — no retry."""
+
+
+class _TransientHTTPError(Exception):
+    def __init__(self, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def _redact_url(url: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+
+
+def _retry_after(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
 
 
 class WebhookChannel:
@@ -29,10 +51,17 @@ class WebhookChannel:
         async def _post() -> None:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(self.config.url, json=body, headers=self.config.headers)
+            if resp.status_code in {408, 425, 429}:
+                raise _TransientHTTPError(
+                    f"HTTP {resp.status_code} from {_redact_url(self.config.url)}",
+                    retry_after=_retry_after(resp.headers.get("Retry-After")),
+                )
             if 400 <= resp.status_code < 500:
-                raise _PermanentHTTPError(f"HTTP {resp.status_code} from {self.config.url}")
+                raise _PermanentHTTPError(
+                    f"HTTP {resp.status_code} from {_redact_url(self.config.url)}"
+                )
             resp.raise_for_status()
-            logger.info("WebhookChannel POST %s -> %d", self.config.url, resp.status_code)
+            logger.info("WebhookChannel POST %s -> %d", _redact_url(self.config.url), resp.status_code)
 
         await retry_with_backoff(
             _post,

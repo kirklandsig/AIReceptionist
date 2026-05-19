@@ -43,6 +43,7 @@ class Dispatcher:
         self.business_name = business_name
         self.email_config = email_config
         self.failures_dir = resolve_failures_dir(self.channels, business_name)
+        self._background_tasks: set[asyncio.Task] = set()
 
     async def dispatch_message(
         self,
@@ -78,7 +79,9 @@ class Dispatcher:
 
         # Background channels: fire and forget
         for ch_cfg in background_channels:
-            asyncio.create_task(self._run_background(ch_cfg, message, context))
+            task = asyncio.create_task(self._run_background(ch_cfg, message, context))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     def _split_channels(self, channels=None):
         """Pick one sync channel (file preferred), return the rest as background."""

@@ -27,6 +27,11 @@ if (-not $Business) {
     exit 64
 }
 
+if ($Business -notmatch '^[a-zA-Z0-9_-]+$') {
+    Write-Host "ERROR: invalid business slug '$Business' (use letters, numbers, underscore, hyphen only)" -ForegroundColor Red
+    exit 64
+}
+
 $repo = (Resolve-Path "$PSScriptRoot/..").Path
 $runtimeDir = Join-Path $repo "secrets\$Business\runtime"
 $pidPath = Join-Path $runtimeDir "agent.pid"

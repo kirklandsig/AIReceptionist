@@ -13,7 +13,7 @@ This guide covers local development setup, running the project, testing, code or
 - [Code Organization](#code-organization)
   - [config.py](#configpy)
   - [prompts.py](#promptspy)
-  - [messages.py](#messagespy)
+  - [messaging/](#messaging)
   - [agent.py](#agentpy)
 - [Adding a New Function Tool](#adding-a-new-function-tool)
 - [Adding a New Configuration Field](#adding-a-new-configuration-field)
@@ -125,21 +125,31 @@ AIReceptionist/
 │   ├── agent.py                      # Core agent logic (entry point)
 │   ├── config.py                     # Pydantic configuration models
 │   ├── prompts.py                    # System prompt construction
-│   └── messages.py                   # Message taking and delivery
+│   ├── lifecycle.py                  # Per-call transcript/recording/email finalization
+│   ├── messaging/                    # Message models, channels, retries, failures
+│   ├── email/                        # SMTP/Resend senders and templates
+│   ├── booking/                      # Google Calendar booking integration
+│   ├── recording/                    # LiveKit Egress recording helpers
+│   ├── retention/                    # Artifact sweeper CLI
+│   └── transcript/                   # Transcript capture, formatting, writing
 │
 ├── config/                           # Configuration directory
 │   └── businesses/                   # Business YAML configs
 │       └── example-dental.yaml       # Example configuration
 │
 ├── tests/                            # Test suite
-│   ├── test_config.py                # Config model tests (6 tests)
-│   ├── test_prompts.py               # Prompt generation tests (6 tests)
-│   └── test_messages.py              # Message handling tests (3 tests)
+│   ├── test_config.py                # Config model tests
+│   ├── test_prompts.py               # Prompt generation tests
+│   ├── messaging/                    # Message delivery channel tests
+│   ├── email/                        # Email sender/template tests
+│   ├── booking/                      # Calendar booking tests
+│   ├── recording/                    # Recording tests
+│   ├── retention/                    # Sweeper tests
+│   └── transcript/                   # Transcript tests
 │
 ├── messages/                         # Default message storage directory
 │
-└── docs/                             # Documentation
-    └── plans/                        # Design documents and implementation plans
+└── documentation/                    # Public documentation
 ```
 
 ---
@@ -190,15 +200,7 @@ Note that noise cancellation mode differs between SIP and WebRTC connections (BV
 python -m pytest tests/ -v
 ```
 
-Expected output: 15 tests, all passing.
-
-```
-tests/test_config.py::test_... PASSED       (6 tests)
-tests/test_prompts.py::test_... PASSED      (6 tests)
-tests/test_messages.py::test_... PASSED     (3 tests)
-
-========================= 15 passed =========================
-```
+Expected output: all tests pass. The exact count changes as features are added.
 
 ### Running Specific Test Files
 
@@ -209,8 +211,8 @@ python -m pytest tests/test_config.py -v
 # Prompt tests only
 python -m pytest tests/test_prompts.py -v
 
-# Message tests only
-python -m pytest tests/test_messages.py -v
+# Messaging tests only
+python -m pytest tests/messaging/ -v
 ```
 
 ### Running a Single Test
@@ -221,28 +223,7 @@ python -m pytest tests/test_config.py::test_function_name -v
 
 ### Test Coverage
 
-The test suite covers:
-
-**`test_config.py` (6 tests)**:
-- Valid configuration loading and validation
-- Invalid field rejection
-- HH:MM time format validation
-- "closed" day handling
-- Cross-field validation for message delivery settings
-- YAML string parsing via `from_yaml_string`
-
-**`test_prompts.py` (6 tests)**:
-- System prompt contains business name and type
-- Hours schedule is included in the prompt
-- Routing departments appear in the prompt
-- FAQ content is embedded in the prompt
-- Personality instructions are included
-- After-hours message is present
-
-**`test_messages.py` (3 tests)**:
-- Message dataclass creation and timestamp auto-population
-- File-based message saving creates correct JSON files
-- Message content matches expected structure
+The test suite covers config validation, prompt construction, call lifecycle, message channels, email senders/templates, Google Calendar booking, recording, retention, transcripts, and key agent helper/tool behavior.
 
 ### Writing New Tests
 
@@ -344,20 +325,20 @@ The prompt is constructed by assembling sections:
 - Each section is clearly delimited so the LLM can parse it reliably.
 - FAQ content is duplicated in the prompt (in addition to being available via the `lookup_faq` tool) so the LLM can answer common questions without a tool call.
 
-### messages.py
+### messaging/
 
-**Responsibility**: Handle message persistence.
+**Responsibility**: Model and deliver caller messages.
 
 **Key components**:
-- `Message` dataclass with auto-timestamp.
-- `save_message(message, config)` dispatches to the correct backend.
-- `_save_to_file(message, path)` writes JSON with microsecond-precision filenames.
-- `_send_webhook(message, url)` is a placeholder for future implementation.
+- `messaging.models.Message` dataclass with auto-timestamp.
+- `messaging.dispatcher.Dispatcher` fans out to configured channels.
+- `messaging.channels.file.FileChannel` writes JSON files using thread-backed I/O.
+- `messaging.channels.webhook.WebhookChannel` POSTs JSON with retry/failure recording.
+- `messaging.channels.email.EmailChannel` sends message/call-end/booking emails through SMTP or Resend.
 
 **Design notes**:
-- Messages are saved as individual JSON files (not appended to a log) for simplicity and atomic writes.
-- Microsecond timestamps in filenames prevent collisions even under high load.
-- The `asyncio.to_thread()` wrapper in `agent.py` ensures file I/O does not block the event loop.
+- File/webhook delivery occurs during `take_message`; email delivery can be deferred to call end to include the full transcript.
+- Failed background channel delivery writes `.failures/` records for operator retry.
 
 ### agent.py
 
@@ -628,7 +609,7 @@ of saying "I don't know."
 
 The following areas are particularly welcome for contributions:
 
-- **Webhook message delivery**: Implement the `_send_webhook()` function in `messages.py`.
+- **Additional message channels**: Add new `messages.channels` implementations as needed.
 - **Call recordings**: Integrate LiveKit Egress for call recording.
 - **Email notifications**: Add email delivery method for messages.
 - **New SIP trunk providers**: Add setup documentation for providers beyond Twilio/Telnyx.

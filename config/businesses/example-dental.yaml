@@ -24,6 +24,15 @@ business:
 voice:
   voice_id: "marin"              # OpenAI Realtime voice; "marin"/"cedar" are trained for gpt-realtime-1.5
   model: "gpt-realtime-1.5"      # options: gpt-realtime, gpt-realtime-1.5, gpt-realtime-mini
+  # auth:
+  #   type: "api_key"             # reads OPENAI_API_KEY by default
+  #   # OR: type: "oauth_codex" with path: "./secrets/example-dental/openai_auth.json"
+  # idle:
+  #   silence_hangup_enabled: true
+  #   away_seconds: 15
+  #   silence_grace_seconds: 30
+  #   absolute_silence_seconds: 120
+  #   max_call_duration_seconds: 900
 
 languages:
   primary: "en"

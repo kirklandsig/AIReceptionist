@@ -192,7 +192,7 @@ Business identity information.
 |-------|------|----------|-------------|
 | `name` | string | Yes | The full business name as it should be spoken. Used in the system prompt and message records. |
 | `type` | string | Yes | The type of business (e.g., "dental office", "law firm", "medical clinic"). Used in the system prompt to establish context. |
-| `timezone` | string | Yes | IANA timezone identifier for the business location. Used by `get_business_hours` for accurate time calculations. |
+| `timezone` | string | Yes | Valid IANA timezone identifier for the business location. Invalid zones fail at config load. |
 
 **Timezone examples**: `America/New_York`, `America/Chicago`, `America/Denver`, `America/Los_Angeles`, `Europe/London`, `Asia/Tokyo`
 
@@ -713,7 +713,7 @@ sender configuration and trigger flags. See [`email`](#email) below.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | const `"webhook"` | Yes | Discriminator. |
-| `url` | string | Yes | HTTP(S) endpoint to POST the message JSON. Must use `http://` or `https://` — other schemes are rejected. Loopback / private / link-local hosts are allowed but warned at config load (catches accidental references to AWS metadata at `169.254.169.254`, etc.). |
+| `url` | string | Yes | Public HTTP(S) endpoint to POST the message JSON. Must use `http://` or `https://`; other schemes, localhost, loopback, private, and link-local hosts are rejected at config load. |
 | `headers` | dict[string, string] | No | Optional headers added to the POST request. Supports `${VAR}` env-var interpolation. |
 
 The webhook channel sends a JSON POST with the same Message shape shown
@@ -905,12 +905,15 @@ The following validation rules are enforced by the Pydantic models in `config.py
 | Email channel requires top-level email config | email | `EmailChannel configured but no EmailConfig provided` |
 | SMTP/Resend config matches sender.type | email.sender | `email.sender.smtp required when type is 'smtp'` etc. |
 | Webhook URL scheme | messages.channels[type=webhook].url | Must be `http://` or `https://`; other schemes rejected |
+| Webhook host safety | messages.channels[type=webhook].url | localhost, loopback, private, and link-local hosts rejected |
+| Unknown config keys | All config sections | Extra fields are rejected so typos fail loudly |
+| Calendar booking window | calendar.booking_window_days | Must be 1-90 days |
 | Recording S3 requires bucket+region | recording.storage.s3 | Required when `storage.type=s3` |
 | Consent preamble text required when enabled | recording.consent_preamble | Cross-field validation error |
 | Transfer URI template contains `{number}` | sip.transfer_uri_template | Must contain literal `{number}` placeholder |
 | Non-empty strings | routing.*.name, routing.*.number, etc. | Must not be empty |
 | Config slug format | Runtime slug | Must match `^[a-zA-Z0-9_-]+$` |
-| `${VAR}` env-var interpolation | Any string value | Variable must exist in the process env at load time |
+| `${VAR}` env-var interpolation | Any string value | Variable must exist in the process env at load time; placeholders must use uppercase/underscore env-var names |
 
 ---
 

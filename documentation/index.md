@@ -108,13 +108,22 @@ AIReceptionist/
 │   ├── agent.py                      # Core agent logic and entry point
 │   ├── config.py                     # Pydantic configuration models
 │   ├── prompts.py                    # System prompt construction
-│   └── messages.py                   # Message taking and delivery
+│   ├── lifecycle.py                  # Per-call finalization
+│   ├── messaging/                    # Message delivery channels
+│   ├── email/                        # Email senders/templates
+│   ├── booking/                      # Calendar booking
+│   ├── recording/                    # Recording helpers
+│   ├── retention/                    # Retention sweeper
+│   └── transcript/                   # Transcript capture/writing
 ├── config/businesses/
 │   └── example-dental.yaml           # Example business configuration
-└── tests/                            # Test suite (15 tests)
+└── tests/                            # Test suite
     ├── test_config.py                # Config model tests (6)
     ├── test_prompts.py               # Prompt generation tests (6)
-    └── test_messages.py              # Message handling tests (3)
+    ├── messaging/                    # Message channel tests
+    ├── email/                        # Email tests
+    ├── booking/                      # Calendar tests
+    └── transcript/                   # Transcript tests
 ```
 
 ---

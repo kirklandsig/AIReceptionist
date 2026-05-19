@@ -299,17 +299,15 @@ Returns a confirmation message (e.g., "Your message has been recorded. Someone w
    - `business_name`: From the loaded business configuration.
    - `timestamp`: Automatically set to current UTC time.
 
-2. `save_message()` is called via `asyncio.to_thread()` to avoid blocking the event loop.
+2. The per-call `Dispatcher` sends the message through `messages.channels`.
 
-3. Based on the delivery method:
-   - **File**: A JSON file is written to the configured `file_path` directory.
-   - **Webhook**: (Not yet implemented) Would POST the message to the configured URL.
+3. File and webhook channels run immediately so the caller only hears success after the message is durable or posted. Email channels are deferred until call end so the final transcript path is available and can be embedded in the email body.
 
 ### File Storage Details
 
-**File naming**: `message_YYYYMMDD_HHMMSS_ffffff.json`
-- Format uses UTC timestamp with microsecond precision.
-- Example: `message_20260302_143025_123456.json`
+**File naming**: `message_YYYYMMDD_HHMMSS_ffffff_<random>.json`
+- Format uses UTC timestamp plus a short random suffix to avoid collisions.
+- Example: `message_20260302_143025_123456_a1b2c3d4.json`
 
 **File content**:
 ```json
@@ -324,7 +322,7 @@ Returns a confirmation message (e.g., "Your message has been recorded. Someone w
 
 ### Async I/O
 
-The `take_message` tool uses `asyncio.to_thread(save_message, ...)` to perform file I/O without blocking the event loop. This is critical because:
+The file channel performs disk writes through `asyncio.to_thread()` so file I/O does not block the event loop. This is critical because:
 
 - The event loop handles real-time audio processing.
 - Blocking the loop would cause audio glitches or dropped frames.

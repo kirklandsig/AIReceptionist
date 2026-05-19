@@ -87,24 +87,24 @@ hours:
     close: "17:00"   # 24-hour format
 ```
 
-### Cross-field validation error on messages config
+### Message channel validation error
 
-**Symptom**: Error about `file_path` or `webhook_url` being required.
+**Symptom**: Error about a message channel, webhook URL, or missing email config.
 
-**Cause**: The `delivery` method does not match the provided fields.
+**Cause**: `messages.channels` uses a typed list. Each channel needs the fields for its `type`; email channels also require the top-level `email:` sender block.
 
-**Solution**: Ensure the delivery method matches the provided path/URL:
+**Solution**: Use the current channels schema:
 
 ```yaml
-# File delivery requires file_path
 messages:
-  delivery: "file"
-  file_path: "messages/"
+  channels:
+    - type: "file"
+      file_path: "messages/"
 
-# Webhook delivery requires webhook_url
 messages:
-  delivery: "webhook"
-  webhook_url: "https://your-app.com/api/messages"
+  channels:
+    - type: "webhook"
+      url: "https://your-app.com/api/messages"
 ```
 
 ### "closed" day not recognized
@@ -504,21 +504,22 @@ personality: |
 3. Check the `file_path` in your config matches the actual directory.
 4. Look for errors in the agent logs related to file writing.
 
-### "NotImplementedError" when using webhook delivery
+### Webhook delivery fails
 
-**Symptom**: Agent crashes or errors when a message is taken with webhook delivery configured.
+**Symptom**: Agent confirms a message was taken, but the webhook endpoint does not receive it.
 
-**Cause**: Webhook delivery is defined in the configuration schema but not yet implemented.
+**Cause**: The webhook channel POST failed, exhausted retries, or was rejected at config load because the URL points to localhost/private/link-local infrastructure.
 
-**Solution**: Use file-based delivery for now:
+**Solution**: Use a public `http://` or `https://` URL and check `.failures/` beside the file message directory:
 
 ```yaml
 messages:
-  delivery: "file"
-  file_path: "messages/"
+  channels:
+    - type: "file"
+      file_path: "messages/"
+    - type: "webhook"
+      url: "https://your-app.com/api/messages"
 ```
-
-Webhook delivery is planned for a future release.
 
 ### Message files have wrong timestamps
 
@@ -598,7 +599,7 @@ python -m pytest tests/ -v
 
 ### Tests pass but agent fails to start
 
-**Symptom**: All 15 tests pass, but `python -m receptionist.agent dev` fails.
+**Symptom**: The unit tests pass, but `python -m receptionist.agent dev` fails.
 
 **Cause**: Tests do not require LiveKit/OpenAI credentials, but the agent does.
 

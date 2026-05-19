@@ -221,7 +221,7 @@ While each YAML file is independent, you can establish conventions across busine
 | `hours` | Rarely | Always |
 | `routing` | Never | Always |
 | `faqs` | Rarely | Usually |
-| `messages.delivery` | Often (org-wide policy) | Sometimes |
+| `messages.channels` | Often (org-wide policy) | Sometimes |
 
 ### Template Approach
 
@@ -248,18 +248,21 @@ Configure each business to store messages in a separate directory:
 ```yaml
 # acme-dental.yaml
 messages:
-  delivery: "file"
-  file_path: "messages/acme-dental/"
+  channels:
+    - type: "file"
+      file_path: "messages/acme-dental/"
 
 # smith-law.yaml
 messages:
-  delivery: "file"
-  file_path: "messages/smith-law/"
+  channels:
+    - type: "file"
+      file_path: "messages/smith-law/"
 
 # city-clinic.yaml
 messages:
-  delivery: "file"
-  file_path: "messages/city-clinic/"
+  channels:
+    - type: "file"
+      file_path: "messages/city-clinic/"
 ```
 
 Create the directories:
@@ -336,8 +339,9 @@ faqs:
     answer: "Yes, we are currently accepting new patients."
 
 messages:
-  delivery: "file"
-  file_path: "messages/acme-dental/"
+  channels:
+    - type: "file"
+      file_path: "messages/acme-dental/"
 ```
 
 ### Business 2: Smith Law Firm
@@ -392,8 +396,9 @@ faqs:
     answer: "We specialize in family law, estate planning, and general civil litigation."
 
 messages:
-  delivery: "file"
-  file_path: "messages/smith-law/"
+  channels:
+    - type: "file"
+      file_path: "messages/smith-law/"
 ```
 
 ### Business 3: City Clinic
@@ -448,8 +453,9 @@ faqs:
     answer: "Please bring your insurance card, a photo ID, and a list of any medications you are currently taking."
 
 messages:
-  delivery: "file"
-  file_path: "messages/city-clinic/"
+  channels:
+    - type: "file"
+      file_path: "messages/city-clinic/"
 ```
 
 ### Dispatch Rules for This Setup
@@ -598,11 +604,13 @@ To split, run separate agent processes with different environment configurations
 ```yaml
 # Business A
 messages:
-  delivery: "file"
-  file_path: "messages/business-a/"
+  channels:
+    - type: "file"
+      file_path: "messages/business-a/"
 
 # Business B
 messages:
-  delivery: "file"
-  file_path: "messages/business-b/"
+  channels:
+    - type: "file"
+      file_path: "messages/business-b/"
 ```

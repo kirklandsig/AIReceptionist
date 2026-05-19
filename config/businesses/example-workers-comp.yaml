@@ -18,6 +18,10 @@ business:
 voice:
   voice_id: "marin"
   model: "gpt-realtime-1.5"
+  # Recommended production safety nets for long intake calls:
+  # idle:
+  #   absolute_silence_seconds: 120
+  #   max_call_duration_seconds: 900
 
 languages:
   primary: "en"
@@ -143,6 +147,8 @@ email:
   sender:
     type: "resend"
     resend:
+      # Set this in .env before running this example, or replace with a
+      # tenant-specific env-var name in the copied local YAML.
       api_key: ${EXAMPLE_RESEND_API_KEY}
   triggers:
     on_message: true

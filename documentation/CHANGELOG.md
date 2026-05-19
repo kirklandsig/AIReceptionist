@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Hardened webhook configuration and notification transports: webhook URLs
+  now reject localhost, loopback, private, and link-local hosts; webhook and
+  Resend errors avoid logging sensitive URL/body details; and the pre-commit
+  secret scan now checks generic assignments and YAML raw-secret fields.
+- Tightened config validation so invalid timezones, unknown config keys,
+  unsafe env-var placeholders, and excessive calendar booking windows fail at
+  config load instead of during a live call.
+
+### Fixed
+- Made call finalization more resilient: recording/transcript failures no
+  longer prevent deferred message emails from firing, deferred message queues
+  are cleared after dispatch, and background tasks are retained until they
+  complete.
+- Added regression coverage for SIP transfer behavior, lifecycle failure
+  paths, webhook retry semantics, Resend error hygiene, config validation,
+  and email subject normalization.
+
+### Changed
+- Updated public documentation and examples to reflect the current
+  `messages.channels` schema, implemented webhook delivery, stricter webhook
+  URL validation, current test layout, and optional voice idle/auth blocks.
+
 ### Fixed
 - **Agent-initiated `end_call` no longer drops the call-end and deferred
   message emails.** When the **caller** hung up first, `on_call_ended`
@@ -466,7 +489,7 @@ Initial release of the AI Receptionist.
 #### Message Storage
 - `receptionist/messages.py` — `Message` dataclass and file-based persistence
 - JSON file output with microsecond-precision timestamps
-- Webhook delivery stubbed (not yet implemented)
+- Webhook delivery was originally stubbed in that historical version
 
 #### Security
 - Path traversal protection on config name resolution (`^[a-zA-Z0-9_-]+$`)

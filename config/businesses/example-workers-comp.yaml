@@ -162,3 +162,50 @@ retention:
 
 sip:
   transfer_uri_template: "tel:{number}"
+
+# Structured new-client intake by phone. When enabled, Riley can walk a
+# caller through a configurable question script per case type and email
+# a structured submission at call-end. Uncomment to enable.
+#
+# Partial answers are persisted to `submission.file_path` after every
+# question so a mid-call disconnect still produces a usable record. The
+# completed intake is also emailed via whichever email channel(s) are
+# configured in `messages.channels`.
+#
+# To enable: remove the "# " from each line below — both the # and the space.
+# intakes:
+#   enabled: true
+#   preamble_en: |
+#     This intake is fairly thorough — it usually takes about 15 to 20
+#     minutes. Do you have time to go through it now, or should I take
+#     a short message and we can complete it later?
+#   preamble_es: |
+#     Esta entrevista es bastante completa — generalmente toma unos 15 a 20
+#     minutos. ¿Tiene tiempo ahora, o prefiere dejar un mensaje breve
+#     para completarla más tarde?
+#   submission:
+#     file_path: "./messages/example-workers-comp/intakes/"
+#   case_types:
+#     - key: example_intake
+#       display_name: "Example case type"
+#       display_name_es: "Tipo de caso de ejemplo"
+#       google_form_id: ""               # optional, used by the sync CLI only
+#       questions:
+#         - key: caller_full_name
+#           prompt_en: "Could you start with your full legal name, including spelling?"
+#           prompt_es: "¿Podría comenzar con su nombre legal completo, incluyendo cómo se deletrea?"
+#           required: true
+#           critical: true                # triggers per-field readback
+#           validation: text
+#         - key: callback_number
+#           prompt_en: "What's the best phone number to call you back?"
+#           prompt_es: "¿Cuál es el mejor número para devolverle la llamada?"
+#           required: true
+#           critical: true
+#           validation: phone
+#         - key: short_description
+#           prompt_en: "In one or two sentences, what is the matter about?"
+#           prompt_es: "En una o dos oraciones, ¿de qué se trata el asunto?"
+#           required: true
+#           critical: false
+#           validation: text

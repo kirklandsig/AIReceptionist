@@ -26,7 +26,8 @@ Traditional IVR systems frustrate callers with rigid menus. Human receptionists 
 | [Telephony Setup](telephony-setup.md) | Trade-offs between porting your number to a SIP trunk provider (Path A), bringing your own carrier via BYOC (Path B), and keeping a copper landline via an FXS gateway + on-prem PBX (Path C). |
 | [RingCentral + Twilio Setup](ringcentral-setup.md) | Reception-group deployment using a Twilio DID as the RingCentral external member and LiveKit SIP bridge. |
 | [Development Guide](development-guide.md) | Local development setup, running tests, code organization, and contribution guidelines. |
-| [Function Tools Reference](function-tools-reference.md) | Detailed reference for each of the four agent function tools: `lookup_faq`, `transfer_call`, `take_message`, and `get_business_hours`. |
+| [Function Tools Reference](function-tools-reference.md) | Detailed reference for each agent function tool: `lookup_faq`, `transfer_call`, `take_message`, `get_business_hours`, calendar booking, and the intake tools. |
+| [Intake Setup](intakes-setup.md) | Configure structured new-client intakes by phone, including per-case-type question scripts, Spanish-language calls, and intake email delivery. |
 | [Troubleshooting](troubleshooting.md) | Common issues, error messages, and their solutions. |
 | [Multi-Business Setup](multi-business-setup.md) | How to run a single deployment that handles calls for multiple businesses with different phone numbers and configurations. |
 
@@ -112,6 +113,7 @@ AIReceptionist/
 │   ├── messaging/                    # Message delivery channels
 │   ├── email/                        # Email senders/templates
 │   ├── booking/                      # Calendar booking
+│   ├── intakes/                      # Structured intake models + storage
 │   ├── recording/                    # Recording helpers
 │   ├── retention/                    # Retention sweeper
 │   └── transcript/                   # Transcript capture/writing

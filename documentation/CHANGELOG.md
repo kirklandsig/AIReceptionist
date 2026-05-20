@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Structured new-client intake by phone.** New `intakes` config block lets
+  Riley walk a caller through a configurable question script per case type
+  and email a structured submission at call-end. Two new function tools —
+  `record_intake_answer` (called once per question) and `finalize_intake`
+  (called once at the end) — drive the flow. Partial answers are persisted
+  to disk after every question so a mid-call disconnect still leaves the
+  receiving team with what was captured. Spanish callers are supported: each
+  answer stores both the verbatim spoken text and an English summary, and
+  the intake email shows both. See
+  [`documentation/intakes-setup.md`](intakes-setup.md) for the full guide.
+- New `intake_submitted` outcome on `CallMetadata.outcomes` and a matching
+  human label in the call-end email subject when an intake completes.
+
 ### Security
 - Hardened webhook configuration and notification transports: webhook URLs
   now reject localhost, loopback, private, and link-local hosts; webhook and

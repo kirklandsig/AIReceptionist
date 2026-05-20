@@ -21,7 +21,7 @@ This document provides a detailed reference for each function tool exposed by th
 
 ## Overview
 
-The Receptionist agent exposes the following function tools to the OpenAI Realtime model (calendar tools `check_availability` and `book_appointment` are added when `calendar.enabled: true`):
+The Receptionist agent exposes the following function tools to the OpenAI Realtime model. Calendar tools are always registered but only respond meaningfully when `calendar.enabled: true`; intake tools are always registered but only respond meaningfully when `intakes.enabled: true`:
 
 | Tool | Purpose | Triggers |
 |------|---------|----------|
@@ -29,6 +29,10 @@ The Receptionist agent exposes the following function tools to the OpenAI Realti
 | `transfer_call` | Transfer the call to a department/person | Caller requests to speak with someone specific |
 | `take_message` | Record a message from the caller | Caller wants to leave a message |
 | `get_business_hours` | Check current open/closed status | Caller asks about business hours |
+| `check_availability` | Find calendar slots near a caller-requested time | Caller wants to book an appointment |
+| `book_appointment` | Book a specific previously-offered slot | Caller confirms a time |
+| `record_intake_answer` | Record one answer in an in-progress intake | Caller is going through a structured intake |
+| `finalize_intake` | Submit the completed intake | Riley has captured all required answers and confirmed critical fields |
 | `end_call` | Say goodbye and hang up | Caller has clearly finished the conversation |
 
 These tools are defined as methods on the `Receptionist` class in `agent.py`, decorated with `@function_tool()`. The LiveKit Agents SDK and OpenAI Realtime API handle the serialization, invocation, and result passing automatically.
@@ -531,6 +535,117 @@ Caller: [pauses for 4 seconds]
 # the call when the caller has been quiet long enough that they've
 # clearly walked away, including a wall-clock fallback for SIP comfort noise.
 ```
+
+---
+
+## record_intake_answer
+
+### Purpose
+
+Record one answer in an in-progress structured intake. Available when the
+business has an `intakes:` block with `enabled: true`. Called once per
+answered question; the partial intake is persisted to disk after every
+call so a mid-call disconnect still leaves a record on the receiving team's
+side.
+
+### Signature
+
+```python
+@function_tool()
+async def record_intake_answer(
+    self, ctx: RunContext,
+    case_type: str,
+    question_key: str,
+    spoken_text: str,
+    language: str = "en",
+    english_summary: str = "",
+) -> str
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `case_type` | str | Yes | Case-type key from the configured `intakes.case_types` (e.g. `"workers_comp"`). |
+| `question_key` | str | Yes | Question key from that case type's `questions` list. |
+| `spoken_text` | str | Yes | Caller's answer verbatim, in the language they used. Not translated. |
+| `language` | str | No | ISO 639-1 code of `spoken_text`. Defaults to `"en"`. |
+| `english_summary` | str | No | Concise English rendering of the answer for English-only readers. For English calls this may equal `spoken_text`. |
+
+### Return Value
+
+Short confirmation string ("Answer recorded for `<key>`. Proceed to the next question.") or a structured error string when `case_type` / `question_key` is unknown.
+
+### Side Effects
+
+1. Updates in-memory intake state on the `Receptionist` instance.
+2. Writes (or overwrites) a partial JSON file at
+   `intakes.submission.file_path/intake_<call_id>.partial.json`.
+3. Logs the action via the structured `receptionist` logger.
+
+### Validation
+
+- If `intakes` is missing or `enabled: false`, returns a friendly error
+  instructing the LLM to use `take_message` instead.
+- If `case_type` is not in `intakes.case_types`, returns an error listing
+  the valid keys.
+- If `question_key` is not in that case type's `questions`, returns an
+  error listing the valid question keys.
+- If the caller switched case type mid-call (rare but possible), prior
+  in-memory answers are cleared so cross-case-type answer sets don't mix.
+- `spoken_text` and `english_summary` are truncated at 4000 and 2000
+  characters respectively via the existing `_cap` mechanism.
+
+---
+
+## finalize_intake
+
+### Purpose
+
+Promote the in-progress intake to a final submission. Called exactly once
+at the end of an intake, after every required question has been answered
+and Riley has confirmed the critical fields with the caller.
+
+### Signature
+
+```python
+@function_tool()
+async def finalize_intake(
+    self, ctx: RunContext,
+    caller_name: str,
+    callback_number: str,
+    english_overview: str = "",
+) -> str
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `caller_name` | str | Yes | Caller's full legal name, after Riley read it back letter-by-letter and the caller confirmed. |
+| `callback_number` | str | Yes | Callback phone number, after Riley read it back digit-by-digit and the caller confirmed. |
+| `english_overview` | str | No | 1–3 sentence English summary of the case in the caller's own framing. Helps the intake team triage without reading every answer. |
+
+### Return Value
+
+Short confirmation string the LLM uses to wrap up the call.
+
+### Side Effects
+
+1. Writes a final JSON file at
+   `intakes.submission.file_path/intake_<ts>_<call_id>.final.json`.
+2. Removes the partial JSON file (best-effort; leftover partials log a
+   warning but don't fail the tool).
+3. Queues the intake submission for email at call-end via the lifecycle.
+4. Records the `intake_submitted` outcome on `CallMetadata.outcomes`.
+
+### Error Paths
+
+- If `intakes` is disabled or no answers have been recorded yet, returns
+  an error string and does NOT write a final file.
+- If the final-file write fails, returns a fallback prompt suggesting
+  `take_message` instead; the partial file remains on disk for the
+  receiving team.
 
 ---
 

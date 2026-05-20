@@ -890,6 +890,64 @@ sip:
 
 ---
 
+### intakes
+
+Structured new-client intake by phone. Riley walks the caller through a
+configurable question script per case type, persists each answer
+incrementally, and emails the completed submission at call-end. The whole
+section is optional; omitting it disables the intake feature entirely.
+
+For setup steps, Spanish-language handling, and operational guidance see
+the [Intake Setup](intakes-setup.md) guide.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | bool | No | `false` | Master switch. When `false`, the intake tools are unavailable and the INTAKES prompt section is omitted. |
+| `preamble_en` | string | No | `""` | English-language disclosure Riley speaks before starting questions (e.g. "this takes 15-20 minutes, do you have time now?"). |
+| `preamble_es` | string | No | `None` | Spanish preamble. If omitted, Riley translates `preamble_en` at call time. |
+| `submission.file_path` | string | Yes | — | Directory where partial and final intake JSONs are written. |
+| `case_types[*].key` | string | Yes | — | Canonical identifier passed to `record_intake_answer(case_type=...)`. Stable across question rewording. |
+| `case_types[*].display_name` | string | Yes | — | Human-readable label used in the intake email subject. |
+| `case_types[*].display_name_es` | string | No | `None` | Spanish display name. |
+| `case_types[*].google_form_id` | string | No | `None` | Optional, used by the sync CLI only. |
+| `case_types[*].questions[*].key` | string | Yes | — | Canonical field name (e.g. `employer`, `accident_date`). Unique within a case type. |
+| `case_types[*].questions[*].prompt_en` | string | Yes | — | The English question Riley reads verbatim. |
+| `case_types[*].questions[*].prompt_es` | string | No | `None` | Spanish translation. |
+| `case_types[*].questions[*].required` | bool | No | `true` | If `false`, Riley may skip the question if the caller declines. |
+| `case_types[*].questions[*].validation` | `text`/`phone`/`email`/`date`/`yes_no` | No | `"text"` | Advisory shape hint. Influences prompt phrasing. |
+| `case_types[*].questions[*].critical` | bool | No | `false` | If `true`, Riley reads the answer back per-character and waits for explicit confirmation. |
+
+**Validation rules:**
+
+- At least one case type required when the block is present.
+- At least one question required per case type.
+- `case_types[*].key` must be unique across case types.
+- `questions[*].key` must be unique within each case type.
+
+**Example:**
+
+```yaml
+intakes:
+  enabled: true
+  preamble_en: "This intake takes 15-20 minutes. Do you have time now?"
+  preamble_es: "Esta entrevista toma 15-20 minutos. ¿Tiene tiempo ahora?"
+  submission:
+    file_path: "./messages/<slug>/intakes/"
+  case_types:
+    - key: workers_comp
+      display_name: "Workers' Compensation"
+      display_name_es: "Compensación por accidentes laborales"
+      questions:
+        - key: caller_full_name
+          prompt_en: "Your full legal name?"
+          prompt_es: "¿Su nombre legal completo?"
+          required: true
+          critical: true
+          validation: text
+```
+
+---
+
 ## Validation Rules
 
 The following validation rules are enforced by the Pydantic models in `config.py`:
@@ -914,6 +972,10 @@ The following validation rules are enforced by the Pydantic models in `config.py
 | Non-empty strings | routing.*.name, routing.*.number, etc. | Must not be empty |
 | Config slug format | Runtime slug | Must match `^[a-zA-Z0-9_-]+$` |
 | `${VAR}` env-var interpolation | Any string value | Variable must exist in the process env at load time; placeholders must use uppercase/underscore env-var names |
+| Intake case type uniqueness | intakes.case_types[*].key | Must be unique across case types |
+| Intake question uniqueness | intakes.case_types[*].questions[*].key | Must be unique within each case type |
+| Intake requires at least one case type | intakes.case_types | List cannot be empty when intakes block present |
+| Intake requires at least one question | intakes.case_types[*].questions | Each case type must define at least one question |
 
 ---
 

@@ -13,6 +13,7 @@ logger = logging.getLogger("receptionist")
 # in receptionist/email/templates.py for their human-readable display.
 VALID_OUTCOMES = {
     "hung_up", "message_taken", "transferred", "appointment_booked", "agent_ended",
+    "intake_submitted",
 }
 
 

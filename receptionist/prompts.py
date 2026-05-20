@@ -61,6 +61,66 @@ def _build_language_block(config: BusinessConfig) -> str:
     )
 
 
+def _build_intakes_block(config: BusinessConfig) -> str:
+    """Build the INTAKES section of the system prompt.
+
+    Two cases produce different text:
+      - `intakes` block present and `enabled=True`: list the case types and
+        explain how to use record_intake_answer / finalize_intake.
+      - `intakes` block missing or disabled: omit entirely. The persona
+        section in the YAML still owns whether/how to mention intake at
+        all, so businesses that do not run phone intakes get a clean
+        prompt with no dangling tool references.
+    """
+    if config.intakes is None or not config.intakes.enabled:
+        return ""
+    case_lines: list[str] = []
+    for ct in config.intakes.case_types:
+        case_lines.append(f"  - {ct.key}: {ct.display_name}")
+        for q in ct.questions:
+            req = "required" if q.required else "optional"
+            critical = ", critical readback" if q.critical else ""
+            case_lines.append(f"      * {q.key}  ({req}{critical}): {q.prompt_en}")
+    case_block = "\n".join(case_lines)
+    return (
+        "\nINTAKES (structured new-client intake by phone):\n"
+        "You can run a structured intake using the record_intake_answer and\n"
+        "finalize_intake tools. Configured case types and their question\n"
+        "scripts:\n"
+        f"{case_block}\n"
+        "\n"
+        "INTAKE PROCEDURE:\n"
+        "  1. Confirm the caller has 15-20 minutes (use the preamble in the\n"
+        "     personality section).\n"
+        "  2. Confirm which case type applies. Pass the case_type key to\n"
+        "     record_intake_answer verbatim.\n"
+        "  3. Ask the questions ONE AT A TIME. Wait for an answer before\n"
+        "     calling record_intake_answer for that question.\n"
+        "  4. For questions marked 'critical readback': repeat the answer\n"
+        "     back letter-by-letter (names/email) or digit-by-digit (phone)\n"
+        "     and wait for explicit 'yes' confirmation before moving on.\n"
+        "  5. For non-critical questions, ask once. Re-ask only if you\n"
+        "     couldn't make out the answer.\n"
+        "  6. After every answered question, call record_intake_answer with\n"
+        "     spoken_text VERBATIM in the caller's language and a concise\n"
+        "     english_summary you produce inline.\n"
+        "  7. When ALL required questions for the case type have been\n"
+        "     answered, call finalize_intake once with caller_name,\n"
+        "     callback_number, and a 1-3 sentence english_overview.\n"
+        "  8. After finalize_intake returns, give a short confirmation\n"
+        "     ('I've got everything; someone from the office will follow\n"
+        "     up during business hours') and let the call end naturally.\n"
+        "     Do NOT recite every answer back at the end.\n"
+        "\n"
+        "INTAKE ESCAPE HATCH:\n"
+        "If the caller says they don't have time, want a callback instead,\n"
+        "or want to speak to a person mid-intake, stop calling\n"
+        "record_intake_answer. Use take_message immediately with at least\n"
+        "their name and callback number, and note in the message that the\n"
+        "intake was started but not completed.\n"
+    )
+
+
 def _build_calendar_block(config: BusinessConfig) -> str:
     """Build the CALENDAR section of the system prompt, or empty string if disabled."""
     if config.calendar is None or not config.calendar.enabled:
@@ -122,6 +182,7 @@ def build_system_prompt(config: BusinessConfig) -> str:
 
     language_block = _build_language_block(config)
     calendar_block = _build_calendar_block(config)
+    intakes_block = _build_intakes_block(config)
 
     return f"""You are the receptionist for {config.business.name}, a {config.business.type}.
 
@@ -140,7 +201,7 @@ DEPARTMENTS YOU CAN TRANSFER TO:
 When a caller asks to be transferred, use the transfer_call tool with the department name.
 When a caller wants to leave a message, use the take_message tool to record their name, message, and callback number.
 When asked about business hours, use the get_business_hours tool.
-{calendar_block}
+{calendar_block}{intakes_block}
 ENDING CALLS:
 When the caller has clearly finished — for example they say "goodbye",
 "thanks, bye", "that's all I needed", or you have already explained you

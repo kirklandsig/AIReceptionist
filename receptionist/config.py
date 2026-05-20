@@ -552,6 +552,135 @@ class CalendarConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Intakes — structured new-client intake by phone
+# ---------------------------------------------------------------------------
+
+# Validation kinds Riley can apply per question. Free-text is the default;
+# "phone" / "email" / "date" / "yes_no" let the prompt nudge Riley toward
+# the right shape and let downstream tooling (sync CLI, intake email) format
+# the answer cleanly. These are advisory — the LLM is not bound to refuse
+# malformed answers, only to ask for clarification.
+_INTAKE_VALIDATION_KINDS = Literal["text", "phone", "email", "date", "yes_no"]
+
+
+class IntakeQuestion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    """Canonical field name, e.g. `employer` or `accident_date`. Used as the
+    answer key in the structured intake JSON. Must be unique within a case
+    type. Stable across question wording changes so downstream consumers
+    keep working."""
+
+    prompt_en: str
+    """The English question Riley reads to the caller verbatim."""
+
+    prompt_es: str | None = None
+    """Spanish translation of the question. If omitted, Riley will translate
+    the English prompt at call time, which is less reliable. Strongly
+    recommended for any business that handles Spanish-speaking callers."""
+
+    required: bool = True
+    """If False, Riley may skip the question if the caller declines to
+    answer. Required questions must be present in the final submission."""
+
+    validation: _INTAKE_VALIDATION_KINDS = "text"
+    """Advisory shape hint. Drives the prompt phrasing in the persona and
+    the formatting of the answer in the intake email."""
+
+    critical: bool = False
+    """If True, Riley does an explicit readback ("I have your callback as
+    six-three-one… is that right?") and waits for confirmation before
+    moving on. Use for legal name, callback number, email, DOB."""
+
+
+class IntakeCaseType(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    """Canonical identifier, e.g. `workers_comp`, `ssd`, `pension`. Used by
+    the LLM when calling `record_intake_answer(case_type=...)`."""
+
+    display_name: str
+    """Human-readable name used in the intake email subject and in Riley's
+    English-language spoken responses."""
+
+    display_name_es: str | None = None
+    """Spanish display name. Used by Riley in Spanish-language calls."""
+
+    google_form_id: str | None = None
+    """Optional Google Form ID for the sync CLI. Not used at call time."""
+
+    questions: list[IntakeQuestion]
+
+    @field_validator("questions")
+    @classmethod
+    def at_least_one_question(cls, v: list[IntakeQuestion]) -> list[IntakeQuestion]:
+        if not v:
+            raise ValueError("intake case type must define at least one question")
+        return v
+
+    @model_validator(mode="after")
+    def unique_question_keys(self) -> IntakeCaseType:
+        seen: set[str] = set()
+        for q in self.questions:
+            if q.key in seen:
+                raise ValueError(
+                    f"duplicate intake question key {q.key!r} in case type {self.key!r}"
+                )
+            seen.add(q.key)
+        return self
+
+
+class IntakeSubmissionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file_path: str
+    """Directory where partial and final intake JSON files are written. The
+    intake email goes to whichever EmailChannel(s) are configured in
+    `messages.channels` — recipients live there, not here, so that operators
+    have a single source of truth for who gets notified."""
+
+
+class IntakesConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    """Master switch. When False, the intake tools are still registered (so
+    a YAML toggle is enough to enable later) but Riley is told in the
+    system prompt that intake is unavailable and the tools refuse calls."""
+
+    preamble_en: str = ""
+    """English-language disclosure Riley speaks BEFORE starting questions.
+    Typically "this takes 15-20 minutes, do you have time now or should I
+    take a short message?" Empty string disables the preamble."""
+
+    preamble_es: str | None = None
+    """Spanish preamble. If None, Riley translates `preamble_en` at call
+    time when speaking to a Spanish-speaking caller."""
+
+    submission: IntakeSubmissionConfig
+
+    case_types: list[IntakeCaseType]
+
+    @field_validator("case_types")
+    @classmethod
+    def at_least_one_case_type(cls, v: list[IntakeCaseType]) -> list[IntakeCaseType]:
+        if not v:
+            raise ValueError("intakes config must define at least one case type")
+        return v
+
+    @model_validator(mode="after")
+    def unique_case_type_keys(self) -> IntakesConfig:
+        seen: set[str] = set()
+        for ct in self.case_types:
+            if ct.key in seen:
+                raise ValueError(f"duplicate intake case type key {ct.key!r}")
+            seen.add(ct.key)
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Top-level
 # ---------------------------------------------------------------------------
 
@@ -572,6 +701,7 @@ class BusinessConfig(BaseModel):
     transcripts: TranscriptsConfig | None = None
     email: EmailConfig | None = None
     calendar: CalendarConfig | None = None
+    intakes: IntakesConfig | None = None
     sip: SipConfig = Field(default_factory=SipConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
@@ -596,6 +726,12 @@ class BusinessConfig(BaseModel):
                 "email.triggers.on_booking is true but calendar is not enabled. "
                 "Enable calendar or disable the on_booking trigger."
             )
+        # Intakes deliver their submission email through whichever email
+        # channels are already in `messages.channels`, so enabling intakes
+        # without an email channel means the operator only gets the file
+        # artifact. That's OK (file is the durable copy) but warn in the
+        # prompt-build path; here we just require the file_path to be set,
+        # which Pydantic already enforces.
         return self
 
     @classmethod

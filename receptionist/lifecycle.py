@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from receptionist.config import BusinessConfig
+from receptionist.intakes.models import IntakeSubmission
 from receptionist.messaging.models import DispatchContext, Message
 from receptionist.recording.egress import (
     RecordingArtifact, RecordingHandle, start_recording, stop_recording,
@@ -48,6 +49,14 @@ class CallLifecycle:
         # every configured EmailChannel during on_call_ended, AFTER the
         # transcript files have been written.
         self._pending_message_emails: list[Message] = []
+        # finalize_intake() defers the intake email to call-end too, for
+        # the same transcript-embedding reason as deferred message emails.
+        # Only one intake submission can be pending per call (a caller can
+        # only run one intake per call); the assignment overwrites any
+        # earlier in-progress submission, which is the correct behaviour
+        # if the LLM re-finalizes after a correction.
+        self._pending_intake_submission: IntakeSubmission | None = None
+        self._intake_case_type_display: str | None = None
         # Guard against double-firing the end-of-call fan-out. The
         # agent-initiated end_call path explicitly invokes on_call_ended
         # before removing the SIP participant (so emails fire while the
@@ -89,6 +98,29 @@ class CallLifecycle:
     def record_message_taken(self) -> None:
         self.metadata.message_taken = True
         self._add_outcome("message_taken")
+
+    def record_intake_submitted(self) -> None:
+        self._add_outcome("intake_submitted")
+
+    def enqueue_intake_submission(
+        self,
+        submission: IntakeSubmission,
+        *,
+        case_type_display: str | None = None,
+    ) -> None:
+        """Queue a completed intake for email dispatch at call-end.
+
+        The structured JSON file is persisted by the tool immediately so
+        the receiving team still has the data even if the call drops
+        before on_call_ended runs. The email is deferred so the embedded
+        transcript file path is real.
+
+        Overwrites any previously enqueued submission for this call —
+        only one intake per call is expected, and a re-finalize replaces
+        the prior one (e.g. caller corrects an answer and we re-submit).
+        """
+        self._pending_intake_submission = submission
+        self._intake_case_type_display = case_type_display
 
     def enqueue_message_email(self, message: Message) -> None:
         """Queue a Message for email dispatch at call-end.
@@ -265,6 +297,26 @@ class CallLifecycle:
                     "booking", lambda ch, ctx: ch.deliver_booking(self.metadata, ctx),
                     artifact, transcript_result,
                 )
+            # Intake email: fires whenever there's a pending submission. We
+            # do NOT gate it behind a trigger flag because the intake tool
+            # was explicitly invoked by the caller path — the existence of
+            # a pending submission IS the trigger.
+            if self._pending_intake_submission is not None:
+                submission = self._pending_intake_submission
+                display = self._intake_case_type_display
+                await self._fire_email_trigger(
+                    "intake",
+                    lambda ch, ctx: ch.deliver_intake(
+                        submission, ctx, case_type_display=display,
+                    ),
+                    artifact, transcript_result,
+                )
+        # Always clear the pending intake reference once finalization runs,
+        # whether or not we had an email config to send through. The
+        # structured JSON file on disk is the durable copy; the email is
+        # best-effort.
+        self._pending_intake_submission = None
+        self._intake_case_type_display = None
 
     async def _fire_email_trigger(
         self,

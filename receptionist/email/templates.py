@@ -15,6 +15,7 @@ _OUTCOME_LABELS = {
     "transferred": "Transferred",
     "appointment_booked": "Appointment booked",
     "agent_ended": "Agent ended",
+    "intake_submitted": "Intake submitted",
 }
 
 
@@ -290,3 +291,143 @@ def _format_duration(seconds: float | None) -> str:
         return "unknown"
     m, s = divmod(int(seconds), 60)
     return f"{m}:{s:02d}"
+
+
+def build_intake_email(
+    submission,
+    context: DispatchContext,
+    *,
+    case_type_display: str | None = None,
+    include_transcript: bool = True,
+    include_recording_link: bool = True,
+) -> tuple[str, str, str]:
+    """Render the email sent at call-end for a completed intake.
+
+    `submission` is a `receptionist.intakes.models.IntakeSubmission`.
+    `case_type_display` is the human-readable case type label (e.g.
+    "Workers' Compensation"). When omitted, the raw `case_type` key is
+    used — operators always see something, even if the YAML hasn't been
+    updated with a display_name.
+    """
+    label = case_type_display or submission.case_type
+    status_marker = "" if submission.status == "final" else " [PARTIAL]"
+    subject = (
+        f"Intake{status_marker}: {label} — {_subject_safe(submission.caller_name)} "
+        f"[{_subject_safe(submission.business_name)}]"
+    )
+
+    answer_lines: list[str] = []
+    for ans in submission.answers:
+        spoken = ans.spoken_text.strip() or "(no answer)"
+        summary = ans.english_summary.strip()
+        if summary and summary != spoken:
+            answer_lines.append(
+                f"  {ans.prompt}\n"
+                f"    Answer ({ans.language}): {spoken}\n"
+                f"    English: {summary}"
+            )
+        else:
+            answer_lines.append(f"  {ans.prompt}\n    Answer: {spoken}")
+    answers_block = "\n\n".join(answer_lines) if answer_lines else "  (no answers captured)"
+
+    body_text = (
+        f"A new-client intake has been completed for {submission.business_name}.\n"
+        f"\n"
+        f"Case type: {label}\n"
+        f"Status: {submission.status}\n"
+        f"Caller: {submission.caller_name}\n"
+        f"Callback: {submission.callback_number}\n"
+        f"Language: {submission.language}\n"
+        f"Started: {submission.started_at}\n"
+        f"Completed: {submission.completed_at or '(in progress)'}\n"
+        f"\n"
+    )
+    if submission.english_overview:
+        body_text += f"Overview:\n  {submission.english_overview}\n\n"
+    body_text += f"Answers:\n{answers_block}\n"
+
+    if include_recording_link and context.recording_url:
+        body_text += f"\nRecording: {context.recording_url}\n"
+    if include_transcript and context.transcript_markdown_path:
+        body_text += f"Transcript: {context.transcript_markdown_path}\n"
+        content, err = _read_transcript(context.transcript_markdown_path)
+        if content is not None:
+            body_text += "\n--- Transcript ---\n"
+            body_text += content
+            if not content.endswith("\n"):
+                body_text += "\n"
+            body_text += "--- End transcript ---\n"
+        else:
+            body_text += f"({err})\n"
+
+    def e(s: str | None) -> str:
+        return html.escape(s or "", quote=True)
+
+    rows_html: list[str] = []
+    for ans in submission.answers:
+        spoken = ans.spoken_text or "(no answer)"
+        summary = ans.english_summary
+        cells = (
+            f"<td style='padding:4px;border:1px solid #ccc'>{e(ans.prompt)}</td>"
+            f"<td style='padding:4px;border:1px solid #ccc'>{e(spoken)}</td>"
+        )
+        if summary and summary != spoken:
+            cells += f"<td style='padding:4px;border:1px solid #ccc'>{e(summary)}</td>"
+        else:
+            cells += "<td style='padding:4px;border:1px solid #ccc'>&nbsp;</td>"
+        rows_html.append(f"<tr>{cells}</tr>")
+    rows_block = "\n".join(rows_html) if rows_html else (
+        "<tr><td colspan='3' style='padding:4px;border:1px solid #ccc'>"
+        "(no answers captured)</td></tr>"
+    )
+
+    body_html = (
+        f"<h2>New-client intake{e(status_marker)}</h2>"
+        f"<p><strong>Business:</strong> {e(submission.business_name)}</p>"
+        f"<table cellpadding='4'>"
+        f"<tr><td><strong>Case type</strong></td><td>{e(label)}</td></tr>"
+        f"<tr><td><strong>Status</strong></td><td>{e(submission.status)}</td></tr>"
+        f"<tr><td><strong>Caller</strong></td><td>{e(submission.caller_name)}</td></tr>"
+        f"<tr><td><strong>Callback</strong></td><td>{e(submission.callback_number)}</td></tr>"
+        f"<tr><td><strong>Language</strong></td><td>{e(submission.language)}</td></tr>"
+        f"<tr><td><strong>Started</strong></td><td>{e(submission.started_at)}</td></tr>"
+        f"<tr><td><strong>Completed</strong></td>"
+        f"<td>{e(submission.completed_at or '(in progress)')}</td></tr>"
+        f"</table>"
+    )
+    if submission.english_overview:
+        body_html += (
+            f"<h3>Overview</h3>"
+            f"<blockquote>{e(submission.english_overview)}</blockquote>"
+        )
+    body_html += (
+        f"<h3>Answers</h3>"
+        f"<table cellpadding='0' style='border-collapse:collapse'>"
+        f"<thead><tr>"
+        f"<th style='padding:4px;border:1px solid #ccc;text-align:left'>Question</th>"
+        f"<th style='padding:4px;border:1px solid #ccc;text-align:left'>Caller answer</th>"
+        f"<th style='padding:4px;border:1px solid #ccc;text-align:left'>English summary</th>"
+        f"</tr></thead>"
+        f"<tbody>{rows_block}</tbody>"
+        f"</table>"
+    )
+    if include_recording_link and context.recording_url:
+        body_html += (
+            f"<p><strong>Recording:</strong> "
+            f"<a href='{e(context.recording_url)}'>{e(context.recording_url)}</a></p>"
+        )
+    if include_transcript and context.transcript_markdown_path:
+        body_html += (
+            f"<p><strong>Transcript:</strong> "
+            f"{e(context.transcript_markdown_path)}</p>"
+        )
+        content, err = _read_transcript(context.transcript_markdown_path)
+        if content is not None:
+            body_html += (
+                "<hr><h3>Transcript</h3>"
+                f"<pre style='white-space:pre-wrap;font-family:monospace'>{e(content)}</pre>"
+            )
+        else:
+            body_html += f"<p><em>({e(err)})</em></p>"
+
+    return subject, body_text, body_html

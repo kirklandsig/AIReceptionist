@@ -85,7 +85,7 @@ def test_valid_outcomes_is_expected_set():
     """Regression: ensure the allowed outcome vocabulary matches the design spec."""
     assert VALID_OUTCOMES == {
         "hung_up", "message_taken", "transferred",
-        "appointment_booked", "agent_ended",
+        "appointment_booked", "agent_ended", "intake_submitted",
     }
 
 

@@ -116,6 +116,12 @@ _TRUNCATE_LIMITS = {
     "message": 4000,
     "notes": 1000,
     "caller_email": 254,
+    # Intake fields. spoken_text can be a longer answer (paragraph) so it
+    # gets a more generous cap; english_summary is meant to be concise and
+    # gets a tighter one to nudge the LLM toward brevity.
+    "intake_spoken_text": 4000,
+    "intake_english_summary": 2000,
+    "intake_english_overview": 4000,
 }
 
 
@@ -554,6 +560,17 @@ class Receptionist(Agent):
         self._current_turn_used_tool: bool = False
         self._current_turn_assistant_replied: bool = False
         self._unproductive_end_scheduled: bool = False
+        # Intake state. Populated by `record_intake_answer` and consumed by
+        # `finalize_intake`. `_intake_answers` is keyed by question_key so
+        # the LLM can re-record an answer (e.g. caller corrects themselves)
+        # and the latest value wins. Stays empty if the caller never starts
+        # an intake.
+        from receptionist.intakes.models import IntakeAnswer
+        self._IntakeAnswer = IntakeAnswer  # cached import for tool hot path
+        self._intake_answers: dict[str, IntakeAnswer] = {}
+        self._intake_case_type: str | None = None
+        self._intake_language: str = "en"
+        self._intake_started_at: str | None = None
 
     def _get_calendar_client(self):
         """Lazily construct and cache the Google Calendar client for this call."""
@@ -687,6 +704,205 @@ class Receptionist(Agent):
         self.lifecycle.enqueue_message_email(msg)
         self.lifecycle.record_message_taken()
         return f"Message saved from {caller_name}. Let them know their message has been recorded and someone will get back to them."
+
+    @function_tool()
+    async def record_intake_answer(
+        self,
+        ctx: RunContext,
+        case_type: str,
+        question_key: str,
+        spoken_text: str,
+        language: str = "en",
+        english_summary: str = "",
+    ) -> str:
+        """Record one answer in an in-progress phone intake.
+
+        Call this after EVERY answered intake question — once per question.
+        The partial intake is persisted to disk after each call, so if the
+        caller hangs up mid-intake the receiving team still gets whatever
+        was captured.
+
+        Args:
+            case_type: case-type key from the configured intakes block
+                (e.g. "workers_comp", "ssd", "pension"). Must match one of
+                the configured case types.
+            question_key: the question.key from that case type's question
+                list. Must be one of the keys you were shown.
+            spoken_text: the caller's answer, verbatim, in whatever
+                language they used. Do NOT translate this field.
+            language: ISO 639-1 code of the spoken_text ("en", "es", ...).
+                Defaults to "en".
+            english_summary: a concise English rendering of the answer
+                so an English-only reader can scan the submission. For
+                English calls, this may be identical to spoken_text.
+        """
+        from receptionist.intakes.storage import persist_partial
+        from receptionist.intakes.models import IntakeSubmission
+
+        if self.config.intakes is None or not self.config.intakes.enabled:
+            return (
+                "Intake is not enabled for this business. Use take_message "
+                "to record the caller's information instead."
+            )
+        case_types_by_key = {ct.key: ct for ct in self.config.intakes.case_types}
+        case_type_cfg = case_types_by_key.get(case_type)
+        if case_type_cfg is None:
+            available = ", ".join(sorted(case_types_by_key.keys()))
+            return (
+                f"Unknown case type {case_type!r}. Configured case types: "
+                f"{available}. Ask the caller which type applies and try again."
+            )
+        questions_by_key = {q.key: q for q in case_type_cfg.questions}
+        question_cfg = questions_by_key.get(question_key)
+        if question_cfg is None:
+            available = ", ".join(sorted(questions_by_key.keys()))
+            return (
+                f"Unknown question key {question_key!r} for case type "
+                f"{case_type!r}. Valid keys: {available}."
+            )
+
+        call_id = self.lifecycle.metadata.call_id
+        spoken_text = _cap("intake_spoken_text", spoken_text, call_id=call_id) or ""
+        english_summary = _cap("intake_english_summary", english_summary, call_id=call_id) or ""
+
+        # If the case type changed mid-call (unusual but possible — caller
+        # corrected themselves about which kind of case they have), drop
+        # prior answers so we don't mix-and-match answer sets across case
+        # types.
+        if self._intake_case_type is not None and self._intake_case_type != case_type:
+            logger.info(
+                "Intake case_type changed mid-call: %s -> %s; clearing prior answers",
+                self._intake_case_type, case_type,
+                extra={"call_id": call_id, "component": "agent.intake"},
+            )
+            self._intake_answers.clear()
+        self._intake_case_type = case_type
+        self._intake_language = language or "en"
+        if self._intake_started_at is None:
+            from datetime import datetime, timezone as _tz
+            self._intake_started_at = datetime.now(_tz.utc).isoformat()
+
+        self._intake_answers[question_key] = self._IntakeAnswer(
+            question_key=question_key,
+            prompt=question_cfg.prompt_en,
+            spoken_text=spoken_text,
+            language=self._intake_language,
+            english_summary=english_summary or spoken_text,
+        )
+
+        # Persist a partial after every answer so a mid-call disconnect
+        # still leaves the receiving team with what was captured.
+        try:
+            submission = IntakeSubmission(
+                case_type=case_type,
+                business_name=self.config.business.name,
+                call_id=call_id,
+                caller_name="",  # not yet known; finalize_intake captures it
+                callback_number="",
+                answers=list(self._intake_answers.values()),
+                language=self._intake_language,
+                english_overview="",
+                status="partial",
+                started_at=self._intake_started_at,
+            )
+            await persist_partial(submission, self.config.intakes.submission.file_path)
+        except Exception as e:
+            logger.exception(
+                "Intake partial persist failed for question %s: %s",
+                question_key, e,
+                extra={"call_id": call_id, "component": "agent.intake"},
+            )
+            # Do NOT fail the tool — the in-memory answer is still tracked
+            # and finalize_intake will retry the write.
+
+        return f"Answer recorded for {question_key}. Proceed to the next question."
+
+    @function_tool()
+    async def finalize_intake(
+        self,
+        ctx: RunContext,
+        caller_name: str,
+        callback_number: str,
+        english_overview: str = "",
+    ) -> str:
+        """Submit the completed intake.
+
+        Call this exactly once, after all required questions for the
+        chosen case type have been answered and you've confirmed the
+        critical fields (legal name, callback, email if collected) with
+        the caller. Do NOT call this before record_intake_answer has run
+        for every required question.
+
+        Args:
+            caller_name: full legal name as the caller stated it, after
+                you read it back letter-by-letter and they confirmed.
+            callback_number: callback phone number, after you read it
+                back digit-by-digit and they confirmed.
+            english_overview: 1-3 sentence English summary of the case
+                in the caller's own framing. Helps the intake team
+                triage without reading every answer.
+        """
+        from receptionist.intakes.storage import persist_final
+        from receptionist.intakes.models import IntakeSubmission
+        from datetime import datetime, timezone as _tz
+
+        if self.config.intakes is None or not self.config.intakes.enabled:
+            return "Intake is not enabled for this business."
+        if self._intake_case_type is None or not self._intake_answers:
+            return (
+                "No intake answers have been recorded yet. Call "
+                "record_intake_answer for each question first."
+            )
+
+        call_id = self.lifecycle.metadata.call_id
+        caller_name = _cap("caller_name", caller_name, call_id=call_id) or ""
+        callback_number = _cap("callback_number", callback_number, call_id=call_id) or ""
+        english_overview = _cap(
+            "intake_english_overview", english_overview, call_id=call_id,
+        ) or ""
+
+        # Look up the case-type display name for the email subject. The
+        # tool already validated case_type via record_intake_answer's
+        # guard, but be defensive in case finalize_intake is called with
+        # a stale case_type after a clear.
+        case_types_by_key = {ct.key: ct for ct in self.config.intakes.case_types}
+        case_type_cfg = case_types_by_key.get(self._intake_case_type)
+        display = case_type_cfg.display_name if case_type_cfg else self._intake_case_type
+
+        submission = IntakeSubmission(
+            case_type=self._intake_case_type,
+            business_name=self.config.business.name,
+            call_id=call_id,
+            caller_name=caller_name,
+            callback_number=callback_number,
+            answers=list(self._intake_answers.values()),
+            language=self._intake_language,
+            english_overview=english_overview,
+            status="final",
+            started_at=self._intake_started_at or datetime.now(_tz.utc).isoformat(),
+            completed_at=datetime.now(_tz.utc).isoformat(),
+        )
+
+        try:
+            await persist_final(submission, self.config.intakes.submission.file_path)
+        except Exception as e:
+            logger.exception(
+                "Intake final persist failed: %s", e,
+                extra={"call_id": call_id, "component": "agent.intake"},
+            )
+            return (
+                "I had trouble saving the intake. Let me take a short "
+                "message with your name and number instead."
+            )
+
+        self.lifecycle.enqueue_intake_submission(
+            submission, case_type_display=display,
+        )
+        self.lifecycle.record_intake_submitted()
+        return (
+            f"Intake submitted for {display}. Let the caller know "
+            f"someone from the office will follow up during business hours."
+        )
 
     @function_tool()
     async def end_call(

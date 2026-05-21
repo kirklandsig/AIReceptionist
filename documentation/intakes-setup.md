@@ -37,10 +37,12 @@ A typical call looks like this:
 4. After every answer, Riley calls `record_intake_answer` with the
    `case_type`, `question_key`, `spoken_text` (verbatim, in the caller's
    language), `language`, and an inline `english_summary`. The partial intake
-   is persisted to disk after each call.
-5. For questions marked `critical: true`, Riley reads the answer back
-   digit-by-digit or letter-by-letter and waits for explicit confirmation
-   before moving on.
+   is persisted to disk and queued for a structured call-end email after each
+   call.
+5. For questions marked `critical: true`, Riley verifies the answer before
+   moving on. Phone numbers, Social Security numbers, and email addresses get
+   digit-by-digit or character-by-character readback; names, dates, and other
+   critical fields are repeated naturally.
 6. When all required questions are answered, Riley calls `finalize_intake`
    with the confirmed legal name, callback number, and a 1–3 sentence
    English overview. The final JSON file is written and the intake email is
@@ -116,7 +118,7 @@ Each `questions[*]` entry has:
 | `prompt_es` | string | No | Spanish translation. Strongly recommended for any business that takes Spanish calls. |
 | `required` | bool | No (default `true`) | If `false`, Riley may skip the question if the caller declines. Required questions must be present in the final submission. |
 | `validation` | `text`/`phone`/`email`/`date`/`yes_no` | No (default `text`) | Advisory shape. Influences the phrasing of the prompt but does not strictly enforce the answer's format. |
-| `critical` | bool | No (default `false`) | If `true`, Riley reads the answer back per-character and waits for explicit "yes" before moving on. Use for legal name, callback number, email, DOB. |
+| `critical` | bool | No (default `false`) | If `true`, Riley verifies the answer and waits for explicit "yes" before moving on. Use per-character readback only for phone numbers, SSNs, and email addresses; repeat names/dates naturally. |
 
 ---
 
@@ -196,9 +198,9 @@ messages/<slug>/intakes/intake_room-abc.partial.json
 ```
 
 If the caller hangs up before `finalize_intake` runs, the partial file is
-the record. It has `status: "partial"`, no `completed_at`, and only the
-answers captured so far. The intake email is NOT fired for partial-only
-intakes — operators read the partial JSON directly.
+the durable record. It has `status: "partial"`, no `completed_at`, and only
+the answers captured so far. A partial intake email is also sent at call-end
+with the captured question/answer list above the transcript.
 
 When `finalize_intake` runs successfully, the partial file is removed and
 the final JSON is written under a different name. The two files never
@@ -245,10 +247,10 @@ Returns a short confirmation the LLM uses to wrap up the call.
 
 ## Operational tips
 
-- **Critical-field readback**: mark legal name, callback number, and email
-  with `critical: true`. Riley will read these back per-character (digit by
-  digit for phone, letter by letter for name/email) before moving on. This
-  catches the most expensive transcription mistakes.
+- **Critical-field readback**: mark expensive-to-fix fields with
+  `critical: true`. Riley reads phone numbers, SSNs, and email addresses back
+  digit-by-digit or character-by-character, but repeats names, dates, and
+  other critical fields naturally. Non-critical answers are not read back.
 - **Disclose call length upfront**: the `preamble_en` exists so the caller
   can decline a long intake and just leave a message. Don't skip this — a
   surprised caller who hangs up halfway through is worse than a caller who

@@ -268,3 +268,61 @@ def test_prompt_includes_calendar_block_when_enabled(tmp_path):
     # Phone + email read-back discipline (digit-by-digit and letter-by-letter)
     assert "digit-by-digit" in prompt.lower() or "digit by digit" in prompt.lower()
     assert "spell out" in prompt.lower() or "letter-by-letter" in prompt.lower()
+
+
+# ---- intake block tests ----
+
+
+INTAKES_YAML = """
+business: { name: "Test Law", type: "law office", timezone: "America/New_York" }
+voice: { voice_id: "marin" }
+languages: { primary: "en", allowed: ["en"] }
+greeting: "Thank you for calling Test Law."
+personality: "You are a friendly receptionist. The intake takes about 30 minutes."
+hours:
+  monday: { open: "09:00", close: "17:00" }
+  tuesday: closed
+  wednesday: closed
+  thursday: closed
+  friday: closed
+  saturday: closed
+  sunday: closed
+after_hours_message: "We are currently closed."
+routing: []
+faqs: []
+messages:
+  channels:
+    - type: "file"
+      file_path: "./messages/test/"
+intakes:
+  enabled: true
+  preamble_en: "This takes about 30 minutes."
+  submission:
+    file_path: "./messages/test/intakes/"
+  case_types:
+    - key: workers_comp
+      display_name: "Workers' Compensation"
+      questions:
+        - key: full_name
+          prompt_en: "What is your full legal name?"
+          required: true
+          critical: true
+        - key: injury_description
+          prompt_en: "Briefly describe what happened."
+          required: true
+          critical: false
+"""
+
+
+def test_intakes_prompt_does_not_hardcode_duration():
+    config = BusinessConfig.from_yaml_string(INTAKES_YAML)
+    prompt = build_system_prompt(config)
+    assert "15-20 minutes" not in prompt
+    assert "use the preamble in the" in prompt.lower()
+
+
+def test_intakes_prompt_limits_per_character_readback_to_contact_fields():
+    config = BusinessConfig.from_yaml_string(INTAKES_YAML)
+    prompt = build_system_prompt(config)
+    assert "Do NOT read back non-critical answers" in prompt
+    assert "phone numbers, Social Security numbers, and email addresses" in prompt

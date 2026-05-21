@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Updated public documentation and examples to reflect the current
   `messages.channels` schema, implemented webhook delivery, stricter webhook
   URL validation, current test layout, and optional voice idle/auth blocks.
+- Refined phone-intake prompt guidance so only contact identifiers such as
+  phone numbers, Social Security numbers, and email addresses use
+  digit-by-digit or character-by-character readback; non-critical intake
+  answers are not read back.
+- Queued structured partial-intake emails after every recorded answer so an
+  interrupted intake still arrives as a readable question/answer list above
+  the transcript. The live agent also refreshes its Realtime tool registry
+  after startup to prevent intake tools from being advertised in the prompt
+  but missing at execution time.
+- Call-end emails now include any `take_message` content in a structured
+  Captured Content section above recording/transcript details, so the call
+  summary remains actionable even when the separate message email is missed.
 
 ### Fixed
 - **Agent-initiated `end_call` no longer drops the call-end and deferred

@@ -15,6 +15,7 @@ from receptionist.agent import (
     _get_caller_phone,
     _get_sip_participant_phone,
     _is_benign_engine_closed_warning,
+    _refresh_realtime_tools,
     _resolve_agent_name,
     _resolve_relative_date,
 )
@@ -292,6 +293,26 @@ def test_capture_caller_phone_logs_positive_result_at_info(caplog, v2_yaml):
     ]
     assert matched, "expected a successful capture INFO log record"
     assert matched[0].source == "participant_attributes_changed"
+
+
+@pytest.mark.asyncio
+async def test_refresh_realtime_tools_pushes_full_agent_tool_list(caplog):
+    from unittest.mock import AsyncMock
+
+    tools = [
+        SimpleNamespace(id="take_message"),
+        SimpleNamespace(id="record_intake_answer"),
+        SimpleNamespace(id="finalize_intake"),
+    ]
+    receptionist = SimpleNamespace(tools=tools, update_tools=AsyncMock())
+    with caplog.at_level(logging.INFO, logger="receptionist"):
+        await _refresh_realtime_tools(receptionist, call_id="call-1")
+
+    receptionist.update_tools.assert_awaited_once_with(tools)
+    assert any(
+        "record_intake_answer" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 # ---- _get_caller_identity / _get_caller_phone room-level tests ----

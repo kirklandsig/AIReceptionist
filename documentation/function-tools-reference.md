@@ -305,7 +305,7 @@ Returns a confirmation message (e.g., "Your message has been recorded. Someone w
 
 2. The per-call `Dispatcher` sends the message through `messages.channels`.
 
-3. File and webhook channels run immediately so the caller only hears success after the message is durable or posted. Email channels are deferred until call end so the final transcript path is available and can be embedded in the email body.
+3. File and webhook channels run immediately so the caller only hears success after the message is durable or posted. Email channels are deferred until call end so the final transcript path is available and can be embedded in the email body. If call-end emails are enabled, the same captured message content is also rendered near the top of the call summary above recording/transcript details.
 
 ### File Storage Details
 
@@ -544,9 +544,9 @@ Caller: [pauses for 4 seconds]
 
 Record one answer in an in-progress structured intake. Available when the
 business has an `intakes:` block with `enabled: true`. Called once per
-answered question; the partial intake is persisted to disk after every
-call so a mid-call disconnect still leaves a record on the receiving team's
-side.
+answered question; the partial intake is persisted to disk and queued for
+call-end email after every call so a mid-call disconnect still leaves a
+structured record on the receiving team's side.
 
 ### Signature
 
@@ -581,7 +581,9 @@ Short confirmation string ("Answer recorded for `<key>`. Proceed to the next que
 1. Updates in-memory intake state on the `Receptionist` instance.
 2. Writes (or overwrites) a partial JSON file at
    `intakes.submission.file_path/intake_<call_id>.partial.json`.
-3. Logs the action via the structured `receptionist` logger.
+3. Queues the latest partial submission for the call-end intake email. If
+   `finalize_intake` runs later, the final submission replaces the partial.
+4. Logs the action via the structured `receptionist` logger.
 
 ### Validation
 

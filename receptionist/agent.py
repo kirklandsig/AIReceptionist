@@ -49,6 +49,34 @@ def _create_background_task(coro) -> asyncio.Task:
     return task
 
 
+def _tool_display_names(tools) -> list[str]:
+    names: list[str] = []
+    for tool in tools:
+        info = getattr(tool, "info", None)
+        name = getattr(info, "name", None) or getattr(tool, "id", None)
+        if name:
+            names.append(str(name))
+    return names
+
+
+async def _refresh_realtime_tools(receptionist, *, call_id: str) -> None:
+    """Force-push the agent tool list into the active realtime session.
+
+    LiveKit sends tools during activity startup, but observed live calls showed
+    OpenAI returning function calls for intake tools that the runtime tool
+    context did not know about. A post-start refresh is idempotent and gives
+    the realtime session one more explicit `session.update` with the full tool
+    list before caller turns begin.
+    """
+    tools = receptionist.tools
+    await receptionist.update_tools(tools)
+    logger.info(
+        "Refreshed realtime tool registry: %s",
+        ", ".join(_tool_display_names(tools)) or "(none)",
+        extra={"call_id": call_id, "component": "agent.tools"},
+    )
+
+
 def _is_benign_engine_closed_warning(record: logging.LogRecord) -> bool:
     return (
         record.levelno == logging.WARNING
@@ -790,21 +818,22 @@ class Receptionist(Agent):
             english_summary=english_summary or spoken_text,
         )
 
+        submission = IntakeSubmission(
+            case_type=case_type,
+            business_name=self.config.business.name,
+            call_id=call_id,
+            caller_name="",  # not yet known; finalize_intake captures it
+            callback_number="",
+            answers=list(self._intake_answers.values()),
+            language=self._intake_language,
+            english_overview="",
+            status="partial",
+            started_at=self._intake_started_at,
+        )
+
         # Persist a partial after every answer so a mid-call disconnect
         # still leaves the receiving team with what was captured.
         try:
-            submission = IntakeSubmission(
-                case_type=case_type,
-                business_name=self.config.business.name,
-                call_id=call_id,
-                caller_name="",  # not yet known; finalize_intake captures it
-                callback_number="",
-                answers=list(self._intake_answers.values()),
-                language=self._intake_language,
-                english_overview="",
-                status="partial",
-                started_at=self._intake_started_at,
-            )
             await persist_partial(submission, self.config.intakes.submission.file_path)
         except Exception as e:
             logger.exception(
@@ -815,6 +844,9 @@ class Receptionist(Agent):
             # Do NOT fail the tool — the in-memory answer is still tracked
             # and finalize_intake will retry the write.
 
+        self.lifecycle.enqueue_intake_submission(
+            submission, case_type_display=case_type_cfg.display_name,
+        )
         return f"Answer recorded for {question_key}. Proceed to the next question."
 
     @function_tool()
@@ -1613,6 +1645,9 @@ async def handle_call(ctx: agents.JobContext):
                 ),
             ),
         ),
+    )
+    await _refresh_realtime_tools(
+        receptionist, call_id=lifecycle.metadata.call_id,
     )
 
 

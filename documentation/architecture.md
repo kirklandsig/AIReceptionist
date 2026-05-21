@@ -42,7 +42,11 @@ receptionist/
 │   ├── sender.py            EmailSender protocol, EmailSendError, EmailAttachment
 │   ├── smtp.py              SMTPSender (aiosmtplib)
 │   ├── resend.py            ResendSender (httpx → Resend API)
-│   └── templates.py         build_message_email / build_call_end_email
+│   └── templates.py         build_message_email / build_call_end_email / build_intake_email
+│
+├── intakes/                 Structured intake persistence
+│   ├── models.py            IntakeAnswer / IntakeSubmission dataclasses
+│   └── storage.py           Atomic partial/final JSON writers
 │
 ├── recording/               Call recording
 │   ├── storage.py           resolve_destination (local path or S3 URL)
@@ -85,6 +89,8 @@ receptionist/
   - `lookup_faq` → `lifecycle.record_faq_answered(question)`
   - `transfer_call` → `lifecycle.record_transfer(department)` → `transfer_target` + outcome="transferred"
   - `take_message` → `Dispatcher.dispatch_message(...)` (sync file + background email/webhook) → `lifecycle.record_message_taken()` → outcome="message_taken"
+  - `record_intake_answer` → validates case/question keys, updates in-memory intake state, writes a partial intake JSON after each answer, and queues the latest partial for structured call-end email
+  - `finalize_intake` → writes the final intake JSON, replaces the queued partial with the final structured intake email, and records outcome="intake_submitted"
   - `get_business_hours` → no metadata change
   - `end_call` → `lifecycle.record_agent_ended(reason)` → outcome="agent_ended" + `agent_end_reason`, then background goodbye + SIP BYE/delete-room termination
 - Idle safety nets run outside the LLM tool path:
@@ -100,7 +106,8 @@ receptionist/
    - `metadata.mark_finalized()` (sets end_ts, duration, outcome="hung_up" if none)
    - If recording: `stop_recording(handle)` returns artifact URL (local path or s3://)
    - If transcripts: `write_transcript_files(...)` writes JSON + Markdown
-   - If `email.triggers.on_call_end`: `EmailChannel.deliver_call_end(metadata, context)` for each configured email channel
+   - If a message or intake email was queued during the call, deliver those deferred emails with the final transcript context. Intake emails may be final or partial, depending on whether `finalize_intake` ran.
+   - If `email.triggers.on_call_end`: `EmailChannel.deliver_call_end(metadata, context, captured_messages=...)` for each configured email channel. The lifecycle copies pending `take_message` entries before clearing the queue so the call summary email can render them above recording/transcript details.
 4. The LiveKit RTC job keeps the event loop alive until the room closes; close-time artifact work runs from the scheduled task
 
 ## Key design decisions

@@ -110,6 +110,29 @@ async def test_record_intake_answer_persists_partial_and_tracks_state(
 
 
 @pytest.mark.asyncio
+async def test_record_intake_answer_queues_partial_submission_for_email(
+    tmp_path, v2_yaml, fake_ctx,
+):
+    config = _config_with_intakes(v2_yaml, intake_file_path=str(tmp_path))
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_receptionist(config, lifecycle)
+
+    await r._record_intake_answer(
+        fake_ctx,
+        case_type="example_intake",
+        question_key="caller_full_name",
+        spoken_text="Jane Doe",
+        language="en",
+        english_summary="Jane Doe",
+    )
+
+    assert lifecycle._pending_intake_submission is not None
+    assert lifecycle._pending_intake_submission.status == "partial"
+    assert lifecycle._pending_intake_submission.answers[0].spoken_text == "Jane Doe"
+    assert lifecycle._intake_case_type_display == "Example intake"
+
+
+@pytest.mark.asyncio
 async def test_record_intake_answer_rejects_unknown_case_type(
     tmp_path, v2_yaml, fake_ctx,
 ):

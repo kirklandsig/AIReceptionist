@@ -252,6 +252,7 @@ class CallLifecycle:
 
         # Fan out email triggers
         if self.config.email:
+            captured_messages = list(self._pending_message_emails)
             # Deferred message emails go first: they're a per-take_message
             # invocation, and we want them paired with the same transcript
             # context the call-end and booking emails get.
@@ -289,7 +290,10 @@ class CallLifecycle:
             self._pending_message_emails.clear()
             if self.config.email.triggers.on_call_end:
                 await self._fire_email_trigger(
-                    "call_end", lambda ch, ctx: ch.deliver_call_end(self.metadata, ctx),
+                    "call_end",
+                    lambda ch, ctx: ch.deliver_call_end(
+                        self.metadata, ctx, captured_messages=captured_messages,
+                    ),
                     artifact, transcript_result,
                 )
             if self.config.email.triggers.on_booking and self.metadata.appointment_booked:

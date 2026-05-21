@@ -132,6 +132,7 @@ def build_call_end_email(
     metadata: CallMetadata,
     context: DispatchContext,
     *,
+    captured_messages: list[Message] | tuple[Message, ...] | None = None,
     include_transcript: bool = True,
     include_recording_link: bool = True,
 ) -> tuple[str, str, str]:
@@ -165,6 +166,17 @@ def build_call_end_email(
         body_text += f"FAQs answered: {', '.join(metadata.faqs_answered)}\n"
     if metadata.languages_detected:
         body_text += f"Languages: {', '.join(sorted(metadata.languages_detected))}\n"
+    captured_messages = list(captured_messages or [])
+    if captured_messages:
+        body_text += "\nCaptured Content:\n"
+        for idx, msg in enumerate(captured_messages, start=1):
+            body_text += (
+                f"\n{idx}. Message\n"
+                f"Caller: {msg.caller_name}\n"
+                f"Callback: {msg.callback_number}\n"
+                f"Received: {msg.timestamp}\n"
+                f"Message:\n{msg.message}\n"
+            )
     if include_recording_link:
         if metadata.recording_failed:
             body_text += f"\nRecording: failed\n"
@@ -210,6 +222,29 @@ def build_call_end_email(
     if metadata.languages_detected:
         body_html += f"<tr><td><strong>Languages</strong></td><td>{e(', '.join(sorted(metadata.languages_detected)))}</td></tr>"
     body_html += f"</table>"
+    if captured_messages:
+        rows = []
+        for msg in captured_messages:
+            rows.append(
+                "<tr>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(msg.caller_name)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(msg.callback_number)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(msg.timestamp)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(msg.message)}</td>"
+                "</tr>"
+            )
+        body_html += (
+            "<h3>Captured Content</h3>"
+            "<table cellpadding='0' style='border-collapse:collapse'>"
+            "<thead><tr>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Caller</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Callback</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Received</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Message</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table>"
+        )
     if include_recording_link:
         if metadata.recording_failed:
             body_html += f"<p><strong>Recording:</strong> failed</p>"

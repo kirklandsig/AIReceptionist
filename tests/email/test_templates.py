@@ -60,6 +60,45 @@ def test_call_end_email_body_has_duration():
     assert "2:00" in body_text or "120" in body_text
 
 
+def test_call_end_email_includes_captured_messages_above_transcript(tmp_path):
+    transcript_md = tmp_path / "transcript.md"
+    transcript_md.write_text("**Agent:** transcript body\n", encoding="utf-8")
+    md = _metadata()
+    msg = Message(
+        caller_name="Jane Doe",
+        callback_number="+15551112222",
+        message="Please call me back about my appointment.",
+        business_name="Acme Dental",
+        timestamp="2026-04-23T14:31:00+00:00",
+    )
+
+    _, body_text, body_html = build_call_end_email(
+        md,
+        DispatchContext(transcript_markdown_path=str(transcript_md)),
+        captured_messages=[msg],
+    )
+
+    assert "Captured Content:" in body_text
+    assert "1. Message" in body_text
+    assert "Caller: Jane Doe" in body_text
+    assert "Callback: +15551112222" in body_text
+    assert "Please call me back about my appointment." in body_text
+    assert body_text.index("Captured Content:") < body_text.index("--- Transcript ---")
+    assert "Captured Content" in body_html
+    assert "Jane Doe" in body_html
+    assert "Please call me back about my appointment." in body_html
+    assert body_html.index("Captured Content") < body_html.index("Transcript")
+
+
+def test_call_end_email_omits_captured_content_when_no_messages():
+    _, body_text, body_html = build_call_end_email(
+        _metadata(), DispatchContext(), captured_messages=[]
+    )
+
+    assert "Captured Content" not in body_text
+    assert "Captured Content" not in body_html
+
+
 def test_html_body_is_present_and_escapes():
     msg = Message("Jane <admin>", "+1", "<script>", "Acme", "2026-01-01T00:00:00+00:00")
     subject, body_text, body_html = build_message_email(msg, DispatchContext())

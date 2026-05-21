@@ -488,6 +488,24 @@ personality: |
   with the caller's time while remaining warm and helpful.
 ```
 
+### Intake says it is having trouble recording answers
+
+**Symptom**: During a structured intake, Riley says she is having trouble
+recording answers or falls back to `take_message`. Logs may show
+`unknown AI function record_intake_answer`.
+
+**Cause**: The Realtime session did not have the full tool registry active
+when the model attempted the intake tool call.
+
+**Solution**:
+1. Restart the worker so the post-start tool refresh runs:
+   `powershell -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -Business <slug>`.
+2. Confirm readiness with `scripts/agent-status.ps1 -Business <slug>` and look
+   for `Refreshed realtime tool registry` in `agent.log`.
+3. If the line is present but the warning continues, capture the latest
+   `unknown AI function` log entries and verify the running code includes the
+   current `receptionist/agent.py`.
+
 ---
 
 ## Message Delivery Issues

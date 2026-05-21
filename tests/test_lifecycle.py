@@ -278,6 +278,45 @@ async def test_lifecycle_queues_message_email_and_fires_at_call_end(
 
 
 @pytest.mark.asyncio
+async def test_on_call_ended_passes_pending_messages_to_call_end_email(v2_yaml, mocker):
+    from receptionist.config import (
+        BusinessConfig, EmailChannel as EmailChannelConfig, EmailConfig,
+        EmailSenderConfig, EmailTriggers, SMTPConfig,
+    )
+    from receptionist.messaging.channels.email import EmailChannel
+    from receptionist.messaging.models import Message
+
+    base = BusinessConfig.from_yaml_string(v2_yaml)
+    config = base.model_copy(update={
+        "messages": base.messages.model_copy(update={
+            "channels": [
+                *base.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@example.com"]),
+            ],
+        }),
+        "email": EmailConfig(
+            **{"from": "ai@example.com"},
+            sender=EmailSenderConfig(
+                type="smtp",
+                smtp=SMTPConfig(host="h", port=587, username="u", password="p", use_tls=True),
+            ),
+            triggers=EmailTriggers(on_message=False, on_call_end=True, on_booking=False),
+        ),
+    })
+    deliver_call_end = mocker.patch.object(EmailChannel, "deliver_call_end", autospec=True)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone="+15551112222")
+    msg = Message("Jane Doe", "+15551112222", "Please call me back.", config.business.name)
+    lifecycle.enqueue_message_email(msg)
+
+    await lifecycle.on_call_ended()
+
+    assert deliver_call_end.called
+    kwargs = deliver_call_end.call_args.kwargs
+    assert kwargs["captured_messages"] == [msg]
+    assert lifecycle._pending_message_emails == []
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_transcript_failure_still_fires_deferred_message_email(
     tmp_path, config, mocker,
 ):

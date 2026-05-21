@@ -677,6 +677,11 @@ the email and fires it at call-end with the freshly-written transcript path,
 so the email body can embed the full conversation. File and webhook channels
 still fire mid-call.
 
+When `email.triggers.on_call_end` is also enabled, the call summary email
+receives the same pending `take_message` entries before the queue is cleared
+and renders them in a Captured Content section above recording/transcript
+details.
+
 #### Channel: `type: "file"`
 
 | Field | Type | Required | Description |
@@ -915,7 +920,7 @@ the [Intake Setup](intakes-setup.md) guide.
 | `case_types[*].questions[*].prompt_es` | string | No | `None` | Spanish translation. |
 | `case_types[*].questions[*].required` | bool | No | `true` | If `false`, Riley may skip the question if the caller declines. |
 | `case_types[*].questions[*].validation` | `text`/`phone`/`email`/`date`/`yes_no` | No | `"text"` | Advisory shape hint. Influences prompt phrasing. |
-| `case_types[*].questions[*].critical` | bool | No | `false` | If `true`, Riley reads the answer back per-character and waits for explicit confirmation. |
+| `case_types[*].questions[*].critical` | bool | No | `false` | If `true`, Riley verifies the answer and waits for explicit confirmation. Phone numbers, SSNs, and email addresses are read back digit-by-digit or character-by-character; names/dates are repeated naturally. |
 
 **Validation rules:**
 

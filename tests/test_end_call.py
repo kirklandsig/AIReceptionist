@@ -227,6 +227,44 @@ async def test_speak_goodbye_and_terminate_calls_terminate_after_playout(
 
 
 @pytest.mark.asyncio
+async def test_speak_goodbye_finalizes_before_waiting_for_playout(
+    v2_yaml, monkeypatch,
+):
+    from receptionist.agent import _speak_goodbye_and_terminate
+    from receptionist.config import BusinessConfig
+
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    events: list[str] = []
+
+    async def _finalize() -> None:
+        events.append("finalize")
+
+    async def _wait_for_playout() -> None:
+        events.append("playout")
+
+    lifecycle.on_call_ended = AsyncMock(side_effect=_finalize)
+
+    handle = MagicMock()
+    handle.wait_for_playout = AsyncMock(side_effect=_wait_for_playout)
+    session = MagicMock()
+    session.generate_reply = MagicMock(return_value=handle)
+
+    job_ctx = _job_ctx()
+    monkeypatch.setattr(
+        "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
+    )
+    terminate = AsyncMock(side_effect=lambda *args, **kwargs: events.append("terminate"))
+    monkeypatch.setattr("receptionist.agent._terminate_room", terminate)
+
+    await _speak_goodbye_and_terminate(
+        session, lifecycle, job_ctx, reason="caller_goodbye",
+    )
+
+    assert events == ["finalize", "playout", "terminate"]
+
+
+@pytest.mark.asyncio
 async def test_speak_goodbye_and_terminate_hangs_up_on_playout_timeout(
     v2_yaml, monkeypatch,
 ):

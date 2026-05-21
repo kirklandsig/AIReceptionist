@@ -89,6 +89,33 @@ def test_lifecycle_record_agent_ended_first_reason_wins(config):
     assert lifecycle.metadata.outcomes == {"agent_ended"}
 
 
+def test_lifecycle_records_info_packet_success(config):
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_info_packet_sent(
+        packet_key="firm_overview",
+        packet_display_name="Firm Overview",
+        channel="email",
+        destination="claimant@example.com",
+    )
+    record = lifecycle.metadata.info_packet_sends[0]
+    assert record.status == "sent"
+    assert record.packet_key == "firm_overview"
+
+
+def test_lifecycle_records_info_packet_failure(config):
+    lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
+    lifecycle.record_info_packet_failed(
+        packet_key="firm_overview",
+        packet_display_name="Firm Overview",
+        channel="email",
+        destination="claimant@example.com",
+        error="transport_failed",
+    )
+    record = lifecycle.metadata.info_packet_sends[0]
+    assert record.status == "failed"
+    assert record.error == "transport_failed"
+
+
 def test_lifecycle_multi_outcome_transfer_and_booking(config):
     """A call can be both transferred AND book an appointment. Both outcomes recorded."""
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)

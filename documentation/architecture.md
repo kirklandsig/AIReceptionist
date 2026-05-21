@@ -12,6 +12,7 @@ receptionist/
 ├── config.py                Pydantic v2 models, YAML loader, env-var interpolation
 ├── prompts.py               System prompt builder (includes LANGUAGE block)
 ├── lifecycle.py             CallLifecycle: per-call metadata owner, close-event fan-out
+├── info_packets.py          Consent-gated caller packet email helper
 ├── voice_auth.py            Per-business Realtime bearer resolver (`voice.auth`)
 ├── voice/                   OpenAI voice auth setup CLI
 │   ├── setup_cli.py         python -m receptionist.voice setup <business>
@@ -42,7 +43,7 @@ receptionist/
 │   ├── sender.py            EmailSender protocol, EmailSendError, EmailAttachment
 │   ├── smtp.py              SMTPSender (aiosmtplib)
 │   ├── resend.py            ResendSender (httpx → Resend API)
-│   └── templates.py         build_message_email / build_call_end_email / build_intake_email
+│   └── templates.py         message / call-end / intake / info-packet email templates
 │
 ├── intakes/                 Structured intake persistence
 │   ├── models.py            IntakeAnswer / IntakeSubmission dataclasses
@@ -72,11 +73,14 @@ receptionist/
 
 ### 2. Session initialization
 1. `load_business_config(ctx)` picks a YAML based on `job.metadata["config"]` (or first YAML as fallback)
-2. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from SIP participant metadata when available (`sip.phoneNumber`, `sip.fromUser`, `sip.from`, or `sip_<digits>` identity fallback), and filled later from the `participant_connected` event if the SIP participant had not joined yet
-3. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id, api_key=await resolve_voice_bearer_async(config.voice.auth))`; explicit `oauth_codex` tokens refresh before session construction when needed. `voice.idle.away_seconds` feeds `AgentSession.user_away_timeout`, and `voice.idle.absolute_silence_seconds` can add a wall-clock final-transcript fallback for SIP trunks that send comfort noise.
-4. `lifecycle.attach_transcript_capture(session)` subscribes to `user_input_transcribed`, `conversation_item_added`, `function_tools_executed` events
-5. `session.on("close", _handle_close)` registered — cancels idle timers and schedules `lifecycle.on_call_ended()`
-6. `lifecycle.start_recording_if_enabled(ctx.room.name)` starts LiveKit Egress if `config.recording.enabled`
+2. The process has already started an idempotent generation watchdog before LiveKit worker registration when the restart launcher provides a worker generation token. The watchdog exits if `agent.generation` changes or disappears, preventing stale local LiveKit `dev` workers from handling later calls after a restart.
+3. `CallLifecycle(config, call_id, caller_phone)` is constructed; `caller_phone` is pulled from SIP participant metadata when available (`sip.phoneNumber`, `sip.fromUser`, `sip.from`, or `sip_<digits>` identity fallback), and filled later from the `participant_connected` event if the SIP participant had not joined yet
+4. `AgentSession` created with `openai.realtime.RealtimeModel(model=config.voice.model, voice=config.voice.voice_id, api_key=await resolve_voice_bearer_async(config.voice.auth))`; explicit `oauth_codex` tokens refresh before session construction when needed. `voice.idle.away_seconds` feeds `AgentSession.user_away_timeout`, and `voice.idle.absolute_silence_seconds` can add a wall-clock final-transcript fallback for SIP trunks that send comfort noise.
+5. `Receptionist(config, lifecycle)` is constructed and its local tool contract is verified before `session.start()`. Enabled intakes require `record_intake_answer` and `finalize_intake`; enabled info packets require `send_info_packet`.
+6. `lifecycle.attach_transcript_capture(session)` subscribes to `user_input_transcribed`, `conversation_item_added`, `function_tools_executed` events
+7. `session.on("close", _handle_close)` registered — cancels idle timers and schedules `lifecycle.on_call_ended()`
+8. `lifecycle.start_recording_if_enabled(ctx.room.name)` starts LiveKit Egress if `config.recording.enabled`
+9. After `session.start()`, the agent explicitly refreshes the Realtime tool registry with the full local tool list.
 
 ### 3. Greeting flow
 - If `config.recording.consent_preamble.enabled`: speak the preamble FIRST (two-party consent jurisdictions require notification before recording)
@@ -90,9 +94,10 @@ receptionist/
   - `transfer_call` → `lifecycle.record_transfer(department)` → `transfer_target` + outcome="transferred"
   - `take_message` → `Dispatcher.dispatch_message(...)` (sync file + background email/webhook) → `lifecycle.record_message_taken()` → outcome="message_taken"
   - `record_intake_answer` → validates case/question keys, updates in-memory intake state, writes a partial intake JSON after each answer, and queues the latest partial for structured call-end email
-  - `finalize_intake` → writes the final intake JSON, replaces the queued partial with the final structured intake email, and records outcome="intake_submitted"
+  - `finalize_intake` → writes the final intake JSON, replaces the queued partial with the final structured intake email, records outcome="intake_submitted", and nudges Riley to offer a configured packet when `info_packets.enabled`
+  - `send_info_packet` → after caller consent and confirmed email, sends a configured packet through the existing email sender stack and records success/failure in call metadata
   - `get_business_hours` → no metadata change
-  - `end_call` → `lifecycle.record_agent_ended(reason)` → outcome="agent_ended" + `agent_end_reason`, then background goodbye + SIP BYE/delete-room termination
+  - `end_call` → `lifecycle.record_agent_ended(reason)` → outcome="agent_ended" + `agent_end_reason`, then background goodbye. The background task finalizes `lifecycle.on_call_ended()` before waiting for goodbye playout or SIP BYE/delete-room termination, so deferred emails fire before LiveKit job teardown.
 - Idle safety nets run outside the LLM tool path:
   - Silence timeout (`voice.idle.away_seconds + silence_grace_seconds`) → reason="silence_timeout"
   - Optional wall-clock silence fallback (`voice.idle.absolute_silence_seconds`) → same `silence_timeout` reason when no non-empty final user transcript arrives before the threshold
@@ -101,13 +106,13 @@ receptionist/
 
 ### 5. Disconnect
 1. `session` emits `close` event
-2. `_handle_close` cancels pending idle timers, then schedules `lifecycle.on_call_ended()` via `asyncio.create_task`
+2. `_handle_close` cancels pending idle timers, then schedules `lifecycle.on_call_ended()` via `asyncio.create_task`. Agent-initiated `end_call` may have already finalized the lifecycle; the close handler is idempotent and becomes a no-op in that case.
 3. `on_call_ended`:
    - `metadata.mark_finalized()` (sets end_ts, duration, outcome="hung_up" if none)
    - If recording: `stop_recording(handle)` returns artifact URL (local path or s3://)
    - If transcripts: `write_transcript_files(...)` writes JSON + Markdown
    - If a message or intake email was queued during the call, deliver those deferred emails with the final transcript context. Intake emails may be final or partial, depending on whether `finalize_intake` ran.
-   - If `email.triggers.on_call_end`: `EmailChannel.deliver_call_end(metadata, context, captured_messages=...)` for each configured email channel. The lifecycle copies pending `take_message` entries before clearing the queue so the call summary email can render them above recording/transcript details.
+   - If `email.triggers.on_call_end`: `EmailChannel.deliver_call_end(metadata, context, captured_messages=...)` for each configured email channel. The lifecycle copies pending `take_message` entries before clearing the queue so the call summary email can render them above recording/transcript details. Packet send records from `CallMetadata.info_packet_sends` are rendered in the same call-end summary.
 4. The LiveKit RTC job keeps the event loop alive until the room closes; close-time artifact work runs from the scheduled task
 
 ## Key design decisions
@@ -143,6 +148,33 @@ All Google API calls go through `booking/client.py`, which wraps the
 synchronous `google-api-python-client` in `asyncio.to_thread`. This keeps
 the agent's event loop unblocked during Google calls (which can run
 hundreds of milliseconds on first-call auth).
+
+### Intake-only mode and packet delivery
+
+`agent.mode` defaults to `receptionist`. When set to `intake_only`,
+`build_system_prompt()` omits receptionist routing, FAQ, and business-hours
+sections and focuses Riley on phone intake, callback messages, and ending the
+call cleanly. The `transfer_call` tool also refuses at runtime in
+`intake_only` mode, so a transfer request becomes a message/callback path even
+if the model attempts the tool.
+
+`info_packets` is intentionally configuration-driven. Packet subject, body,
+and links come from YAML; the model only chooses a configured `packet_key` and
+caller-confirmed destination. `send_info_packet` refuses SMS in v1, validates
+the destination shape, sends through SMTP/Resend via `info_packets.py`, and
+stores the result in call metadata for auditability.
+
+### Local dev worker generation guard
+
+`scripts/restart-agent.ps1` delegates to `scripts/_spawn_agent.py`, which writes
+`secrets/<business>/runtime/agent.generation`, passes the token/path to the
+spawned process, and records `agent restart generation=<token>` in `agent.log`.
+The running agent starts that watchdog before LiveKit CLI worker registration
+and exits if a newer restart changes the file.
+`scripts/agent-status.ps1` is generation-aware: it only reports healthy when
+the pidfile PID is this checkout's `python -m receptionist.agent dev`, a
+`registered worker` line appears after the current generation marker, and no
+unexpected same-checkout orphan agent processes are running.
 
 ## Known upstream limitations
 

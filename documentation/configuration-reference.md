@@ -11,6 +11,7 @@ This document is a complete reference for the YAML business configuration file u
 - [Complete Example](#complete-example)
 - [Field Reference](#field-reference)
   - [business](#business)
+  - [agent](#agent)
   - [voice](#voice)
   - [languages](#languages)
   - [greeting](#greeting)
@@ -25,6 +26,8 @@ This document is a complete reference for the YAML business configuration file u
   - [transcripts](#transcripts)
   - [retention](#retention)
   - [sip](#sip)
+  - [intakes](#intakes)
+  - [info_packets](#info_packets)
 - [Validation Rules](#validation-rules)
 - [Loading Behavior](#loading-behavior)
 - [Tips and Best Practices](#tips-and-best-practices)
@@ -75,6 +78,9 @@ business:
   name: "Acme Dental"
   type: "dental office"
   timezone: "America/New_York"
+
+agent:
+  mode: "receptionist"
 
 voice:
   voice_id: "marin"
@@ -152,6 +158,23 @@ email:
     on_call_end: true
     on_booking: false
 
+# Optional: configured, consent-gated packets sent directly to callers.
+# V1 supports email only and configured text/links only; no attachments.
+info_packets:
+  enabled: true
+  default_packet: office_overview
+  packets:
+    - key: office_overview
+      display_name: "Office Overview"
+      email_subject: "Information from Acme Dental"
+      email_body: |
+        Thank you for speaking with Acme Dental.
+
+        Our office will review your information and follow up during business hours.
+      links:
+        - label: "Website"
+          url: "https://example.com"
+
 recording:
   enabled: false   # set to true once cloud storage is configured below
   storage:
@@ -203,6 +226,21 @@ business:
   name: "Springfield Family Law"
   type: "law firm"
   timezone: "America/Chicago"
+```
+
+---
+
+### agent
+
+Agent behavior mode. Optional; defaults to the normal receptionist prompt.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `mode` | `"receptionist"` / `"intake_only"` | No | `"receptionist"` | `receptionist` includes business hours, FAQ, transfer, message, calendar, and intake guidance. `intake_only` suppresses receptionist routing/FAQ/hours behavior and focuses Riley on configured phone intakes, callback messages, and consent-gated packet offers. |
+
+```yaml
+agent:
+  mode: "intake_only"
 ```
 
 ---
@@ -953,6 +991,49 @@ intakes:
 
 ---
 
+### info_packets
+
+Optional email information packets sent directly to a caller after explicit
+permission. Packet content is fully configured in YAML; Riley must not invent
+or rewrite packet text. V1 supports email only, configured text and links only,
+and no attachments or PDFs.
+
+`info_packets.enabled: true` requires the top-level `email:` sender block. The
+caller destination address is supplied at call time after Riley asks permission
+and confirms the email address character-by-character.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | bool | No | `false` | Master switch. When false or omitted, `send_info_packet` refuses to send and tells Riley the office will follow up. |
+| `default_packet` | string | No | `None` | Optional packet key Riley should prefer when the caller asks for a general packet. Must match a configured packet key. |
+| `packets[*].key` | string | Yes | - | Safe packet identifier passed to `send_info_packet(packet_key=...)`. Must match `^[a-zA-Z0-9_-]+$`. |
+| `packets[*].display_name` | string | Yes | - | Human-readable packet label used in prompts and call-end summaries. |
+| `packets[*].email_subject` | string | Yes | - | Subject line for the caller-facing packet email. Newlines are normalized before sending. |
+| `packets[*].email_body` | string | Yes | - | Pre-approved body text. The model does not generate this content. |
+| `packets[*].links[*].label` | string | Yes | - | Display label for a configured link. |
+| `packets[*].links[*].url` | string | Yes | - | HTTP/HTTPS URL only. Other schemes are rejected at config load. |
+
+**Example:**
+
+```yaml
+info_packets:
+  enabled: true
+  default_packet: office_overview
+  packets:
+    - key: office_overview
+      display_name: "Office Overview"
+      email_subject: "Information from Acme Dental"
+      email_body: |
+        Thank you for speaking with Acme Dental.
+
+        Our office will review your information and follow up during business hours.
+      links:
+        - label: "Website"
+          url: "https://example.com"
+```
+
+---
+
 ## Validation Rules
 
 The following validation rules are enforced by the Pydantic models in `config.py`:
@@ -981,6 +1062,11 @@ The following validation rules are enforced by the Pydantic models in `config.py
 | Intake question uniqueness | intakes.case_types[*].questions[*].key | Must be unique within each case type |
 | Intake requires at least one case type | intakes.case_types | List cannot be empty when intakes block present |
 | Intake requires at least one question | intakes.case_types[*].questions | Each case type must define at least one question |
+| Agent mode | agent.mode | Must be `"receptionist"` or `"intake_only"` |
+| Info packet keys | info_packets.packets[*].key | Must match `^[a-zA-Z0-9_-]+$` and be unique |
+| Info packet links | info_packets.packets[*].links[*].url | Must be `http://` or `https://` |
+| Enabled info packets require email | info_packets + email | `info_packets.enabled` requires top-level `email:` config |
+| Info packet default key | info_packets.default_packet | Must match a configured packet key |
 
 ---
 

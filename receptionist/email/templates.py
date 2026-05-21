@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 
+from receptionist.config import InfoPacket
 from receptionist.messaging.models import Message, DispatchContext
 from receptionist.transcript.metadata import CallMetadata
 
@@ -112,6 +113,32 @@ def build_message_email(
     return subject, body_text, body_html
 
 
+def build_info_packet_email(
+    packet: InfoPacket, *, business_name: str, call_id: str,
+) -> tuple[str, str, str]:
+    subject = _subject_safe(packet.email_subject)
+    body_text = f"{packet.email_body}\n"
+    if packet.links:
+        body_text += "\nLinks:\n"
+        for link in packet.links:
+            body_text += f"- {link.label}: {link.url}\n"
+    body_text += f"\nCall ID: {call_id}\n"
+
+    def e(s: object) -> str:
+        return html.escape(str(s) if s is not None else "", quote=True)
+
+    body_html = (
+        f"<p>{e(packet.email_body).replace(chr(10), '<br>')}</p>"
+    )
+    if packet.links:
+        body_html += "<h3>Links</h3><ul>"
+        for link in packet.links:
+            body_html += f"<li><a href='{e(link.url)}'>{e(link.label)}</a></li>"
+        body_html += "</ul>"
+    body_html += f"<p><small>{e(business_name)} call ID: {e(call_id)}</small></p>"
+    return subject, body_text, body_html
+
+
 def _read_transcript(path: str) -> tuple[str | None, str | None]:
     """Return (content, error) for a transcript markdown path.
 
@@ -166,6 +193,17 @@ def build_call_end_email(
         body_text += f"FAQs answered: {', '.join(metadata.faqs_answered)}\n"
     if metadata.languages_detected:
         body_text += f"Languages: {', '.join(sorted(metadata.languages_detected))}\n"
+    if metadata.info_packet_sends:
+        body_text += "Info packets:\n"
+        for record in metadata.info_packet_sends:
+            status = (
+                record.status if record.error is None
+                else f"{record.status} ({record.error})"
+            )
+            body_text += (
+                f"- {record.packet_display_name} via {record.channel} "
+                f"to {record.destination}: {status}\n"
+            )
     captured_messages = list(captured_messages or [])
     if captured_messages:
         body_text += "\nCaptured Content:\n"
@@ -221,6 +259,33 @@ def build_call_end_email(
         body_html += f"<tr><td><strong>FAQs answered</strong></td><td>{e(', '.join(metadata.faqs_answered))}</td></tr>"
     if metadata.languages_detected:
         body_html += f"<tr><td><strong>Languages</strong></td><td>{e(', '.join(sorted(metadata.languages_detected)))}</td></tr>"
+    if metadata.info_packet_sends:
+        rows = []
+        for record in metadata.info_packet_sends:
+            status = (
+                record.status if record.error is None
+                else f"{record.status} ({record.error})"
+            )
+            rows.append(
+                "<tr>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(record.packet_display_name)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(record.channel)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(record.destination)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(status)}</td>"
+                "</tr>"
+            )
+        body_html += (
+            "<tr><td><strong>Info packets</strong></td><td>"
+            "<table cellpadding='0' style='border-collapse:collapse'>"
+            "<thead><tr>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Packet</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Channel</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Destination</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Status</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table></td></tr>"
+        )
     body_html += f"</table>"
     if captured_messages:
         rows = []

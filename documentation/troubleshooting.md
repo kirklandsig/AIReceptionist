@@ -222,6 +222,22 @@ being torn down.
 engine connection errors still log normally. If you still see this exact line,
 confirm the running process has the latest `receptionist/agent.py`.
 
+### Missing email after an agent-ended call
+
+**Symptom**: The transcript/message file exists, but the deferred message email
+or call-end email does not arrive after the agent called `end_call`.
+
+**Cause**: Older workers could wait for the goodbye audio to finish before
+running call finalization. If the caller hung up during that goodbye, LiveKit
+started tearing down the job executor and SMTP DNS lookup could fail with
+`Executor shutdown has been called`.
+
+**Solution**: In current builds, the expected log order is
+`agent_end: invoking lifecycle.on_call_ended pre-terminate` before goodbye
+playout wait and before SIP teardown. If the SMTP executor error appears
+without that line for the same call, restart the worker and confirm no stale
+`python -m receptionist.agent dev` child process is still registered.
+
 ### Codex CLI not found during voice setup
 
 **Symptom**: `python -m receptionist.voice setup <business>` exits with
@@ -500,11 +516,36 @@ when the model attempted the intake tool call.
 **Solution**:
 1. Restart the worker so the post-start tool refresh runs:
    `powershell -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -Business <slug>`.
-2. Confirm readiness with `scripts/agent-status.ps1 -Business <slug>` and look
-   for `Refreshed realtime tool registry` in `agent.log`.
-3. If the line is present but the warning continues, capture the latest
-   `unknown AI function` log entries and verify the running code includes the
-   current `receptionist/agent.py`.
+2. Confirm readiness with `scripts/agent-status.ps1 -Business <slug>`. The
+   status script requires the pidfile PID to be this checkout's
+   `python -m receptionist.agent dev`, a current `agent.generation` file, an
+   `agent restart generation=<token>` marker, a later `registered worker` line,
+   and no unexpected same-checkout orphan agent processes.
+3. Look for `Refreshed realtime tool registry` in `agent.log` for the affected
+   call. If this line is missing, the Realtime session may not have received the
+   full tool list.
+4. If the refresh line is present but the warning continues, capture the latest
+   `unknown AI function` entries and verify the running code includes the
+   current `receptionist/agent.py`. Enabled intakes now fail fast at call setup
+   if the local `Receptionist.tools` list is missing `record_intake_answer` or
+   `finalize_intake`, so continued warnings point at Realtime registration or a
+   stale external worker.
+5. If `agent-status.ps1` reports PID identity, generation, or orphan failures,
+   restart again with `scripts/restart-agent.ps1`. The generation watchdog exits
+   stale local workers when a newer restart writes a different generation token.
+
+### Intake-only line will not transfer calls
+
+**Symptom**: Riley says the intake line cannot transfer and offers to take a
+message instead.
+
+**Cause**: This is expected when `agent.mode: intake_only`. The mode suppresses
+receptionist transfer prompting and the `transfer_call` tool refuses before any
+SIP transfer attempt.
+
+**Solution**: Use `agent.mode: receptionist` for a general receptionist line
+that can transfer. Keep `agent.mode: intake_only` for lines that should only
+complete configured intakes or take callback messages.
 
 ---
 
@@ -538,6 +579,23 @@ messages:
     - type: "webhook"
       url: "https://your-app.com/api/messages"
 ```
+
+### Info packet email is not sent
+
+**Symptom**: Riley says she cannot send the packet, or the call-end summary
+shows an info packet with `status: failed`.
+
+**Cause**: Common causes are missing caller consent, unsupported `channel` value
+(`email` is the only v1 channel), an invalid destination address, missing
+top-level `email:` config, or an SMTP/Resend transport failure.
+
+**Solution**:
+1. Verify `info_packets.enabled: true` and at least one configured packet key.
+2. Verify top-level `email:` sender config works for normal call-end emails.
+3. Confirm the transcript shows Riley asked permission and confirmed the email
+   address before calling `send_info_packet` with `consent_confirmed=true`.
+4. Check `agent.log` for `component=agent.info_packets` if the call-end summary
+   shows `transport_failed`.
 
 ### Message files have wrong timestamps
 

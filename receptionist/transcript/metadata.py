@@ -18,6 +18,32 @@ VALID_OUTCOMES = {
 
 
 @dataclass
+class InfoPacketSendRecord:
+    packet_key: str
+    packet_display_name: str
+    channel: str
+    destination: str
+    status: str
+    error: str | None = None
+    sent_at: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.sent_at:
+            self.sent_at = datetime.now(timezone.utc).isoformat()
+
+    def to_dict(self) -> dict:
+        return {
+            "packet_key": self.packet_key,
+            "packet_display_name": self.packet_display_name,
+            "channel": self.channel,
+            "destination": self.destination,
+            "status": self.status,
+            "error": self.error,
+            "sent_at": self.sent_at,
+        }
+
+
+@dataclass
 class CallMetadata:
     call_id: str
     business_name: str
@@ -40,6 +66,7 @@ class CallMetadata:
     # unproductive-turn cap. Stays None when the agent did not initiate the
     # hangup (e.g. caller hung up first => outcome `hung_up`).
     agent_end_reason: str | None = None
+    info_packet_sends: list[InfoPacketSendRecord] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.start_ts:
@@ -80,4 +107,7 @@ class CallMetadata:
             "languages_detected": sorted(self.languages_detected),
             "recording_failed": self.recording_failed,
             "recording_artifact": self.recording_artifact,
+            "info_packet_sends": [
+                record.to_dict() for record in self.info_packet_sends
+            ],
         }

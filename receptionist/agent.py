@@ -6,6 +6,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 from collections import deque
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -24,6 +26,7 @@ from livekit.plugins import openai, noise_cancellation
 from receptionist.booking.availability import find_slots
 from receptionist.booking.models import SlotProposal
 from receptionist.config import BusinessConfig, load_config
+from receptionist.info_packets import is_valid_email_destination, send_info_packet_email
 from receptionist.lifecycle import CallLifecycle
 from receptionist.messaging.dispatcher import Dispatcher
 from receptionist.messaging.models import DispatchContext, Message
@@ -40,6 +43,8 @@ DEFAULT_AGENT_NAME = "receptionist"
 _BENIGN_ENGINE_CLOSED_MESSAGE = "engine: connection error: engine is closed"
 _LIVEKIT_OPERATION_TIMEOUT_SECONDS = 10.0
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+_GENERATION_WATCHDOG_THREAD: threading.Thread | None = None
+_GENERATION_WATCHDOG_INTERVAL_SECONDS = 2.0
 
 
 def _create_background_task(coro) -> asyncio.Task:
@@ -57,6 +62,94 @@ def _tool_display_names(tools) -> list[str]:
         if name:
             names.append(str(name))
     return names
+
+
+def _agent_generation_matches_file() -> bool:
+    expected = os.environ.get("RECEPTIONIST_AGENT_GENERATION")
+    generation_file = os.environ.get("RECEPTIONIST_AGENT_GENERATION_FILE")
+    if not expected or not generation_file:
+        return True
+    try:
+        actual = Path(generation_file).read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return actual == expected
+
+
+def _check_generation_watchdog_once(*, exit_process=os._exit) -> bool:
+    if _agent_generation_matches_file():
+        return False
+    logger.error(
+        "Agent generation changed or disappeared; exiting stale worker",
+        extra={"component": "agent.generation"},
+    )
+    exit_process(0)
+    return True
+
+
+def _generation_watchdog_loop(
+    *, interval_seconds: float = _GENERATION_WATCHDOG_INTERVAL_SECONDS,
+) -> None:
+    while True:
+        _check_generation_watchdog_once()
+        time.sleep(interval_seconds)
+
+
+def _start_generation_watchdog_once(
+    *, interval_seconds: float = _GENERATION_WATCHDOG_INTERVAL_SECONDS,
+    thread_factory=threading.Thread,
+    exit_process=os._exit,
+) -> threading.Thread | None:
+    global _GENERATION_WATCHDOG_THREAD
+    if not os.environ.get("RECEPTIONIST_AGENT_GENERATION"):
+        return None
+    if not os.environ.get("RECEPTIONIST_AGENT_GENERATION_FILE"):
+        return None
+    if _check_generation_watchdog_once(exit_process=exit_process):
+        return None
+    if _GENERATION_WATCHDOG_THREAD is not None and _GENERATION_WATCHDOG_THREAD.is_alive():
+        return _GENERATION_WATCHDOG_THREAD
+    _GENERATION_WATCHDOG_THREAD = thread_factory(
+        target=lambda: _generation_watchdog_loop(interval_seconds=interval_seconds),
+        name="receptionist-generation-watchdog",
+        daemon=True,
+    )
+    _GENERATION_WATCHDOG_THREAD.start()
+    logger.info(
+        "Started agent generation watchdog",
+        extra={"component": "agent.generation"},
+    )
+    return _GENERATION_WATCHDOG_THREAD
+
+
+def _run_agent_cli() -> None:
+    _start_generation_watchdog_once()
+    agents.cli.run_app(server)
+
+
+def _verify_tool_contract(receptionist, *, call_id: str) -> None:
+    config = receptionist.config
+    required: set[str] = set()
+    intakes_cfg = getattr(config, "intakes", None)
+    if intakes_cfg is not None and getattr(intakes_cfg, "enabled", False):
+        required.update({"record_intake_answer", "finalize_intake"})
+    packets_cfg = getattr(config, "info_packets", None)
+    if packets_cfg is not None and getattr(packets_cfg, "enabled", False):
+        required.add("send_info_packet")
+    if not required:
+        return
+
+    available = set(_tool_display_names(receptionist.tools))
+    missing = sorted(required - available)
+    if not missing:
+        return
+
+    logger.error(
+        "Receptionist tool contract missing required tools: %s",
+        ", ".join(missing),
+        extra={"call_id": call_id, "component": "agent.tools"},
+    )
+    raise RuntimeError(f"Receptionist missing required tools: {', '.join(missing)}")
 
 
 async def _refresh_realtime_tools(receptionist, *, call_id: str) -> None:
@@ -400,35 +493,20 @@ async def _speak_goodbye_and_terminate(
         reason, _AGENT_END_INSTRUCTIONS["caller_goodbye"],
     )
 
+    handle = None
     if session is not None:
         try:
             handle = session.generate_reply(instructions=instructions)
-            try:
-                await asyncio.wait_for(handle.wait_for_playout(), timeout=10.0)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "agent_end: goodbye playout timed out (reason=%s)",
-                    reason, extra=log_extra,
-                )
-            except Exception:
-                logger.exception(
-                    "agent_end: error waiting for goodbye playout (reason=%s)",
-                    reason, extra=log_extra,
-                )
         except Exception:
             logger.exception(
                 "agent_end: failed to speak goodbye (reason=%s); proceeding "
                 "to terminate", reason, extra=log_extra,
             )
 
-    # Finalize the call lifecycle BEFORE removing the SIP participant. The
-    # LiveKit job process tears down the asyncio default executor shortly
-    # after the participant disconnects, which breaks aiosmtplib's DNS
-    # lookup with "Executor shutdown has been called". Running the call-end
-    # fan-out (transcript write + deferred message emails + call-end email)
-    # here keeps it inside the healthy event-loop window. The session-close
-    # handler still invokes on_call_ended afterward; CallLifecycle is
-    # idempotent and the second call is a no-op.
+    # Finalize the call lifecycle before waiting for goodbye playout or
+    # removing the SIP participant. Callers often hang up during the goodbye;
+    # if finalization waits for playout, LiveKit may already be tearing down
+    # the job executor when deferred email fan-out starts.
     logger.info(
         "agent_end: invoking lifecycle.on_call_ended pre-terminate "
         "(pending=%d, channels=%d)",
@@ -448,6 +526,20 @@ async def _speak_goodbye_and_terminate(
             "proceeding to terminate anyway",
             extra=log_extra,
         )
+
+    if handle is not None:
+        try:
+            await asyncio.wait_for(handle.wait_for_playout(), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "agent_end: goodbye playout timed out (reason=%s)",
+                reason, extra=log_extra,
+            )
+        except Exception:
+            logger.exception(
+                "agent_end: error waiting for goodbye playout (reason=%s)",
+                reason, extra=log_extra,
+            )
 
     caller_identity = _get_caller_identity(job_ctx)
     await _terminate_room(
@@ -670,6 +762,12 @@ class Receptionist(Agent):
     @function_tool()
     async def transfer_call(self, ctx: RunContext, department: str) -> str:
         """Transfer the caller to a specific department or person."""
+        if self.config.agent.mode == "intake_only":
+            return (
+                "This intake line cannot transfer calls. Offer to take a "
+                "message with the caller's name, callback number, and what "
+                "they need so someone can call them back."
+            )
         target = self._routing_by_name.get(department.lower())
         if target is None:
             available = ", ".join(e.name for e in self.config.routing)
@@ -931,10 +1029,96 @@ class Receptionist(Agent):
             submission, case_type_display=display,
         )
         self.lifecycle.record_intake_submitted()
+        packet_instruction = ""
+        packets_cfg = self.config.info_packets
+        if packets_cfg is not None and packets_cfg.enabled:
+            packet_instruction = (
+                " Ask whether the caller wants an approved information packet "
+                "emailed. Only call send_info_packet after the caller gives "
+                "permission and confirms their email address."
+            )
         return (
             f"Intake submitted for {display}. Let the caller know "
             f"someone from the office will follow up during business hours."
+            f"{packet_instruction}"
         )
+
+    @function_tool()
+    async def send_info_packet(
+        self,
+        ctx: RunContext,
+        packet_key: str,
+        channel: str = "email",
+        destination: str = "",
+        consent_confirmed: bool = False,
+    ) -> str:
+        """Send a configured information packet after caller consent."""
+        packets_cfg = self.config.info_packets
+        if packets_cfg is None or not packets_cfg.enabled:
+            return (
+                "Information packet sending is not enabled. Tell the caller "
+                "the office will follow up."
+            )
+        if channel.lower() != "email":
+            return "I can only send information packets by email right now."
+        if not consent_confirmed:
+            return (
+                "Ask the caller for permission and confirm the email address "
+                "before sending."
+            )
+        destination = (destination or "").strip()
+        if not is_valid_email_destination(destination):
+            return (
+                "That email address does not look valid. Ask the caller to "
+                "spell it again."
+            )
+        packet = packets_cfg.by_key().get(packet_key)
+        if packet is None:
+            available = ", ".join(sorted(packets_cfg.by_key().keys()))
+            return (
+                f"Unknown information packet {packet_key!r}. Available "
+                f"packets: {available}."
+            )
+        if self.config.email is None:
+            return (
+                "Information packet email is not configured. Tell the caller "
+                "the office will follow up."
+            )
+        try:
+            await send_info_packet_email(
+                packet=packet,
+                email_config=self.config.email,
+                destination=destination,
+                business_name=self.config.business.name,
+                call_id=self.lifecycle.metadata.call_id,
+            )
+        except Exception:
+            logger.exception(
+                "send_info_packet failed",
+                extra={
+                    "call_id": self.lifecycle.metadata.call_id,
+                    "component": "agent.info_packets",
+                    "packet_key": packet.key,
+                },
+            )
+            self.lifecycle.record_info_packet_failed(
+                packet_key=packet.key,
+                packet_display_name=packet.display_name,
+                channel="email",
+                destination=destination,
+                error="transport_failed",
+            )
+            return (
+                "I had trouble sending that packet. Let the caller know the "
+                "office will follow up."
+            )
+        self.lifecycle.record_info_packet_sent(
+            packet_key=packet.key,
+            packet_display_name=packet.display_name,
+            channel="email",
+            destination=destination,
+        )
+        return f"Information packet sent to {destination}."
 
     @function_tool()
     async def end_call(
@@ -1380,6 +1564,7 @@ server = AgentServer()
 
 @server.rtc_session(agent_name=_resolve_agent_name())
 async def handle_call(ctx: agents.JobContext):
+    _start_generation_watchdog_once()
     config = load_business_config(ctx)
 
     lifecycle = CallLifecycle(
@@ -1454,6 +1639,7 @@ async def handle_call(ctx: agents.JobContext):
     # Build the Receptionist BEFORE wiring its event listeners so we can
     # also subscribe to session events the agent needs (issue #11).
     receptionist = Receptionist(config, lifecycle)
+    _verify_tool_contract(receptionist, call_id=lifecycle.metadata.call_id)
     session.on("user_input_transcribed", receptionist._on_user_input_transcribed)
     session.on("function_tools_executed", receptionist._on_function_tools_executed)
     session.on("conversation_item_added", receptionist._on_conversation_item_added)
@@ -1652,4 +1838,4 @@ async def handle_call(ctx: agents.JobContext):
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(server)
+    _run_agent_cli()

@@ -681,6 +681,72 @@ class IntakesConfig(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Agent mode and approved info packets
+# ---------------------------------------------------------------------------
+
+class AgentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["receptionist", "intake_only"] = "receptionist"
+
+
+class InfoPacketLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def validate_http_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("info packet link URL must be http or https")
+        return v
+
+
+class InfoPacket(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    display_name: str
+    email_subject: str
+    email_body: str
+    links: list[InfoPacketLink] = Field(default_factory=list)
+
+    @field_validator("key")
+    @classmethod
+    def validate_key(cls, v: str) -> str:
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+", v):
+            raise ValueError("info packet key must be a safe identifier")
+        return v
+
+
+class InfoPacketsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    default_packet: str | None = None
+    packets: list[InfoPacket] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_packets(self) -> InfoPacketsConfig:
+        keys = [packet.key for packet in self.packets]
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate info packet key")
+        if self.enabled and not self.packets:
+            raise ValueError("info_packets.enabled requires at least one packet")
+        if self.default_packet is not None and self.default_packet not in set(keys):
+            raise ValueError(
+                "info_packets.default_packet must match a configured packet key"
+            )
+        return self
+
+    def by_key(self) -> dict[str, InfoPacket]:
+        return {packet.key: packet for packet in self.packets}
+
+
+# ---------------------------------------------------------------------------
 # Top-level
 # ---------------------------------------------------------------------------
 
@@ -704,6 +770,8 @@ class BusinessConfig(BaseModel):
     intakes: IntakesConfig | None = None
     sip: SipConfig = Field(default_factory=SipConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
+    info_packets: InfoPacketsConfig | None = None
 
     @model_validator(mode="after")
     def validate_cross_section(self) -> BusinessConfig:
@@ -726,6 +794,12 @@ class BusinessConfig(BaseModel):
                 "email.triggers.on_booking is true but calendar is not enabled. "
                 "Enable calendar or disable the on_booking trigger."
             )
+        if (
+            self.info_packets is not None
+            and self.info_packets.enabled
+            and self.email is None
+        ):
+            raise ValueError("info_packets.enabled requires top-level email config")
         # Intakes deliver their submission email through whichever email
         # channels are already in `messages.channels`, so enabling intakes
         # without an email channel means the operator only gets the file

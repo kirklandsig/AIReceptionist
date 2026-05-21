@@ -11,7 +11,9 @@ from receptionist.recording.egress import (
     RecordingArtifact, RecordingHandle, start_recording, stop_recording,
 )
 from receptionist.transcript.capture import TranscriptCapture
-from receptionist.transcript.metadata import CallMetadata, VALID_OUTCOMES
+from receptionist.transcript.metadata import (
+    CallMetadata, InfoPacketSendRecord, VALID_OUTCOMES,
+)
 from receptionist.transcript.writer import (
     TranscriptWriteResult, write_transcript_files,
 )
@@ -158,6 +160,44 @@ class CallLifecycle:
         if self.metadata.agent_end_reason is None:
             self.metadata.agent_end_reason = reason
         self._add_outcome("agent_ended")
+
+    def record_info_packet_sent(
+        self,
+        *,
+        packet_key: str,
+        packet_display_name: str,
+        channel: str,
+        destination: str,
+    ) -> None:
+        self.metadata.info_packet_sends.append(
+            InfoPacketSendRecord(
+                packet_key=packet_key,
+                packet_display_name=packet_display_name,
+                channel=channel,
+                destination=destination,
+                status="sent",
+            )
+        )
+
+    def record_info_packet_failed(
+        self,
+        *,
+        packet_key: str,
+        packet_display_name: str,
+        channel: str,
+        destination: str,
+        error: str,
+    ) -> None:
+        self.metadata.info_packet_sends.append(
+            InfoPacketSendRecord(
+                packet_key=packet_key,
+                packet_display_name=packet_display_name,
+                channel=channel,
+                destination=destination,
+                status="failed",
+                error=error,
+            )
+        )
 
     def _add_outcome(self, outcome: str) -> None:
         # Explicit membership check prevents silent drops if a future outcome

@@ -99,6 +99,48 @@ def test_call_end_email_omits_captured_content_when_no_messages():
     assert "Captured Content" not in body_html
 
 
+def test_call_end_email_includes_info_packet_summary():
+    from receptionist.transcript.metadata import InfoPacketSendRecord
+
+    md = _metadata()
+    md.info_packet_sends.append(
+        InfoPacketSendRecord(
+            packet_key="firm_overview",
+            packet_display_name="Firm Overview",
+            channel="email",
+            destination="claimant@example.com",
+            status="sent",
+            sent_at="2026-05-21T12:00:00+00:00",
+        )
+    )
+    _, body_text, body_html = build_call_end_email(md, DispatchContext())
+    assert "Info packets:" in body_text
+    assert "Firm Overview" in body_text
+    assert "claimant@example.com" in body_text
+    assert "Info packets" in body_html
+
+
+def test_build_info_packet_email_renders_configured_body_and_links():
+    from receptionist.config import InfoPacket, InfoPacketLink
+    from receptionist.email.templates import build_info_packet_email
+
+    packet = InfoPacket(
+        key="firm_overview",
+        display_name="Firm Overview",
+        email_subject="Information from Example Law\nInjected",
+        email_body="Thank you for completing an intake.",
+        links=[InfoPacketLink(label="Website", url="https://example.com")],
+    )
+    subject, body_text, body_html = build_info_packet_email(
+        packet, business_name="Example Law", call_id="room-1",
+    )
+    assert subject == "Information from Example Law Injected"
+    assert "Thank you for completing an intake." in body_text
+    assert "Website: https://example.com" in body_text
+    assert "Call ID: room-1" in body_text
+    assert "https://example.com" in body_html
+
+
 def test_html_body_is_present_and_escapes():
     msg = Message("Jane <admin>", "+1", "<script>", "Acme", "2026-01-01T00:00:00+00:00")
     subject, body_text, body_html = build_message_email(msg, DispatchContext())

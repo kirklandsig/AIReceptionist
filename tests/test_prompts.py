@@ -326,3 +326,89 @@ def test_intakes_prompt_limits_per_character_readback_to_contact_fields():
     prompt = build_system_prompt(config)
     assert "Do NOT read back non-critical answers" in prompt
     assert "phone numbers, Social Security numbers, and email addresses" in prompt
+
+
+INTAKE_ONLY_YAML = """
+agent:
+  mode: intake_only
+business: { name: "Test Law", type: "law office", timezone: "America/New_York" }
+voice: { voice_id: "marin" }
+languages: { primary: "en", allowed: ["en", "es"] }
+greeting: "Thank you for calling Test Law's automated intake system."
+personality: "You are Riley, an automated intake assistant. The intake takes about 30 minutes."
+hours:
+  monday: { open: "09:00", close: "17:00" }
+  tuesday: closed
+  wednesday: closed
+  thursday: closed
+  friday: closed
+  saturday: closed
+  sunday: closed
+after_hours_message: "We are currently closed."
+routing:
+  - name: "Front Desk"
+    number: "+15551234567"
+    description: "General inquiries"
+faqs:
+  - question: "Where are you located?"
+    answer: "123 Main Street."
+messages:
+  channels:
+    - type: "file"
+      file_path: "./messages/test/"
+email:
+  from: "AI Receptionist <ai@example.com>"
+  sender:
+    type: "smtp"
+    smtp:
+      host: "smtp.example.com"
+      port: 587
+      username: "user"
+      password: "pass"
+      use_tls: true
+intakes:
+  enabled: true
+  preamble_en: "This takes about 30 minutes."
+  submission:
+    file_path: "./messages/test/intakes/"
+  case_types:
+    - key: workers_comp
+      display_name: "Workers' Compensation"
+      questions:
+        - key: full_name
+          prompt_en: "What is your full legal name?"
+          required: true
+          critical: true
+info_packets:
+  enabled: true
+  default_packet: firm_overview
+  packets:
+    - key: firm_overview
+      display_name: "Firm Overview"
+      email_subject: "Information from Example Law"
+      email_body: "Thank you for completing an intake."
+"""
+
+
+def test_intake_only_prompt_identifies_intake_system():
+    config = BusinessConfig.from_yaml_string(INTAKE_ONLY_YAML)
+    prompt = build_system_prompt(config)
+    assert "automated intake" in prompt.lower()
+    assert "ready" in prompt.lower()
+    assert "30 minutes" in prompt
+
+
+def test_intake_only_prompt_suppresses_receptionist_behavior():
+    config = BusinessConfig.from_yaml_string(INTAKE_ONLY_YAML)
+    prompt = build_system_prompt(config)
+    assert "DEPARTMENTS YOU CAN TRANSFER TO" not in prompt
+    assert "When asked about business hours" not in prompt
+    assert "FREQUENTLY ASKED QUESTIONS" not in prompt
+
+
+def test_info_packets_prompt_requires_consent_and_confirmed_email():
+    config = BusinessConfig.from_yaml_string(INTAKE_ONLY_YAML)
+    prompt = build_system_prompt(config)
+    assert "send_info_packet" in prompt
+    assert "permission" in prompt.lower() or "consent" in prompt.lower()
+    assert "character-by-character" in prompt

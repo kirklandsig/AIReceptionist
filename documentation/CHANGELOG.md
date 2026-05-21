@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [`documentation/intakes-setup.md`](intakes-setup.md) for the full guide.
 - New `intake_submitted` outcome on `CallMetadata.outcomes` and a matching
   human label in the call-end email subject when an intake completes.
+- Opt-in `agent.mode: intake_only` prompt behavior for intake-only phone
+  lines. This mode suppresses receptionist routing, FAQ, and hours sections
+  while keeping intake, callback-message, and call-ending guidance.
+- Consent-gated email information packets. New `info_packets` YAML config and
+  `send_info_packet` tool let Riley send pre-approved text/links to a
+  caller-confirmed email address after permission. V1 is email-only and does
+  not support SMS, attachments, PDFs, or model-generated packet copy.
 
 ### Security
 - Hardened webhook configuration and notification transports: webhook URLs
@@ -57,6 +64,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Call-end emails now include any `take_message` content in a structured
   Captured Content section above recording/transcript details, so the call
   summary remains actionable even when the separate message email is missed.
+- Call-end emails now include info-packet send records with packet name,
+  channel, destination, and sent/failed status.
+- `agent.mode: intake_only` now blocks `transfer_call` at runtime, so transfer
+  attempts become message/callback handling instead of SIP transfers.
+- The Windows restart launcher now kills orphaned `python -m receptionist.agent
+  dev` workers from the same checkout before spawning the new worker, writes a
+  generation token for the spawned process, and preserves `.env.local` priority
+  over `.env` while respecting real caller environment variables.
+- Local worker status checks are now generation-aware: `agent-status.ps1`
+  requires the pidfile PID to be this checkout's `receptionist.agent dev`,
+  requires a registration after the current restart marker, and fails if it
+  sees unexpected same-checkout orphan workers.
 
 ### Fixed
 - **Agent-initiated `end_call` no longer drops the call-end and deferred
@@ -68,9 +87,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `aiosmtplib`'s DNS lookup failed with `Executor shutdown has been
   called`. Result: zero emails delivered on agent-ended calls.
   - `_speak_goodbye_and_terminate` now `await`s
-    `lifecycle.on_call_ended()` **before** invoking `_terminate_room`,
-    so transcript writes + deferred message emails + call-end emails
-    fire while the event loop and executor are still healthy.
+    `lifecycle.on_call_ended()` **before** waiting for goodbye playout or
+    invoking `_terminate_room`, so transcript writes + deferred message
+    emails + call-end emails fire while the event loop and executor are
+    still healthy even if the caller hangs up during the goodbye.
   - `CallLifecycle` gains a `_finalized` flag. The LiveKit session-close
     handler still invokes `on_call_ended` on natural disconnect, but
     the second call is now a guarded no-op (no duplicate emails, no
@@ -81,6 +101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     so the same race is one log read away if it ever recurs.
   - Regression test in `tests/test_lifecycle.py::test_on_call_ended_is_idempotent`
     proves a double-call yields exactly one email and one transcript write.
+  - Regression test in `tests/test_end_call.py::test_speak_goodbye_finalizes_before_waiting_for_playout`
+    proves call finalization starts before waiting on the goodbye playout.
 
 ### Changed (privacy / housekeeping)
 - **Sanitized the tracked law-firm template.** The previous

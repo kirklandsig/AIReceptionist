@@ -171,6 +171,90 @@ def test_v2_schema_loads(v2_yaml):
     assert config.voice.auth is None
 
 
+def test_agent_mode_defaults_to_receptionist(v2_yaml):
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    assert config.agent.mode == "receptionist"
+
+
+def test_agent_mode_accepts_intake_only(v2_yaml):
+    yaml_text = v2_yaml.replace(
+        "business:", "agent:\n  mode: intake_only\n\nbusiness:", 1,
+    )
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.agent.mode == "intake_only"
+
+
+def test_info_packets_requires_email_when_enabled(v2_yaml):
+    yaml_text = v2_yaml + '''
+info_packets:
+  enabled: true
+  packets:
+    - key: firm_overview
+      display_name: "Firm Overview"
+      email_subject: "Information from Example Law"
+      email_body: "Thank you for completing an intake."
+'''
+    with pytest.raises(ValidationError, match="info_packets.*email"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_info_packets_accepts_configured_email_packet(v2_yaml):
+    yaml_text = v2_yaml + '''
+email:
+  from: "AI Receptionist <ai@example.com>"
+  sender:
+    type: "smtp"
+    smtp:
+      host: "smtp.example.com"
+      port: 587
+      username: "user"
+      password: "pass"
+      use_tls: true
+info_packets:
+  enabled: true
+  default_packet: firm_overview
+  packets:
+    - key: firm_overview
+      display_name: "Firm Overview"
+      email_subject: "Information from Example Law"
+      email_body: "Thank you for completing an intake."
+      links:
+        - label: "Website"
+          url: "https://example.com"
+'''
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.info_packets.enabled is True
+    assert config.info_packets.default_packet == "firm_overview"
+    assert config.info_packets.packets[0].links[0].url == "https://example.com"
+
+
+def test_info_packets_rejects_bad_keys_and_links(v2_yaml):
+    yaml_text = v2_yaml + '''
+email:
+  from: "AI Receptionist <ai@example.com>"
+  sender:
+    type: "smtp"
+    smtp:
+      host: "smtp.example.com"
+      port: 587
+      username: "user"
+      password: "pass"
+      use_tls: true
+info_packets:
+  enabled: true
+  packets:
+    - key: "../secret"
+      display_name: "Firm Overview"
+      email_subject: "Information from Example Law"
+      email_body: "Thank you for completing an intake."
+      links:
+        - label: "Bad"
+          url: "file:///secret.pdf"
+'''
+    with pytest.raises(ValidationError):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
 def _v2_yaml_with_voice_auth(v2_yaml: str, auth_block: str) -> str:
     return v2_yaml.replace(
         '  model: "gpt-realtime-1.5"',

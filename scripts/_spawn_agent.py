@@ -27,8 +27,8 @@ Usage
 -----
     python scripts/_spawn_agent.py <business-slug>
 
-Reads `.env` from the repo root (so SMTP/LIVEKIT credentials propagate to
-the child), kills any existing agent recorded in
+Reads `.env.local` / `.env` from the repo root (so SMTP/LIVEKIT credentials
+propagate to the child), kills any existing agent recorded in
 `secrets/<slug>/runtime/agent.pid`, then spawns the new agent with
 stdout/stderr redirected to `agent.log` / `agent.err` in the same dir.
 
@@ -46,13 +46,20 @@ import os
 import re
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 
 SLUG_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
-def _load_dotenv(env_path: Path, env: dict[str, str]) -> None:
+def _load_dotenv(
+    env_path: Path,
+    env: dict[str, str],
+    *,
+    override: bool = False,
+    protected_keys: set[str] | None = None,
+) -> None:
     """Minimal .env loader. Supports `KEY=value` lines, ignores blanks and
     comments. Does NOT do quoting/escaping — keep .env files plain. The
     agent itself also calls `load_dotenv`, so this is belt-and-suspenders
@@ -72,8 +79,10 @@ def _load_dotenv(env_path: Path, env: dict[str, str]) -> None:
         value = value.strip()
         if not key:
             continue
-        # Don't override values already set by the caller
-        env.setdefault(key, value)
+        if override and (protected_keys is None or key not in protected_keys):
+            env[key] = value
+        else:
+            env.setdefault(key, value)
 
 
 def _kill_prior(pid_path: Path) -> None:
@@ -87,7 +96,7 @@ def _kill_prior(pid_path: Path) -> None:
     try:
         if sys.platform == "win32":
             subprocess.run(
-                ["taskkill", "/F", "/PID", str(old_pid)],
+                ["taskkill", "/F", "/T", "/PID", str(old_pid)],
                 capture_output=True, check=False, timeout=5,
             )
         else:
@@ -97,6 +106,61 @@ def _kill_prior(pid_path: Path) -> None:
         # failed. Either way the new launch is the priority — don't
         # block on cleanup.
         pass
+
+
+def _kill_orphan_agents(repo: Path) -> None:
+    """Stop orphaned agent dev workers from this checkout on Windows."""
+    if sys.platform != "win32":
+        return
+    repo_text = str(repo)
+    escaped_repo = repo_text.replace("'", "''")
+    script = (
+        "Get-CimInstance Win32_Process | "
+        "Where-Object { "
+        "$_.CommandLine -like '*-m receptionist.agent dev*' -and "
+        f"$_.CommandLine -like '*{escaped_repo}*' "
+        "} | Select-Object -ExpandProperty ProcessId"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, check=False, text=True, timeout=5,
+        )
+    except Exception:
+        return
+    current_pid = os.getpid()
+    for line in result.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid == current_pid:
+            continue
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True, check=False, timeout=5,
+            )
+        except Exception:
+            pass
+
+
+def _write_generation_token(runtime: Path) -> str:
+    token = uuid.uuid4().hex
+    (runtime / "agent.generation").write_text(token, encoding="ascii")
+    return token
+
+
+def _add_generation_env(
+    env: dict[str, str], generation_path: Path, generation_token: str
+) -> None:
+    env["RECEPTIONIST_AGENT_GENERATION"] = generation_token
+    env["RECEPTIONIST_AGENT_GENERATION_FILE"] = str(generation_path)
+
+
+def _write_restart_marker(log_path: Path, generation_token: str) -> None:
+    with open(log_path, "a", encoding="utf-8") as log_f:
+        log_f.write(f"agent restart generation={generation_token}\n")
 
 
 def _spawn_detached(
@@ -154,6 +218,7 @@ def main(argv: list[str]) -> int:
     log_path = runtime / "agent.log"
     err_path = runtime / "agent.err"
     pid_path = runtime / "agent.pid"
+    generation_path = runtime / "agent.generation"
 
     pyexe = repo / "venv" / "Scripts" / "python.exe"
     if not pyexe.is_file():
@@ -167,12 +232,19 @@ def main(argv: list[str]) -> int:
 
     # Stop prior agent before spawning the new one
     _kill_prior(pid_path)
+    _kill_orphan_agents(repo)
+
+    generation_token = _write_generation_token(runtime)
+    _write_restart_marker(log_path, generation_token)
 
     # Build the child env: caller env + .env + intake-specific knobs
     env = os.environ.copy()
+    caller_keys = set(env)
     _load_dotenv(repo / ".env", env)
+    _load_dotenv(repo / ".env.local", env, override=True, protected_keys=caller_keys)
     env["RECEPTIONIST_CONFIG"] = business
     env["PYTHONDONTWRITEBYTECODE"] = "1"
+    _add_generation_env(env, generation_path, generation_token)
 
     # Open log/err in append mode so a restart preserves prior session
     # output. The child gets its own duplicates of the handles via Popen;

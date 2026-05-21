@@ -19,6 +19,7 @@ from receptionist.agent import (
     _resolve_agent_name,
     _resolve_relative_date,
 )
+import receptionist.agent as agent_module
 from receptionist.lifecycle import CallLifecycle
 
 
@@ -92,6 +93,156 @@ def test_resolve_agent_name_allows_blank_for_dev_wildcard(monkeypatch):
 def test_resolve_agent_name_allows_custom_name(monkeypatch):
     monkeypatch.setenv("RECEPTIONIST_AGENT_NAME", "night-shift")
     assert _resolve_agent_name() == "night-shift"
+
+
+def test_agent_generation_guard_is_valid_when_env_missing(monkeypatch):
+    monkeypatch.delenv("RECEPTIONIST_AGENT_GENERATION", raising=False)
+    monkeypatch.delenv("RECEPTIONIST_AGENT_GENERATION_FILE", raising=False)
+
+    matches = getattr(agent_module, "_agent_generation_matches_file", lambda: None)
+
+    assert matches() is True
+
+
+def test_agent_generation_guard_matches_file_value(monkeypatch, tmp_path):
+    generation_file = tmp_path / "generation.txt"
+    generation_file.write_text("42\n", encoding="utf-8")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(generation_file))
+
+    matches = getattr(agent_module, "_agent_generation_matches_file", lambda: None)
+
+    assert matches() is True
+
+
+def test_agent_generation_guard_detects_changed_file(monkeypatch, tmp_path):
+    generation_file = tmp_path / "generation.txt"
+    generation_file.write_text("43\n", encoding="utf-8")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(generation_file))
+
+    matches = getattr(agent_module, "_agent_generation_matches_file", lambda: None)
+
+    assert matches() is False
+
+
+def test_agent_generation_guard_detects_missing_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(tmp_path / "missing.txt"))
+
+    matches = getattr(agent_module, "_agent_generation_matches_file", lambda: None)
+
+    assert matches() is False
+
+
+def test_start_generation_watchdog_is_disabled_without_env(monkeypatch):
+    monkeypatch.delenv("RECEPTIONIST_AGENT_GENERATION", raising=False)
+    monkeypatch.delenv("RECEPTIONIST_AGENT_GENERATION_FILE", raising=False)
+
+    start = getattr(agent_module, "_start_generation_watchdog_once", lambda **kwargs: "started")
+
+    assert start() is None
+
+
+def test_start_generation_watchdog_uses_thread_without_running_event_loop(monkeypatch, tmp_path):
+    generation_file = tmp_path / "generation.txt"
+    generation_file.write_text("42\n", encoding="utf-8")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(generation_file))
+    monkeypatch.setattr(agent_module, "_GENERATION_WATCHDOG_THREAD", None, raising=False)
+    created = {}
+
+    class FakeThread:
+        def __init__(self, *, target, name, daemon):
+            created["target"] = target
+            created["name"] = name
+            created["daemon"] = daemon
+            self.started = False
+
+        def is_alive(self):
+            return self.started
+
+        def start(self):
+            self.started = True
+            created["started"] = True
+
+    thread = agent_module._start_generation_watchdog_once(thread_factory=FakeThread)
+
+    assert thread is not None
+    assert created["name"] == "receptionist-generation-watchdog"
+    assert created["daemon"] is True
+    assert created["started"] is True
+
+
+def test_start_generation_watchdog_exits_before_thread_when_generation_is_stale(
+    monkeypatch, tmp_path
+):
+    generation_file = tmp_path / "generation.txt"
+    generation_file.write_text("43\n", encoding="utf-8")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(generation_file))
+    monkeypatch.setattr(agent_module, "_GENERATION_WATCHDOG_THREAD", None, raising=False)
+    exit_codes: list[int] = []
+
+    class FakeThread:
+        def __init__(self, **kwargs):
+            raise AssertionError("stale generation should exit before thread start")
+
+    thread = agent_module._start_generation_watchdog_once(
+        thread_factory=FakeThread,
+        exit_process=exit_codes.append,
+    )
+
+    assert thread is None
+    assert exit_codes == [0]
+
+
+def test_run_agent_cli_starts_generation_watchdog_before_livekit_cli(monkeypatch):
+    calls: list[str] = []
+
+    def fake_start_watchdog():
+        calls.append("watchdog")
+
+    def fake_run_app(server):
+        calls.append("run_app")
+        assert server is agent_module.server
+
+    monkeypatch.setattr(agent_module, "_start_generation_watchdog_once", fake_start_watchdog)
+    monkeypatch.setattr(agent_module.agents.cli, "run_app", fake_run_app)
+
+    agent_module._run_agent_cli()
+
+    assert calls == ["watchdog", "run_app"]
+
+
+def test_generation_watchdog_check_exits_when_generation_file_changes(monkeypatch, tmp_path):
+    generation_file = tmp_path / "generation.txt"
+    generation_file.write_text("43\n", encoding="utf-8")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(generation_file))
+    exit_codes: list[int] = []
+    check_once = getattr(
+        agent_module,
+        "_check_generation_watchdog_once",
+        lambda **kwargs: False,
+    )
+
+    assert check_once(exit_process=exit_codes.append) is True
+    assert exit_codes == [0]
+
+
+def test_generation_watchdog_check_exits_when_generation_file_disappears(monkeypatch, tmp_path):
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION", "42")
+    monkeypatch.setenv("RECEPTIONIST_AGENT_GENERATION_FILE", str(tmp_path / "missing.txt"))
+    exit_codes: list[int] = []
+    check_once = getattr(
+        agent_module,
+        "_check_generation_watchdog_once",
+        lambda **kwargs: False,
+    )
+
+    assert check_once(exit_process=exit_codes.append) is True
+    assert exit_codes == [0]
 
 
 def test_benign_engine_closed_warning_filter_is_narrow():
@@ -313,6 +464,39 @@ async def test_refresh_realtime_tools_pushes_full_agent_tool_list(caplog):
         "record_intake_answer" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_tool_contract_raises_when_enabled_intake_tool_is_missing(caplog):
+    config = SimpleNamespace(
+        intakes=SimpleNamespace(enabled=True),
+        info_packets=SimpleNamespace(enabled=False),
+    )
+    receptionist = SimpleNamespace(
+        config=config,
+        tools=[SimpleNamespace(id="finalize_intake")],
+    )
+    verify = getattr(agent_module, "_verify_tool_contract", lambda *args, **kwargs: None)
+
+    with caplog.at_level(logging.ERROR, logger="receptionist"):
+        with pytest.raises(RuntimeError, match="missing required tools"):
+            verify(receptionist, call_id="call-1")
+
+    assert any("record_intake_answer" in record.getMessage() for record in caplog.records)
+
+
+def test_tool_contract_raises_when_enabled_info_packet_tool_is_missing(caplog):
+    config = SimpleNamespace(
+        intakes=SimpleNamespace(enabled=False),
+        info_packets=SimpleNamespace(enabled=True),
+    )
+    receptionist = SimpleNamespace(config=config, tools=[])
+    verify = getattr(agent_module, "_verify_tool_contract", lambda *args, **kwargs: None)
+
+    with caplog.at_level(logging.ERROR, logger="receptionist"):
+        with pytest.raises(RuntimeError, match="missing required tools"):
+            verify(receptionist, call_id="call-1")
+
+    assert any("send_info_packet" in record.getMessage() for record in caplog.records)
 
 
 # ---- _get_caller_identity / _get_caller_phone room-level tests ----

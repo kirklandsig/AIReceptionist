@@ -26,8 +26,8 @@ Traditional IVR systems frustrate callers with rigid menus. Human receptionists 
 | [Telephony Setup](telephony-setup.md) | Trade-offs between porting your number to a SIP trunk provider (Path A), bringing your own carrier via BYOC (Path B), and keeping a copper landline via an FXS gateway + on-prem PBX (Path C). |
 | [RingCentral + Twilio Setup](ringcentral-setup.md) | Reception-group deployment using a Twilio DID as the RingCentral external member and LiveKit SIP bridge. |
 | [Development Guide](development-guide.md) | Local development setup, running tests, code organization, and contribution guidelines. |
-| [Function Tools Reference](function-tools-reference.md) | Detailed reference for each agent function tool: `lookup_faq`, `transfer_call`, `take_message`, `get_business_hours`, calendar booking, and the intake tools. |
-| [Intake Setup](intakes-setup.md) | Configure structured new-client intakes by phone, including per-case-type question scripts, Spanish-language calls, and intake email delivery. |
+| [Function Tools Reference](function-tools-reference.md) | Detailed reference for each agent function tool: `lookup_faq`, `transfer_call`, `take_message`, `get_business_hours`, calendar booking, intake tools, and info packets. |
+| [Intake Setup](intakes-setup.md) | Configure structured new-client intakes by phone, including per-case-type question scripts, Spanish-language calls, intake email delivery, and optional post-intake packet emails. |
 | [Troubleshooting](troubleshooting.md) | Common issues, error messages, and their solutions. |
 | [Multi-Business Setup](multi-business-setup.md) | How to run a single deployment that handles calls for multiple businesses with different phone numbers and configurations. |
 
@@ -110,6 +110,7 @@ AIReceptionist/
 │   ├── config.py                     # Pydantic configuration models
 │   ├── prompts.py                    # System prompt construction
 │   ├── lifecycle.py                  # Per-call finalization
+│   ├── info_packets.py               # Caller-facing packet email helper
 │   ├── messaging/                    # Message delivery channels
 │   ├── email/                        # Email senders/templates
 │   ├── booking/                      # Calendar booking
@@ -120,8 +121,8 @@ AIReceptionist/
 ├── config/businesses/
 │   └── example-dental.yaml           # Example business configuration
 └── tests/                            # Test suite
-    ├── test_config.py                # Config model tests (6)
-    ├── test_prompts.py               # Prompt generation tests (6)
+    ├── test_config.py                # Config model tests
+    ├── test_prompts.py               # Prompt generation tests
     ├── messaging/                    # Message channel tests
     ├── email/                        # Email tests
     ├── booking/                      # Calendar tests

@@ -123,6 +123,37 @@ def _build_intakes_block(config: BusinessConfig) -> str:
     )
 
 
+def _build_info_packets_block(config: BusinessConfig) -> str:
+    packets_cfg = config.info_packets
+    if packets_cfg is None or not packets_cfg.enabled:
+        return ""
+    packet_lines = [
+        f"  - {packet.key}: {packet.display_name}"
+        for packet in packets_cfg.packets
+    ]
+    packet_block = "\n".join(packet_lines)
+    default_line = ""
+    if packets_cfg.default_packet:
+        default_line = f"Default packet: {packets_cfg.default_packet}\n"
+    return (
+        "\nINFORMATION PACKETS (email only):\n"
+        "You can send a configured, pre-approved information packet using\n"
+        "send_info_packet after an intake or when the caller asks for one.\n"
+        f"{default_line}"
+        "Configured packets:\n"
+        f"{packet_block}\n"
+        "Rules:\n"
+        "  - Ask the caller for permission before sending anything.\n"
+        "  - Email is the only supported channel in this version; do not offer SMS.\n"
+        "  - Ask the caller to spell the email address, then confirm it\n"
+        "    character-by-character before calling send_info_packet.\n"
+        "  - Call send_info_packet only with consent_confirmed=true after\n"
+        "    permission and the email address are confirmed.\n"
+        "  - Never generate, summarize, or alter packet content yourself. The\n"
+        "    packet email contains only configured text and links.\n"
+    )
+
+
 def _build_calendar_block(config: BusinessConfig) -> str:
     """Build the CALENDAR section of the system prompt, or empty string if disabled."""
     if config.calendar is None or not config.calendar.enabled:
@@ -185,6 +216,37 @@ def build_system_prompt(config: BusinessConfig) -> str:
     language_block = _build_language_block(config)
     calendar_block = _build_calendar_block(config)
     intakes_block = _build_intakes_block(config)
+    info_packets_block = _build_info_packets_block(config)
+
+    if config.agent.mode == "intake_only":
+        return f"""You are the automated intake system for {config.business.name}, a {config.business.type}.
+
+{config.personality}
+
+Your job is to determine whether the caller is ready to complete an intake by
+phone, run the configured intake when appropriate, and capture a callback
+message when intake is not appropriate.
+
+{language_block}
+{intakes_block}{info_packets_block}
+ENDING CALLS:
+When the caller has clearly finished — for example they say "goodbye",
+"thanks, bye", "that's all I needed", or you have already explained you
+cannot help and they have nothing else to ask — call the end_call tool
+to close the call cleanly. The tool will say a brief goodbye and then
+hang up. Do NOT call end_call just because the caller is quiet for a
+moment, mid-question, or asking for something you haven't tried yet.
+NEVER call end_call as the very first reply to a caller; always greet
+them and let them state their need first.
+
+IMPORTANT RULES:
+- Be concise. Phone conversations should be efficient.
+- Never make up information. If you do not know, take a message for office
+  follow-up.
+- Ask whether the caller is ready before starting a structured intake.
+- If the caller is not ready or needs a person, use take_message with their
+  name, callback number, and what they need.
+"""
 
     return f"""You are the receptionist for {config.business.name}, a {config.business.type}.
 
@@ -203,7 +265,7 @@ DEPARTMENTS YOU CAN TRANSFER TO:
 When a caller asks to be transferred, use the transfer_call tool with the department name.
 When a caller wants to leave a message, use the take_message tool to record their name, message, and callback number.
 When asked about business hours, use the get_business_hours tool.
-{calendar_block}{intakes_block}
+{calendar_block}{intakes_block}{info_packets_block}
 ENDING CALLS:
 When the caller has clearly finished — for example they say "goodbye",
 "thanks, bye", "that's all I needed", or you have already explained you

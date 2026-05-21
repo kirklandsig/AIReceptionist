@@ -15,6 +15,7 @@ completed submission lands in your file/email pipeline.
 - [Output: structured JSON + email](#output-structured-json--email)
 - [Partial intakes (mid-call disconnects)](#partial-intakes-mid-call-disconnects)
 - [Mid-intake escape hatch](#mid-intake-escape-hatch)
+- [Optional info packet after intake](#optional-info-packet-after-intake)
 - [Tool reference](#tool-reference)
 - [Operational tips](#operational-tips)
 
@@ -47,6 +48,9 @@ A typical call looks like this:
    with the confirmed legal name, callback number, and a 1–3 sentence
    English overview. The final JSON file is written and the intake email is
    queued for call-end.
+7. If `info_packets.enabled: true`, Riley asks whether the caller wants the
+   configured packet emailed. Riley calls `send_info_packet` only after the
+   caller gives permission and confirms the email address.
 
 ---
 
@@ -224,6 +228,61 @@ captured before the caller bailed.
 
 ---
 
+## Optional info packet after intake
+
+`info_packets:` can be enabled alongside `intakes:` to send callers a
+pre-approved email after the intake. This is separate from the internal intake
+email sent to staff. The packet email goes directly to the caller-provided
+destination.
+
+Important constraints:
+
+- Riley must ask permission before sending a packet.
+- Riley must ask the caller to spell the email address and confirm it
+  character-by-character.
+- V1 is email-only. SMS and attachments are not supported.
+- Packet subject, body, and links are configured in YAML. Riley must not
+  generate marketing copy or summarize packet content herself.
+- Packet send success/failure appears in call metadata and in the call-end
+  summary email.
+
+Minimal packet config:
+
+```yaml
+email:
+  from: "AI Receptionist <noreply@example.com>"
+  sender:
+    type: "smtp"
+    smtp:
+      host: "smtp.example.com"
+      port: 587
+      username: "user"
+      password: ${SMTP_PASSWORD}
+      use_tls: true
+
+info_packets:
+  enabled: true
+  default_packet: intake_overview
+  packets:
+    - key: intake_overview
+      display_name: "Intake Overview"
+      email_subject: "Information from Example Law"
+      email_body: |
+        Thank you for completing an intake.
+
+        Our office will review your information and follow up during business hours.
+      links:
+        - label: "Website"
+          url: "https://example.com"
+```
+
+For intake-line deployments that should not behave as a general receptionist,
+set `agent.mode: intake_only`. That prompt mode suppresses routing, FAQ, and
+business-hours behavior and keeps Riley focused on completing intake or taking
+a callback message.
+
+---
+
 ## Tool reference
 
 ### `record_intake_answer(case_type, question_key, spoken_text, language, english_summary)`
@@ -242,6 +301,18 @@ has been answered. Writes the final JSON, removes the partial, queues the
 email for call-end, and records the `intake_submitted` lifecycle outcome.
 
 Returns a short confirmation the LLM uses to wrap up the call.
+
+When `info_packets.enabled: true`, the return message tells Riley to offer the
+configured packet next. Riley still must ask permission and confirm the email
+address before calling `send_info_packet`.
+
+### `send_info_packet(packet_key, channel, destination, consent_confirmed)`
+
+Called only after the caller consents and confirms the destination email.
+`channel` must be `"email"` in v1 and `consent_confirmed` must be `true`.
+Unknown packet keys, invalid email addresses, unsupported channels, and email
+transport failures return safe corrective messages rather than internal error
+details.
 
 ---
 

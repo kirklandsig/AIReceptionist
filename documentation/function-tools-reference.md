@@ -12,6 +12,11 @@ This document provides a detailed reference for each function tool exposed by th
 - [transfer_call](#transfer_call)
 - [take_message](#take_message)
 - [get_business_hours](#get_business_hours)
+- [check_availability](#check_availability)
+- [book_appointment](#book_appointment)
+- [record_intake_answer](#record_intake_answer)
+- [finalize_intake](#finalize_intake)
+- [send_info_packet](#send_info_packet)
 - [end_call](#end_call)
 - [Tool Interaction Patterns](#tool-interaction-patterns)
 - [Error Handling](#error-handling)
@@ -33,6 +38,7 @@ The Receptionist agent exposes the following function tools to the OpenAI Realti
 | `book_appointment` | Book a specific previously-offered slot | Caller confirms a time |
 | `record_intake_answer` | Record one answer in an in-progress intake | Caller is going through a structured intake |
 | `finalize_intake` | Submit the completed intake | Riley has captured all required answers and confirmed critical fields |
+| `send_info_packet` | Email a configured information packet to the caller | Caller consented and confirmed an email address |
 | `end_call` | Say goodbye and hang up | Caller has clearly finished the conversation |
 
 These tools are defined as methods on the `Receptionist` class in `agent.py`, decorated with `@function_tool()`. The LiveKit Agents SDK and OpenAI Realtime API handle the serialization, invocation, and result passing automatically.
@@ -234,6 +240,8 @@ for the full schema.
 
 - **SIP transfer failures** (network issues, invalid numbers, etc.) are caught and returned as sanitized messages. The caller hears something like "I'm sorry, I wasn't able to complete the transfer. Would you like to try again or leave a message?" — never a stack trace or internal error code.
 - **No routing entries configured**: If the business has an empty routing list, the system prompt instructs the LLM not to offer transfers.
+- **Intake-only mode**: If `agent.mode: intake_only`, `transfer_call` refuses
+  before any SIP action and instructs Riley to take a callback message instead.
 
 ### Caller Identity
 
@@ -501,8 +509,9 @@ The system prompt instructs the LLM:
 
 1. The tool records the `agent_ended` outcome and `agent_end_reason` on the call lifecycle **first** so even if the hangup races the LiveKit close event, the call summary already shows agent-ended with the reason.
 2. The tool schedules a background task that calls `ctx.session.generate_reply(...)` with goodbye instructions and stores the resulting `SpeechHandle`.
-3. That background task awaits `handle.wait_for_playout()` (with a 10-second hard timeout so a stuck TTS never wedges the call open), then calls the module-level `_terminate_room` helper.
-4. The tool returns a short string immediately so the LLM doesn't block its own turn.
+3. That background task finalizes `lifecycle.on_call_ended()` immediately, before waiting for goodbye playout. This keeps transcript writing, deferred message emails, and call-end emails ahead of LiveKit job teardown even if the caller hangs up during the goodbye.
+4. The task then awaits `handle.wait_for_playout()` (with a 10-second hard timeout so a stuck TTS never wedges the call open), then calls the module-level `_terminate_room` helper.
+5. The tool returns a short string immediately so the LLM doesn't block its own turn.
 
 `_terminate_room` prefers SIP BYE via `RoomService.remove_participant`, which drops just the caller and leaves the agent's close handler to fire normally. If `remove_participant` fails (token missing `room_admin`, participant already gone), it falls back to `RoomService.delete_room`, which closes the entire room and triggers the participant-disconnect close path. If even `delete_room` fails, the error is logged and the close handler eventually fires from natural disconnect.
 
@@ -519,7 +528,7 @@ Caller: "Great, thanks for your help. Goodbye!"
 
 → Model calls: end_call(reason="caller_goodbye")
   → Agent says: "Thanks for calling, have a great day!"
-  → Background task waits for playout, then sends SIP BYE to caller
+  → Background task finalizes call artifacts/emails, waits for playout, then sends SIP BYE to caller
 ← Tool returns: "Agent ending the call (reason=caller_goodbye)."
 
 [Call disconnects.]
@@ -649,6 +658,63 @@ Short confirmation string the LLM uses to wrap up the call.
   `take_message` instead; the partial file remains on disk for the
   receiving team.
 
+When `info_packets.enabled: true`, the success string also tells Riley to ask
+whether the caller wants an approved packet emailed. Riley must call
+`send_info_packet` only after permission and the destination email are
+confirmed.
+
+---
+
+## send_info_packet
+
+### Purpose
+
+Send a configured, pre-approved information packet to a caller by email. This
+tool is consent-gated: Riley must ask permission first and confirm the email
+address character-by-character before calling it. V1 supports email only and
+configured text/links only; no SMS, attachments, or model-generated packet
+copy are sent.
+
+### Signature
+
+```python
+@function_tool()
+async def send_info_packet(
+    self, ctx: RunContext,
+    packet_key: str,
+    channel: str = "email",
+    destination: str = "",
+    consent_confirmed: bool = False,
+) -> str
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `packet_key` | str | Yes | Key from `info_packets.packets[*].key`. |
+| `channel` | str | No | Must be `"email"` in v1. Other values are refused. |
+| `destination` | str | Yes | Caller-confirmed email address. |
+| `consent_confirmed` | bool | Yes | Must be `true` only after the caller gives permission and confirms the email address. |
+
+### Return Value
+
+- Success: confirms the packet was sent to the destination address.
+- No consent: tells Riley to ask permission and confirm the address first.
+- Unsupported channel: refuses and states email is the only supported channel.
+- Unknown packet or invalid email: returns a safe corrective instruction.
+- Transport failure: logs the full exception and tells Riley the office will
+  follow up.
+
+### Side Effects
+
+1. Builds the email from `info_packets.packets[*].email_subject`,
+   `email_body`, and configured links.
+2. Sends through the existing top-level `email.sender` transport with retry.
+3. Records success or transport failure on `CallMetadata.info_packet_sends`.
+4. Call-end summary emails include packet name, channel, destination, and
+   status.
+
 ---
 
 ## Tool Interaction Patterns
@@ -719,9 +785,13 @@ Caller: "Do you do teeth whitening?"
 |------|---------------|-------------|
 | `lookup_faq` | No match found | LLM falls back to system prompt knowledge |
 | `transfer_call` | Department not found | Available departments listed |
+| `transfer_call` | `agent.mode: intake_only` | Cannot transfer from this intake line; take a message for callback |
 | `transfer_call` | SIP transfer fails | Apology + offer to take a message instead |
 | `take_message` | File write fails | Apology + ask to try again |
 | `get_business_hours` | Config error | General hours from system prompt |
+| `send_info_packet` | Missing consent | Ask permission and confirm the email address before sending |
+| `send_info_packet` | Unsupported channel or invalid email | Email-only / ask caller to spell the address again |
+| `send_info_packet` | Email transport fails | Generic follow-up message; full error logged internally |
 | `end_call` | `remove_participant` fails | Falls back to `delete_room`; caller is disconnected either way |
 | `end_call` | `delete_room` also fails | Logged; close handler fires on natural disconnect (caller eventually drops) |
 

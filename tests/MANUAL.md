@@ -214,3 +214,25 @@ set aside for testing. Do NOT test against a production firm calendar.
 
 - [ ] Delete the test events from Google Calendar after validation
 - [ ] Remove the test business config + secrets if desired
+
+---
+
+## DTMF auto-attendant (issue #16)
+
+Pre-conditions:
+- Business YAML has `dtmf.enabled: true` with at least a transfer digit, a
+  take_message digit, and an end_call digit.
+
+Test cases:
+
+- [ ] Press a transfer digit → Riley says the configured acknowledgment and
+      the call is SIP-transferred to the routing entry's number.
+- [ ] Press the take_message digit → Riley acknowledges, then collects name,
+      callback number, and a brief description, and the message is saved.
+- [ ] Press an unmapped digit → no action; call continues. `agent.log`
+      shows a `dtmf:` line with `status=unmapped`.
+- [ ] Press the same digit twice rapidly → only the first acts. The call-end
+      summary shows the second press with `status=duplicate_ignored`.
+- [ ] On an `agent.mode: intake_only` line, press a transfer digit → Riley
+      refuses transfer and pivots to take_message. Call-end summary shows
+      `status=refused_intake_only`.

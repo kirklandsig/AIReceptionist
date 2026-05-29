@@ -199,6 +199,72 @@ def _start_generation_watchdog_once(
     return _GENERATION_WATCHDOG_THREAD
 
 
+_WARMUP_TIMEOUT_SECONDS = 8.0
+
+
+async def _warm_signaling(*, api_factory=None, timeout: float = _WARMUP_TIMEOUT_SECONDS) -> None:
+    """Best-effort warm-up of the LiveKit connection inside a job-runner
+    subprocess.
+
+    Cold-start mitigation (handoff 2026-05-28): the first real call after a
+    job-runner subprocess is spawned pays a 10-24s penalty in
+    `session.start()` because LiveKit's signal client tries a legacy path
+    first and times out before retrying, and DNS/TLS to the LiveKit host is
+    cold. Issuing one cheap read-only RoomService call here warms DNS, the
+    TLS session, and the aiohttp connection pool to the LiveKit API host in
+    THIS subprocess before any caller is on the line.
+
+    This is a PARTIAL mitigation: it cannot pre-open the per-room WebRTC
+    signaling socket (no room exists at prewarm time), so it does not fully
+    eliminate the v0-path timeout. It stacks with the Twilio failover
+    origination URL; the definitive fix is moving the worker to a cloud VM in
+    LiveKit's region.
+
+    Never raises — a warmup failure (missing creds in a dev shell, transient
+    network error, host down) must not stop the subprocess from serving
+    calls. Failures log at WARNING with `component=agent.warmup` so a
+    persistently-failing warmup is greppable.
+    """
+    if api_factory is None:
+        api_factory = lambda: api.LiveKitAPI()  # noqa: E731 — reads LIVEKIT_* env
+    client = None
+    try:
+        client = api_factory()
+        await asyncio.wait_for(
+            client.room.list_rooms(api.ListRoomsRequest()), timeout=timeout,
+        )
+        logger.info(
+            "Signaling warmup completed",
+            extra={"component": "agent.warmup"},
+        )
+    except Exception as e:  # noqa: BLE001 — warmup must never break startup
+        logger.warning(
+            "Signaling warmup failed (non-fatal): %s", e,
+            extra={"component": "agent.warmup"},
+        )
+    finally:
+        if client is not None:
+            try:
+                await client.aclose()
+            except Exception:  # noqa: BLE001
+                pass
+
+
+def _prewarm(proc) -> None:
+    """`server.setup_fnc` hook: runs once per job-runner subprocess before its
+    first job. Drives the async signaling warmup to completion on a private
+    event loop, fully best-effort — any failure is swallowed so the
+    subprocess can still accept jobs.
+    """
+    try:
+        asyncio.run(_warm_signaling())
+    except Exception as e:  # noqa: BLE001 — prewarm must never raise
+        logger.warning(
+            "Prewarm hook failed (non-fatal): %s", e,
+            extra={"component": "agent.warmup"},
+        )
+
+
 def _run_agent_cli() -> None:
     _start_generation_watchdog_once()
     agents.cli.run_app(server)
@@ -1732,6 +1798,10 @@ class Receptionist(Agent):
 
 
 server = AgentServer()
+# Per-subprocess signaling warmup (cold-start mitigation). LiveKit recommends
+# assigning lifecycle hooks directly on the AgentServer instance rather than
+# passing them to the constructor. See _warm_signaling for the rationale.
+server.setup_fnc = _prewarm
 
 
 @server.rtc_session(agent_name=_resolve_agent_name())

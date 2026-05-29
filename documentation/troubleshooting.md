@@ -265,6 +265,33 @@ without that line for the same call, restart the worker and confirm no stale
 4. Check SIP trunk provider logs for failed connection attempts.
 5. Ensure the agent is running and connected to LiveKit when the call arrives.
 
+### First call after idle just rings; a later call connects
+
+**Symptom**: The first one to three calls after the worker has been idle ring
+without pickup (the SIP provider reports `no-answer`), but a call placed a
+short time later connects normally.
+
+**Cause**: Cold start. Establishing the LiveKit room connection inside
+`session.start()` can take noticeably longer on the first call after a
+job-runner subprocess is spawned, because DNS/TLS to the LiveKit host is cold
+and the signaling connection has to be established from scratch. If that delay
+exceeds your SIP provider's origination timeout (Twilio Elastic SIP Trunking
+is ~12 seconds), the provider gives up before the agent answers.
+
+**Solution**:
+1. The worker performs a best-effort signaling warmup in each job-runner
+   subprocess at startup (logged as `Signaling warmup completed`, or
+   `Signaling warmup failed (non-fatal)` with `component=agent.warmup`). A
+   persistent warmup failure points at missing `LIVEKIT_*` credentials or a
+   network path problem to the LiveKit host.
+2. Add a second origination URL on your SIP trunk at a higher priority number
+   (tried after the primary) pointing at the same LiveKit SIP target. The
+   provider then fails over and re-attempts within the same call, widening the
+   effective answer window.
+3. The most reliable fix is to run the worker on a persistent host in (or near)
+   your LiveKit project's region rather than a laptop, which eliminates
+   network-path latency and keeps the worker continuously warm.
+
 ### Agent answers but caller hears silence
 
 **Symptom**: Call connects, but no greeting is played and the caller hears nothing.

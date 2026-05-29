@@ -504,6 +504,72 @@ async def test_refresh_realtime_tools_logs_and_reraises_when_update_tools_fails(
     assert "record_intake_answer" in record.getMessage()
 
 
+# ---- signaling warmup (cold-start mitigation) ----
+
+
+@pytest.mark.asyncio
+async def test_warm_signaling_calls_list_rooms_and_closes_client():
+    """The warmup must await a read-only RoomService call (to warm DNS/TLS to
+    the LiveKit host inside the job-runner subprocess) and always close the
+    client it created, so the warmup itself never leaks a connection.
+    """
+    from unittest.mock import AsyncMock
+
+    fake_client = SimpleNamespace(
+        room=SimpleNamespace(list_rooms=AsyncMock(return_value=SimpleNamespace(rooms=[]))),
+        aclose=AsyncMock(),
+    )
+    factory_calls = []
+
+    def factory():
+        factory_calls.append(True)
+        return fake_client
+
+    await agent_module._warm_signaling(api_factory=factory, timeout=2.0)
+
+    assert factory_calls, "expected the warmup to build an API client"
+    fake_client.room.list_rooms.assert_awaited_once()
+    fake_client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_warm_signaling_swallows_errors_and_logs(caplog):
+    """A warmup failure (no creds, network blip, host down) must NEVER raise —
+    it runs before the worker serves calls and must not block startup. It
+    should leave a WARNING so a persistently-failing warmup is greppable.
+    """
+    from unittest.mock import AsyncMock
+
+    fake_client = SimpleNamespace(
+        room=SimpleNamespace(list_rooms=AsyncMock(side_effect=RuntimeError("boom"))),
+        aclose=AsyncMock(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="receptionist"):
+        # Must return normally despite the inner error.
+        await agent_module._warm_signaling(api_factory=lambda: fake_client, timeout=2.0)
+
+    # Client still closed even on failure.
+    fake_client.aclose.assert_awaited_once()
+    assert any(
+        getattr(r, "component", None) == "agent.warmup"
+        for r in caplog.records
+    ), "expected a structured WARNING for the failed warmup"
+
+
+def test_prewarm_is_best_effort_and_never_raises(monkeypatch):
+    """`_prewarm` (wired to server.setup_fnc) runs per job-runner subprocess.
+    Even if the underlying warmup explodes, it must return without raising so
+    the subprocess can still accept jobs.
+    """
+    def boom(*args, **kwargs):
+        raise RuntimeError("warmup blew up")
+
+    monkeypatch.setattr(agent_module, "_warm_signaling", boom)
+    # Should not raise regardless of what _warm_signaling does.
+    agent_module._prewarm(SimpleNamespace(userdata={}))
+
+
 def test_tool_contract_raises_when_enabled_intake_tool_is_missing(caplog):
     config = SimpleNamespace(
         intakes=SimpleNamespace(enabled=True),

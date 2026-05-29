@@ -12,7 +12,8 @@ from receptionist.recording.egress import (
 )
 from receptionist.transcript.capture import TranscriptCapture
 from receptionist.transcript.metadata import (
-    CallMetadata, InfoPacketSendRecord, VALID_OUTCOMES,
+    CallMetadata, DtmfEventRecord, InfoPacketSendRecord, VALID_DTMF_STATUSES,
+    VALID_OUTCOMES,
 )
 from receptionist.transcript.writer import (
     TranscriptWriteResult, write_transcript_files,
@@ -197,6 +198,71 @@ class CallLifecycle:
                 status="failed",
                 error=error,
             )
+        )
+
+    def record_dtmf_event(
+        self,
+        *,
+        digit: str,
+        action: str | None,
+        target: str | None,
+        status: str,
+        error: str | None = None,
+    ) -> int:
+        """Append a DTMF event to call metadata. Returns the event's index
+        so callers can later update its status via `update_dtmf_event_status`.
+
+        Raises ValueError if `status` is not in VALID_DTMF_STATUSES — this
+        mirrors `_add_outcome`'s VALID_OUTCOMES guard and prevents a typo
+        from landing silently in transcripts.
+        """
+        if status not in VALID_DTMF_STATUSES:
+            raise ValueError(
+                f"Unknown DTMF status {status!r}; add it to VALID_DTMF_STATUSES "
+                f"in receptionist/transcript/metadata.py"
+            )
+        self.metadata.dtmf_events.append(
+            DtmfEventRecord(
+                digit=digit,
+                action=action,
+                target=target,
+                status=status,
+                error=error,
+            )
+        )
+        return len(self.metadata.dtmf_events) - 1
+
+    def update_dtmf_event_status(
+        self,
+        event_id: int,
+        *,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Mutate a previously-recorded DTMF event in place.
+
+        Pass `error` only to set or change the error string; passing
+        `error=None` (the default) preserves any previously-recorded error.
+
+        Raises ValueError if `status` is not in VALID_DTMF_STATUSES. An
+        out-of-range `event_id` is logged as a warning and ignored — a live
+        call must not crash because of a stale metrics handle.
+        """
+        if status not in VALID_DTMF_STATUSES:
+            raise ValueError(
+                f"Unknown DTMF status {status!r}; add it to VALID_DTMF_STATUSES "
+                f"in receptionist/transcript/metadata.py"
+            )
+        if 0 <= event_id < len(self.metadata.dtmf_events):
+            rec = self.metadata.dtmf_events[event_id]
+            rec.status = status
+            if error is not None:
+                rec.error = error
+            return
+        logger.warning(
+            "update_dtmf_event_status: event_id %d out of range (events_len=%d); ignoring",
+            event_id, len(self.metadata.dtmf_events),
+            extra={"call_id": self.metadata.call_id, "component": "lifecycle.dtmf"},
         )
 
     def _add_outcome(self, outcome: str) -> None:

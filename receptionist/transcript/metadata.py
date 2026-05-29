@@ -17,6 +17,16 @@ VALID_OUTCOMES = {
 }
 
 
+# Valid DTMF event status labels. Membership-checked in
+# lifecycle.record_dtmf_event / update_dtmf_event_status to prevent a typo'd
+# status string from landing silently in transcripts. Mirrors the
+# VALID_OUTCOMES pattern. New statuses must be added here.
+VALID_DTMF_STATUSES = {
+    "pending", "executed", "failed", "unmapped",
+    "duplicate_ignored", "suppressed_in_flight", "refused_intake_only",
+}
+
+
 @dataclass
 class InfoPacketSendRecord:
     packet_key: str
@@ -44,6 +54,30 @@ class InfoPacketSendRecord:
 
 
 @dataclass
+class DtmfEventRecord:
+    digit: str
+    action: str | None
+    target: str | None
+    status: str
+    error: str | None = None
+    timestamp: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.timestamp:
+            self.timestamp = datetime.now(timezone.utc).isoformat()
+
+    def to_dict(self) -> dict:
+        return {
+            "digit": self.digit,
+            "action": self.action,
+            "target": self.target,
+            "status": self.status,
+            "error": self.error,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
 class CallMetadata:
     call_id: str
     business_name: str
@@ -67,6 +101,7 @@ class CallMetadata:
     # hangup (e.g. caller hung up first => outcome `hung_up`).
     agent_end_reason: str | None = None
     info_packet_sends: list[InfoPacketSendRecord] = field(default_factory=list)
+    dtmf_events: list[DtmfEventRecord] = field(default_factory=list)
 
     def __post_init__(self):
         if not self.start_ts:
@@ -110,4 +145,5 @@ class CallMetadata:
             "info_packet_sends": [
                 record.to_dict() for record in self.info_packet_sends
             ],
+            "dtmf_events": [record.to_dict() for record in self.dtmf_events],
         }

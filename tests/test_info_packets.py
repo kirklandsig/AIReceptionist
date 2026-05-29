@@ -95,6 +95,9 @@ def _bare_transfer_receptionist(config, lifecycle):
     raw = Receptionist.transfer_call
     raw = raw.fnc if hasattr(raw, "fnc") else raw
     obj._transfer_call = raw.__get__(obj)
+    # transfer_call now delegates to _execute_transfer (shared with the DTMF
+    # path), so the bare object needs it bound too.
+    obj._execute_transfer = Receptionist._execute_transfer.__get__(obj)
     return obj
 
 

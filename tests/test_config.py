@@ -976,3 +976,150 @@ def test_config_error_handles_yaml_error_without_problem_mark():
     e = yaml.YAMLError("synthetic error with no mark")
     msg = _friendly_yaml_error(e, "anything")
     assert "synthetic error" in msg
+
+
+# ---------------------------------------------------------------------------
+# DTMF config
+# ---------------------------------------------------------------------------
+
+def _v2_yaml_with_routing() -> str:
+    # Minimal v2 YAML with a routing entry that DTMF transfer actions can
+    # reference. Mirrors the shape used by other tests in this file.
+    return """
+business:
+  name: "Acme"
+  type: "test"
+  timezone: "America/New_York"
+voice:
+  voice_id: marin
+greeting: "Hello"
+personality: "Be helpful."
+hours:
+  monday: {open: "09:00", close: "17:00"}
+  tuesday: {open: "09:00", close: "17:00"}
+  wednesday: {open: "09:00", close: "17:00"}
+  thursday: {open: "09:00", close: "17:00"}
+  friday: {open: "09:00", close: "17:00"}
+  saturday: closed
+  sunday: closed
+after_hours_message: "Closed"
+routing:
+  - name: "Front Desk"
+    number: "+15551110001"
+    description: "general"
+  - name: "Billing"
+    number: "+15551110002"
+    description: "billing"
+faqs: []
+messages:
+  channels:
+    - {type: "file", file_path: "messages/acme/"}
+"""
+
+
+def test_dtmf_defaults_to_disabled():
+    cfg = BusinessConfig.from_yaml_string(_v2_yaml_with_routing())
+
+    assert cfg.dtmf is None
+
+
+def test_dtmf_config_accepts_minimal_enabled_block():
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "1":
+      action: transfer
+      routing: "Front Desk"
+      acknowledgment_en: "Transferring you to the front desk."
+"""
+    cfg = BusinessConfig.from_yaml_string(yaml)
+
+    assert cfg.dtmf is not None
+    assert cfg.dtmf.enabled is True
+    assert "1" in cfg.dtmf.digits
+    assert cfg.dtmf.digits["1"].action == "transfer"
+    assert cfg.dtmf.digits["1"].routing == "Front Desk"
+
+
+def test_dtmf_rejects_invalid_digit_key():
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "10":
+      action: end_call
+      acknowledgment_en: "Goodbye."
+"""
+    with pytest.raises(ValidationError, match="invalid keys"):
+        BusinessConfig.from_yaml_string(yaml)
+
+
+def test_dtmf_rejects_invalid_action():
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "1":
+      action: launch_missiles
+      acknowledgment_en: "Boom."
+"""
+    with pytest.raises(ValidationError, match="launch_missiles"):
+        BusinessConfig.from_yaml_string(yaml)
+
+
+def test_dtmf_transfer_action_requires_routing_to_exist():
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "1":
+      action: transfer
+      routing: "Mystery Department"
+      acknowledgment_en: "Transferring."
+"""
+    with pytest.raises(ValidationError) as exc:
+        BusinessConfig.from_yaml_string(yaml)
+    assert "Mystery Department" in str(exc.value)
+
+
+def test_dtmf_transfer_action_requires_routing_field():
+    """A transfer action with no `routing` field at all must be rejected by
+    the BusinessConfig cross-field validator, distinct from the "routing
+    value does not match a known entry" case covered above.
+    """
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "1":
+      action: transfer
+      acknowledgment_en: "Transferring."
+"""
+    with pytest.raises(ValidationError, match=r"no `routing`"):
+        BusinessConfig.from_yaml_string(yaml)
+
+
+def test_dtmf_repeat_menu_requires_menu_announcement_en():
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "*":
+      action: repeat_menu
+      acknowledgment_en: "Here it is again."
+"""
+    with pytest.raises(ValidationError, match="menu_announcement_en"):
+        BusinessConfig.from_yaml_string(yaml)
+
+
+def test_dtmf_action_requires_acknowledgment_en():
+    yaml = _v2_yaml_with_routing() + """
+dtmf:
+  enabled: true
+  digits:
+    "9":
+      action: end_call
+"""
+    with pytest.raises(ValidationError, match="acknowledgment_en"):
+        BusinessConfig.from_yaml_string(yaml)

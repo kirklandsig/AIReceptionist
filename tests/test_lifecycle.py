@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from receptionist.config import BusinessConfig
 from receptionist.lifecycle import CallLifecycle
 from receptionist.transcript.metadata import CallMetadata
 
@@ -490,6 +491,83 @@ async def test_on_call_ended_is_idempotent(tmp_path, config, mocker):
     assert deliver_call_end_mock.call_count == 1, "duplicate call-end email after idempotent re-call"
     assert len(list(tmp_path.glob("*.md"))) == transcripts_after_first, \
         "transcript file count changed after idempotent re-call"
+
+
+def test_record_dtmf_event_appends_with_pending_status(v2_yaml):
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+
+    lifecycle.record_dtmf_event(
+        digit="1", action="transfer", target="Front Desk", status="pending",
+    )
+    events = lifecycle.metadata.dtmf_events
+    assert len(events) == 1
+    assert events[0].digit == "1"
+    assert events[0].status == "pending"
+
+
+def test_update_dtmf_event_status_changes_status_and_error(v2_yaml):
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+
+    eid = lifecycle.record_dtmf_event(
+        digit="2", action="transfer", target="Billing", status="pending",
+    )
+    lifecycle.update_dtmf_event_status(eid, status="failed", error="sip_api_failed")
+
+    rec = lifecycle.metadata.dtmf_events[0]
+    assert rec.status == "failed"
+    assert rec.error == "sip_api_failed"
+
+
+def test_record_dtmf_event_handles_unmapped_with_no_action_or_target(v2_yaml):
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+
+    lifecycle.record_dtmf_event(
+        digit="5", action=None, target=None, status="unmapped",
+    )
+    rec = lifecycle.metadata.dtmf_events[0]
+    assert rec.digit == "5"
+    assert rec.action is None
+    assert rec.target is None
+    assert rec.status == "unmapped"
+
+
+def test_update_dtmf_event_status_logs_warning_on_invalid_event_id(v2_yaml, caplog):
+    """Stale or out-of-range event_id must not raise (a live call should not
+    crash on a metrics-tracking miss) but must emit a warning so the silent
+    failure is observable."""
+    import logging
+
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    lifecycle.record_dtmf_event(
+        digit="1", action="transfer", target="Front Desk", status="pending",
+    )
+    events_before = list(lifecycle.metadata.dtmf_events)
+
+    with caplog.at_level(logging.WARNING, logger="receptionist"):
+        lifecycle.update_dtmf_event_status(999, status="executed")
+
+    # The event list is unchanged: no append, no in-place mutation.
+    assert lifecycle.metadata.dtmf_events == events_before
+    assert any(
+        "update_dtmf_event_status" in rec.message and "out of range" in rec.message
+        for rec in caplog.records
+    ), f"expected an out-of-range warning, got: {[r.message for r in caplog.records]}"
+
+
+def test_record_dtmf_event_rejects_unknown_status(v2_yaml):
+    """Status whitelist mirrors VALID_OUTCOMES: a typo must raise rather
+    than land silently in transcripts."""
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+
+    with pytest.raises(ValueError, match="sucess"):
+        lifecycle.record_dtmf_event(
+            digit="1", action="transfer", target="Front Desk", status="sucess",
+        )
 
 
 @pytest.mark.asyncio

@@ -202,6 +202,51 @@ class RoutingEntry(BaseModel):
     description: str
 
 
+# ---------------------------------------------------------------------------
+# DTMF auto-attendant
+# ---------------------------------------------------------------------------
+
+_VALID_DTMF_DIGITS = {*"0123456789", "*", "#"}
+
+
+class DtmfActionConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: Literal["transfer", "take_message", "end_call", "repeat_menu"]
+    routing: str | None = None
+    acknowledgment_en: str
+    acknowledgment_es: str | None = None
+
+
+class DtmfConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    menu_announcement_en: str | None = None
+    menu_announcement_es: str | None = None
+    digits: dict[str, DtmfActionConfig] = Field(default_factory=dict)
+
+    @field_validator("digits")
+    @classmethod
+    def _validate_digit_keys(cls, v: dict[str, DtmfActionConfig]) -> dict[str, DtmfActionConfig]:
+        bad = [k for k in v.keys() if k not in _VALID_DTMF_DIGITS]
+        if bad:
+            raise ValueError(
+                f"dtmf.digits has invalid keys {bad!r}; allowed: 0-9, *, #"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _repeat_menu_needs_menu_announcement_en(self) -> DtmfConfig:
+        has_repeat = any(a.action == "repeat_menu" for a in self.digits.values())
+        if has_repeat and not self.menu_announcement_en:
+            raise ValueError(
+                "dtmf.menu_announcement_en is required when any digit uses "
+                "action=repeat_menu"
+            )
+        return self
+
+
 class FAQEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -772,6 +817,28 @@ class BusinessConfig(BaseModel):
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     info_packets: InfoPacketsConfig | None = None
+    dtmf: DtmfConfig | None = None
+
+    @model_validator(mode="after")
+    def _dtmf_transfer_routing_must_exist(self) -> BusinessConfig:
+        if self.dtmf is None:
+            return self
+        known = {entry.name for entry in self.routing}
+        for digit, action_cfg in self.dtmf.digits.items():
+            if action_cfg.action != "transfer":
+                continue
+            if not action_cfg.routing:
+                raise ValueError(
+                    f"dtmf.digits[{digit!r}] uses action=transfer but has no "
+                    f"`routing`; set it to one of {sorted(known)!r}"
+                )
+            if action_cfg.routing not in known:
+                raise ValueError(
+                    f"dtmf.digits[{digit!r}] references routing entry "
+                    f"{action_cfg.routing!r} which does not exist. Known routing "
+                    f"entries: {sorted(known)!r}"
+                )
+        return self
 
     @model_validator(mode="after")
     def validate_cross_section(self) -> BusinessConfig:

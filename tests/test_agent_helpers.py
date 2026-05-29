@@ -466,6 +466,44 @@ async def test_refresh_realtime_tools_pushes_full_agent_tool_list(caplog):
     )
 
 
+@pytest.mark.asyncio
+async def test_refresh_realtime_tools_logs_and_reraises_when_update_tools_fails(caplog):
+    """When `update_tools` raises (e.g. WebSocket reconnect, OpenAI Realtime
+    session still warming, transport blip), the failure must be visible in
+    the logs AND propagate so the call fails fast instead of running with
+    a phantom tool registry.
+
+    Silent swallowing was the root cause of multiple live-call regressions
+    where Riley called `record_intake_answer` and the model responded with
+    `Unknown function`; we want the next occurrence to leave a structured
+    log record we can grep for.
+    """
+    from unittest.mock import AsyncMock
+
+    tools = [SimpleNamespace(id="record_intake_answer")]
+    boom = RuntimeError("realtime session not ready")
+    receptionist = SimpleNamespace(
+        tools=tools, update_tools=AsyncMock(side_effect=boom),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="receptionist"):
+        with pytest.raises(RuntimeError, match="realtime session not ready"):
+            await _refresh_realtime_tools(receptionist, call_id="call-2")
+
+    error_records = [
+        r for r in caplog.records
+        if r.levelno == logging.ERROR
+        and getattr(r, "component", None) == "agent.tools"
+        and getattr(r, "phase", None) == "update_tools"
+    ]
+    assert error_records, "expected a structured ERROR log for update_tools failure"
+    record = error_records[0]
+    assert record.call_id == "call-2"
+    # The tool list that we tried to push should be in the message so logs
+    # can confirm which tools were attempted.
+    assert "record_intake_answer" in record.getMessage()
+
+
 def test_tool_contract_raises_when_enabled_intake_tool_is_missing(caplog):
     config = SimpleNamespace(
         intakes=SimpleNamespace(enabled=True),

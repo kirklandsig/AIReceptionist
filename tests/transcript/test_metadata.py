@@ -106,3 +106,61 @@ def test_metadata_default_agent_end_reason_is_none():
     assert md.agent_end_reason is None
     d = md.to_dict()
     assert d["agent_end_reason"] is None
+
+
+def test_dtmf_event_record_to_dict_includes_all_fields():
+    from receptionist.transcript.metadata import DtmfEventRecord
+
+    rec = DtmfEventRecord(
+        digit="1",
+        action="transfer",
+        target="Front Desk",
+        status="executed",
+    )
+
+    assert rec.timestamp  # auto-filled
+    d = rec.to_dict()
+    assert d["digit"] == "1"
+    assert d["action"] == "transfer"
+    assert d["target"] == "Front Desk"
+    assert d["status"] == "executed"
+    assert d["error"] is None
+    assert "timestamp" in d
+
+
+def test_dtmf_event_record_carries_error_when_failed():
+    from receptionist.transcript.metadata import DtmfEventRecord
+
+    rec = DtmfEventRecord(
+        digit="2",
+        action="transfer",
+        target="Billing",
+        status="failed",
+        error="sip_api_failed",
+    )
+
+    assert rec.to_dict()["error"] == "sip_api_failed"
+
+
+def test_call_metadata_dtmf_events_serializes_in_order():
+    from receptionist.transcript.metadata import CallMetadata, DtmfEventRecord
+
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.dtmf_events.append(DtmfEventRecord(digit="1", action="transfer",
+                                          target="Front Desk", status="executed"))
+    md.dtmf_events.append(DtmfEventRecord(digit="5", action=None,
+                                          target=None, status="unmapped"))
+
+    out = md.to_dict()
+    assert [e["digit"] for e in out["dtmf_events"]] == ["1", "5"]
+    assert out["dtmf_events"][0]["status"] == "executed"
+    assert out["dtmf_events"][1]["status"] == "unmapped"
+
+
+def test_call_metadata_dtmf_events_defaults_empty():
+    from receptionist.transcript.metadata import CallMetadata
+
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+
+    assert md.dtmf_events == []
+    assert md.to_dict()["dtmf_events"] == []

@@ -9,8 +9,10 @@ import re
 import threading
 import time
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Literal, Optional
 from zoneinfo import ZoneInfo
 
 from dateutil import parser as dateparser
@@ -45,6 +47,81 @@ _LIVEKIT_OPERATION_TIMEOUT_SECONDS = 10.0
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 _GENERATION_WATCHDOG_THREAD: threading.Thread | None = None
 _GENERATION_WATCHDOG_INTERVAL_SECONDS = 2.0
+
+
+def _bc(stage: str, call_id: str) -> None:
+    """Write a per-PID breadcrumb file. Used to diagnose handle_call
+    execution flow when the shared `agent.log` is corrupted by interleaved
+    writes from multiple worker subprocesses. Atomic per-line write to a
+    per-PID file. Always also emits to stderr so we see it in agent.err
+    even if the file write fails (wrong CWD, permission denied, etc.).
+    Failures are swallowed because diagnostic logging must never crash
+    the call.
+
+    Directory resolution priority:
+    1. `RECEPTIONIST_AGENT_GENERATION_FILE` env var (set by launcher) →
+       use its directory for breadcrumbs/ subdir.
+    2. `RECEPTIONIST_CONFIG` env var + relative `secrets/<slug>/runtime/`.
+    3. Plain relative `breadcrumbs/`.
+    """
+    import sys
+    line = f"{time.time():.3f} pid={os.getpid()} call_id={call_id} stage={stage}"
+    # Stderr first — works even if file write fails. Redirected to agent.err.
+    try:
+        print(f"BC {line}", file=sys.stderr, flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+    # Then attempt the per-PID file write at the best available path.
+    candidate_dirs = []
+    gen_file = os.environ.get("RECEPTIONIST_AGENT_GENERATION_FILE")
+    if gen_file:
+        candidate_dirs.append(Path(gen_file).resolve().parent / "breadcrumbs")
+    business = os.environ.get("RECEPTIONIST_CONFIG")
+    if business:
+        candidate_dirs.append(
+            Path("secrets") / business / "runtime" / "breadcrumbs"
+        )
+    candidate_dirs.append(Path("breadcrumbs"))
+    for d in candidate_dirs:
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+            with open(d / f"{os.getpid()}.bc", "a", encoding="utf-8") as f:
+                f.write(line + "\n")
+            return
+        except Exception:  # noqa: BLE001
+            continue
+
+
+# Spoken/returned when a transfer is attempted on an intake_only line. The
+# tool path returns this to the LLM; the DTMF handler (issue #16) inherits the
+# same refusal via _execute_transfer. Single source of truth so the two paths
+# cannot drift.
+_INTAKE_ONLY_TRANSFER_REFUSAL = (
+    "This intake line cannot transfer calls. Offer to take a "
+    "message with the caller's name, callback number, and what "
+    "they need so someone can call them back."
+)
+
+
+@dataclass
+class TransferResult:
+    """Structured result of a SIP transfer attempt.
+
+    Returned by `Receptionist._execute_transfer`. The LLM `transfer_call`
+    tool path returns `result.message` to the model. The DTMF handler
+    (issue #16) branches on `result.status` to decide whether to record
+    the transfer as executed, pivot to take_message, or surface a failure
+    to the caller.
+    """
+
+    status: Literal[
+        "transferred",
+        "intake_only_refused",
+        "department_not_found",
+        "sip_api_failed",
+    ]
+    message: str
+    target_name: Optional[str] = None
 
 
 def _create_background_task(coro) -> asyncio.Task:
@@ -160,12 +237,32 @@ async def _refresh_realtime_tools(receptionist, *, call_id: str) -> None:
     context did not know about. A post-start refresh is idempotent and gives
     the realtime session one more explicit `session.update` with the full tool
     list before caller turns begin.
+
+    Failures (transport blips, OpenAI Realtime session not yet ready, etc.)
+    are logged at ERROR with structured `component`/`phase`/`call_id` fields
+    and then re-raised. Silent swallowing was the root cause of multiple
+    live-call "Unknown function" regressions — the call now fails fast and
+    LiveKit's job runner reports the underlying exception instead of letting
+    the call proceed with a phantom tool registry.
     """
     tools = receptionist.tools
-    await receptionist.update_tools(tools)
+    tool_names = ", ".join(_tool_display_names(tools)) or "(none)"
+    try:
+        await receptionist.update_tools(tools)
+    except Exception:
+        logger.exception(
+            "Failed to refresh realtime tool registry: %s",
+            tool_names,
+            extra={
+                "call_id": call_id,
+                "component": "agent.tools",
+                "phase": "update_tools",
+            },
+        )
+        raise
     logger.info(
         "Refreshed realtime tool registry: %s",
-        ", ".join(_tool_display_names(tools)) or "(none)",
+        tool_names,
         extra={"call_id": call_id, "component": "agent.tools"},
     )
 
@@ -762,20 +859,74 @@ class Receptionist(Agent):
     @function_tool()
     async def transfer_call(self, ctx: RunContext, department: str) -> str:
         """Transfer the caller to a specific department or person."""
+        result = await self._execute_transfer(department, source="tool", ctx=ctx)
+        return result.message
+
+    async def _execute_transfer(
+        self,
+        department: str,
+        *,
+        source: str,
+        ctx: RunContext | None = None,
+    ) -> TransferResult:
+        """Shared SIP transfer logic for the `transfer_call` tool and DTMF.
+
+        Owns the full transfer decision so both entry points get identical
+        behavior and a structured result: the intake_only refusal gate, the
+        routing lookup (emitting `department_not_found` when unmapped), the
+        spoken tool-path acknowledgment, and the SIP API call itself.
+
+        `source` is "tool" when invoked by the LLM tool path and "dtmf" when
+        invoked by the keypad handler (issue #16). The DTMF handler branches
+        on `TransferResult.status` to record/pivot/surface, so every failure
+        mode here is a distinct status rather than a bare message string.
+
+        For source="tool", we speak the existing "Tell the caller you're
+        transferring them to {target.name} now." line via the supplied
+        RunContext's session. For source="dtmf", the handler speaks its
+        own acknowledgment from the configured DTMF acknowledgment string,
+        so this helper skips that spoken line.
+        """
+        # intake_only refuses regardless of whether the requested department
+        # exists — historical contract, and the DTMF path inherits it here.
         if self.config.agent.mode == "intake_only":
-            return (
-                "This intake line cannot transfer calls. Offer to take a "
-                "message with the caller's name, callback number, and what "
-                "they need so someone can call them back."
+            return TransferResult(
+                status="intake_only_refused",
+                message=_INTAKE_ONLY_TRANSFER_REFUSAL,
+                target_name=None,
             )
+
         target = self._routing_by_name.get(department.lower())
         if target is None:
             available = ", ".join(e.name for e in self.config.routing)
-            return f"Department '{department}' not found. Available departments: {available}"
+            return TransferResult(
+                status="department_not_found",
+                message=(
+                    f"Department '{department}' not found. "
+                    f"Available departments: {available}"
+                ),
+                target_name=None,
+            )
 
-        await ctx.session.generate_reply(
-            instructions=f"Tell the caller you're transferring them to {target.name} now."
-        )
+        # Preserve historical tool-path behavior: speak "Tell the caller
+        # you're transferring..." before the SIP API call. DTMF speaks its
+        # own acknowledgment from the handler, so skip for source="dtmf".
+        if source == "tool" and ctx is not None:
+            try:
+                await ctx.session.generate_reply(
+                    instructions=(
+                        f"Tell the caller you're transferring them to "
+                        f"{target.name} now."
+                    )
+                )
+            except Exception:  # noqa: BLE001 — best-effort acknowledgment
+                logger.warning(
+                    "transfer_call: tool-path acknowledgment failed; proceeding",
+                    extra={
+                        "call_id": self.lifecycle.metadata.call_id,
+                        "component": "agent.transfer",
+                    },
+                )
 
         job_ctx = get_job_context()
         try:
@@ -784,16 +935,37 @@ class Receptionist(Agent):
                     api.TransferSIPParticipantRequest(
                         room_name=job_ctx.room.name,
                         participant_identity=_get_caller_identity(job_ctx),
-                        transfer_to=self.config.sip.transfer_uri_template.format(number=target.number),
+                        transfer_to=self.config.sip.transfer_uri_template.format(
+                            number=target.number,
+                        ),
                     )
                 ),
                 timeout=_LIVEKIT_OPERATION_TIMEOUT_SECONDS,
             )
             self.lifecycle.record_transfer(target.name)
-            return f"Call transferred to {target.name}"
+            return TransferResult(
+                status="transferred",
+                message=f"Call transferred to {target.name}",
+                target_name=target.name,
+            )
         except Exception as e:
-            logger.error(f"Failed to transfer call to {target.name}: {e}")
-            return f"Sorry, I wasn't able to transfer the call to {target.name}. Please ask the caller to try calling directly."
+            logger.error(
+                "Failed to transfer call to %s: %s", target.name, e,
+                extra={
+                    "call_id": self.lifecycle.metadata.call_id,
+                    "component": "agent.transfer",
+                    "source": source,
+                },
+            )
+            return TransferResult(
+                status="sip_api_failed",
+                message=(
+                    f"Sorry, I wasn't able to transfer the call to "
+                    f"{target.name}. Please ask the caller to try calling "
+                    f"directly."
+                ),
+                target_name=target.name,
+            )
 
     @function_tool()
     async def take_message(
@@ -1564,14 +1736,18 @@ server = AgentServer()
 
 @server.rtc_session(agent_name=_resolve_agent_name())
 async def handle_call(ctx: agents.JobContext):
+    _bc("handle_call_entered", getattr(getattr(ctx, "room", None), "name", "?"))
     _start_generation_watchdog_once()
+    _bc("after_watchdog_start", getattr(getattr(ctx, "room", None), "name", "?"))
     config = load_business_config(ctx)
+    _bc("after_load_config", getattr(getattr(ctx, "room", None), "name", "?"))
 
     lifecycle = CallLifecycle(
         config=config,
         call_id=ctx.room.name,
         caller_phone=_get_caller_phone(ctx),
     )
+    _bc("after_lifecycle_init", lifecycle.metadata.call_id)
 
     logger.info(
         "callerid: handle_call snapshot caller_phone_present=%s room=%s",
@@ -1819,6 +1995,13 @@ async def handle_call(ctx: agents.JobContext):
     # the preamble is captured — which is the correct proof-of-disclosure.
     await lifecycle.start_recording_if_enabled(ctx.room.name)
 
+    # Side-channel breadcrumb file. The shared `agent.log` stdout/stderr
+    # file gets interleaved writes from multiple worker subprocesses on
+    # Windows, which corrupts log lines and hides diagnostic info. Writing
+    # to a per-PID file in `secrets/<business>/runtime/breadcrumbs/` is
+    # atomic and gives us reliable execution traces during live-call
+    # debugging.
+    _bc("about_to_session_start", lifecycle.metadata.call_id)
     await session.start(
         room=ctx.room,
         agent=receptionist,
@@ -1832,9 +2015,20 @@ async def handle_call(ctx: agents.JobContext):
             ),
         ),
     )
-    await _refresh_realtime_tools(
-        receptionist, call_id=lifecycle.metadata.call_id,
-    )
+    _bc("session_start_returned", lifecycle.metadata.call_id)
+    try:
+        await _refresh_realtime_tools(
+            receptionist, call_id=lifecycle.metadata.call_id,
+        )
+    except Exception as exc:
+        _bc(f"refresh_realtime_tools_raised:{type(exc).__name__}:{exc!r}",
+            lifecycle.metadata.call_id)
+        logger.error(
+            "handle_call: _refresh_realtime_tools raised; call will proceed "
+            "with whatever tool registry OpenAI established during session.start",
+            extra={"call_id": lifecycle.metadata.call_id, "component": "agent.setup"},
+        )
+    _bc("setup_complete", lifecycle.metadata.call_id)
 
 
 if __name__ == "__main__":

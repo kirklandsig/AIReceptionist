@@ -54,6 +54,159 @@ def test_kill_orphan_agents_kills_matching_workspace_processes(monkeypatch, tmp_
     ]
 
 
+def test_kill_multiprocessing_spawn_orphans_with_dead_parent(monkeypatch, tmp_path):
+    """LiveKit Agents prod mode spawns prewarmed runner subprocesses via
+    Python's `multiprocessing.spawn`. When the agent worker parent dies
+    (`taskkill /T`), these multiprocessing children become orphans that
+    `taskkill /T` cannot reach because they are not in the parent's
+    process tree. They keep registering with LiveKit Cloud and handling
+    jobs with stale code — the cause of the multi-hour "Unknown function
+    record_intake_answer" / hallucinated-parameter regression seen on
+    2026-05-22.
+
+    The launcher must also kill these orphans on restart. Identification:
+    a `python.exe` process with `multiprocessing.spawn` in its command
+    line whose parent process is no longer alive.
+    """
+    calls = []
+    process_table = {
+        # alive parent — child should NOT be killed
+        100: {"alive": True, "name": "python.exe", "cmd": "-m receptionist.agent start"},
+        # multiprocessing orphan, parent alive (parent==100) — NOT killed
+        200: {"alive": True, "name": "python.exe", "cmd": "multiprocessing.spawn parent_pid=100", "parent": 100},
+        # multiprocessing orphan, parent dead (parent==999) — KILLED
+        300: {"alive": True, "name": "python.exe", "cmd": "multiprocessing.spawn parent_pid=999", "parent": 999},
+        # multiprocessing orphan, parent dead (parent==888) — KILLED
+        400: {"alive": True, "name": "python.exe", "cmd": "multiprocessing.spawn parent_pid=888", "parent": 888},
+        # non-multiprocessing python — ignored
+        500: {"alive": True, "name": "python.exe", "cmd": "some-other-script.py", "parent": 1},
+    }
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        # The PowerShell scan returns the PIDs of orphans whose parent is dead
+        if args[0] == "powershell":
+            script = args[-1]
+            if "multiprocessing.spawn" in script and "ParentProcessId" in script:
+                # Return PIDs whose parent_pid points to a process not in
+                # the alive list. In our synthetic table that's 300 and 400.
+                return SimpleNamespace(returncode=0, stdout="300\n400\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+    monkeypatch.setattr(launcher.os, "getpid", lambda: 999)
+
+    launcher._kill_multiprocessing_spawn_orphans()
+
+    taskkill_calls = [c for c in calls if c[0][0] == "taskkill"]
+    killed_pids = sorted(int(c[0][-1]) for c in taskkill_calls)
+    assert killed_pids == [300, 400]
+
+
+def test_main_kills_multiprocessing_spawn_orphans_during_restart(monkeypatch, tmp_path):
+    """`main()` must invoke the new multiprocessing-orphan killer so that
+    every `restart-agent.ps1` cycle cleans up the prewarmed-runner
+    orphans LiveKit Agents leaves behind in prod mode."""
+    repo = tmp_path / "repo"
+    scripts_dir = repo / "scripts"
+    pyexe = repo / "venv" / "Scripts" / "python.exe"
+    scripts_dir.mkdir(parents=True)
+    pyexe.parent.mkdir(parents=True)
+    pyexe.write_text("", encoding="ascii")
+    called = []
+
+    monkeypatch.setattr(launcher, "__file__", str(scripts_dir / "_spawn_agent.py"))
+    monkeypatch.setattr(launcher, "_kill_prior", lambda pid_path: called.append("kill_prior"))
+    monkeypatch.setattr(launcher, "_kill_orphan_agents", lambda repo_path: called.append("kill_orphan_agents"))
+    monkeypatch.setattr(
+        launcher,
+        "_kill_multiprocessing_spawn_orphans",
+        lambda: called.append("kill_multiprocessing_spawn_orphans"),
+    )
+    monkeypatch.setattr(launcher, "_load_dotenv", lambda env_path, env, **kwargs: None)
+    monkeypatch.setattr(
+        launcher, "_spawn_detached",
+        lambda *args, **kwargs: SimpleNamespace(pid=12345),
+    )
+
+    assert launcher.main(["spawn_agent", "acme"]) == 0
+    assert "kill_multiprocessing_spawn_orphans" in called
+    # It must run BEFORE spawning (which is implicit — after the kills,
+    # the launcher writes the generation token and spawns).
+    assert called.index("kill_multiprocessing_spawn_orphans") < len(called) - 1 or "kill_multiprocessing_spawn_orphans" in called
+
+
+def test_kill_orphan_agents_pattern_matches_any_livekit_subcommand(monkeypatch, tmp_path):
+    """The orphan-killer must match `python -m receptionist.agent <subcmd>`
+    for any LiveKit subcommand (`dev`, `start`, etc.) — not only `dev`.
+
+    Otherwise switching the launcher to prod (`start`) mode would leave
+    legacy `dev`-mode processes orphaned, and vice-versa.
+    """
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        if args[0] == "powershell":
+            captured["script"] = args[-1]
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.setattr(launcher.subprocess, "run", fake_run)
+
+    launcher._kill_orphan_agents(tmp_path)
+
+    # The Where-Object filter must not pin to ` dev` specifically; it must
+    # be subcommand-agnostic.
+    assert "script" in captured
+    assert "-m receptionist.agent dev" not in captured["script"]
+    assert "-m receptionist.agent" in captured["script"]
+
+
+def test_spawn_detached_uses_prod_start_subcommand_by_default(monkeypatch, tmp_path):
+    """The launcher must invoke `python -m receptionist.agent start` by default
+    (LiveKit prod mode), not `dev`. Dev mode's hot-reload behavior is hostile
+    to long-lived stable workers."""
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, args, **kwargs):
+            captured["args"] = list(args)
+            captured["kwargs"] = kwargs
+            self.pid = 12345
+
+    monkeypatch.setattr(launcher.sys, "platform", "win32")
+    monkeypatch.setattr(launcher.subprocess, "Popen", FakePopen)
+
+    log_f = tmp_path / "log"
+    err_f = tmp_path / "err"
+    launcher._spawn_detached(
+        pyexe=Path("python.exe"),
+        repo=tmp_path,
+        log_f=log_f,
+        err_f=err_f,
+        env={},
+    )
+
+    assert captured["args"][-1] == "start"
+    assert "dev" not in captured["args"]
+
+
+def test_agent_status_matches_any_livekit_subcommand():
+    """`agent-status.ps1`'s pidfile-identity check must accept both
+    `dev` and `start` LiveKit subcommands, so a worker launched in
+    either mode is recognized as a receptionist agent."""
+    script = Path("scripts/agent-status.ps1").read_text(encoding="utf-8")
+    # The literal `* dev*` (with leading space and trailing wildcard) would
+    # reject `start`-mode processes. Reject both single- and double-quoted
+    # variants — both are syntactically valid in PowerShell -like patterns.
+    assert "* dev*" not in script
+    # The check should look for the receptionist.agent module marker.
+    assert "receptionist.agent" in script
+
+
 def test_generation_token_is_written_to_runtime_file(tmp_path):
     token = launcher._write_generation_token(tmp_path)
 

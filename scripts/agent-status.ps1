@@ -62,7 +62,9 @@ function Test-IsAgentCommandLine {
     if ($normalizedCommandLine -ne $repoNeedle -and $normalizedCommandLine -notlike "*$repoNeedle/*") {
         return $false
     }
-    if ($normalizedCommandLine -notlike "*receptionist.agent*" -or $normalizedCommandLine -notlike "* dev*") {
+    # Match any LiveKit subcommand (dev, start, etc.) rather than just `dev`,
+    # so the status check works regardless of which mode the launcher chose.
+    if ($normalizedCommandLine -notlike "*receptionist.agent *") {
         return $false
     }
     return $true

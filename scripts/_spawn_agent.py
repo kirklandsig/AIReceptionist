@@ -108,8 +108,76 @@ def _kill_prior(pid_path: Path) -> None:
         pass
 
 
+def _kill_multiprocessing_spawn_orphans() -> None:
+    """Kill Python multiprocessing-spawn subprocesses whose parent is dead.
+
+    LiveKit Agents in prod mode (`start`) spawns prewarmed runner
+    subprocesses via Python's `multiprocessing` module. Those children
+    have command lines like:
+
+        C:\\Python314\\python.exe -c "from multiprocessing.spawn
+        import spawn_main; spawn_main(parent_pid=N, pipe_handle=H)"
+
+    They are NOT in the agent worker's process tree by Win32 metric, so
+    `taskkill /F /T /PID <parent>` does not reach them. After a restart
+    they become orphans whose `ParentProcessId` points to a dead PID,
+    but they themselves keep running. Each one stays registered with
+    LiveKit Cloud and is eligible to handle jobs — with stale code and
+    a stale OpenAI Realtime tool registry. This was the cause of the
+    multi-hour "Unknown function record_intake_answer" / hallucinated-
+    parameter regression observed on 2026-05-22 after switching the
+    local worker to prod mode.
+
+    Safety: only kills processes whose parent is NOT alive. A
+    multiprocessing child whose parent is still running is left alone
+    (it's a healthy current-session worker). On a developer's laptop
+    this is a small risk if another Python app is also using
+    multiprocessing — accept that risk; production never runs both
+    workloads on one box.
+    """
+    if sys.platform != "win32":
+        return
+    script = (
+        "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" "
+        "| Where-Object { $_.CommandLine -like '*multiprocessing.spawn*' } "
+        "| ForEach-Object { "
+        "    $alive = $true; "
+        "    try { Get-Process -Id $_.ParentProcessId -ErrorAction Stop | Out-Null } "
+        "    catch { $alive = $false } "
+        "    if (-not $alive) { $_.ProcessId } "
+        "}"
+    )
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", script],
+            capture_output=True, check=False, text=True, timeout=10,
+        )
+    except Exception:
+        return
+    current_pid = os.getpid()
+    for line in result.stdout.splitlines():
+        try:
+            pid = int(line.strip())
+        except ValueError:
+            continue
+        if pid == current_pid:
+            continue
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True, check=False, timeout=5,
+            )
+        except Exception:
+            pass
+
+
 def _kill_orphan_agents(repo: Path) -> None:
-    """Stop orphaned agent dev workers from this checkout on Windows."""
+    """Stop orphaned receptionist agent workers from this checkout on Windows.
+
+    Matches any LiveKit subcommand (`dev`, `start`, etc.) so switching the
+    launcher between dev and prod mode still cleanly purges leftover workers
+    from the prior mode.
+    """
     if sys.platform != "win32":
         return
     repo_text = str(repo)
@@ -117,7 +185,7 @@ def _kill_orphan_agents(repo: Path) -> None:
     script = (
         "Get-CimInstance Win32_Process | "
         "Where-Object { "
-        "$_.CommandLine -like '*-m receptionist.agent dev*' -and "
+        "$_.CommandLine -like '*-m receptionist.agent *' -and "
         f"$_.CommandLine -like '*{escaped_repo}*' "
         "} | Select-Object -ExpandProperty ProcessId"
     )
@@ -170,7 +238,13 @@ def _spawn_detached(
     err_f,
     env: dict[str, str],
 ) -> subprocess.Popen:
-    args = [str(pyexe), "-m", "receptionist.agent", "dev"]
+    # `start` is LiveKit Agents' production-mode subcommand: one stable worker,
+    # no file watching, no hot-reload-driven respawning. Dev mode's hot reload
+    # was producing dozens of stale worker registrations on LiveKit Cloud and
+    # a degraded OpenAI Realtime tool registry on long-lived workers. The local
+    # launcher always uses `start`; developers who want hot-reload can run
+    # `python -m receptionist.agent dev` directly without the launcher.
+    args = [str(pyexe), "-m", "receptionist.agent", "start"]
     if sys.platform == "win32":
         # DETACHED_PROCESS = 0x00000008
         # CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -233,6 +307,10 @@ def main(argv: list[str]) -> int:
     # Stop prior agent before spawning the new one
     _kill_prior(pid_path)
     _kill_orphan_agents(repo)
+    # Also kill LiveKit prod-mode `multiprocessing.spawn` prewarmed-runner
+    # orphans whose parent is now dead. See docstring on
+    # `_kill_multiprocessing_spawn_orphans` for the root-cause discussion.
+    _kill_multiprocessing_spawn_orphans()
 
     generation_token = _write_generation_token(runtime)
     _write_restart_marker(log_path, generation_token)

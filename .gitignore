@@ -26,3 +26,6 @@ config/businesses/*.yaml
 # Per-business calendar credentials (service-account keys, OAuth tokens, OAuth client JSON)
 secrets/*
 !secrets/.gitkeep
+
+# Local-only VM provisioning scripts (reference the tenant slug; not for the public repo)
+deploy/

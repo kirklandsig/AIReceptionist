@@ -318,6 +318,42 @@ is ~12 seconds), the provider gives up before the agent answers.
 4. Check LiveKit logs for SIP REFER/transfer errors.
 5. Some SIP trunk configurations require explicit outbound/termination setup separate from inbound/origination.
 
+### DTMF press doesn't trigger anything
+
+**Symptom**: Caller presses a digit; nothing happens.
+
+**Cause**: Several possibilities — DTMF disabled in config, digit not in
+the `digits` map, debounce window suppressing a rapid repeat, an earlier
+DTMF action still in flight, or the SIP provider does not relay DTMF as
+RFC 4733 events to LiveKit.
+
+**Solution**:
+1. Confirm `dtmf.enabled: true` in the business YAML.
+2. Confirm the pressed digit appears in `dtmf.digits` with an `acknowledgment_en`.
+3. Look in `agent.log` for `dtmf:` INFO lines; status `unmapped`,
+   `duplicate_ignored`, or `suppressed_in_flight` indicates the handler ran but
+   chose to skip. `dtmf_events` in the call-end email lists every press the
+   agent received.
+4. If no `dtmf:` log lines appear at all, verify the SIP provider/PBX is
+   forwarding DTMF as RFC 4733 telephone-events. Some trunks default to in-band
+   DTMF which LiveKit cannot relay.
+
+### Transfer fails after DTMF press
+
+**Symptom**: Caller presses a transfer digit; Riley says she's transferring
+but the call ends up taking a message instead, or stays on the agent.
+
+**Cause**: Either `agent.mode: intake_only` is set (in which case transfer is
+refused by design and Riley pivots to take_message), or the SIP transfer API
+call failed. Check `dtmf_events` in the call-end email for status
+`refused_intake_only` vs `failed`.
+
+**Solution**:
+1. For `refused_intake_only`: this is intentional. If transfers should be
+   allowed on this line, change `agent.mode` to `receptionist`.
+2. For `failed`: check the agent log for the underlying SIP API error and
+   verify `sip.transfer_uri_template` is correct for your trunk.
+
 ### Agent never hangs up, even after caller leaves the line silent
 
 **Symptom**: After the caller stops talking — or walks away from the

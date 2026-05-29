@@ -9,7 +9,7 @@ import re
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal, Optional
@@ -804,6 +804,187 @@ def _capture_caller_phone_from_participant(
         sorted((getattr(participant, "attributes", {}) or {}).keys()),
         extra=extra,
     )
+
+
+_DTMF_DEBOUNCE_SECONDS = 1.5
+
+_DTMF_TAKE_MESSAGE_INSTRUCTIONS = (
+    "Briefly acknowledge that you will take a message. Then ask "
+    "for the caller's name, their callback number, and what they "
+    "need. Then call take_message with that information."
+)
+
+
+@dataclass
+class _DtmfHandlerState:
+    """Per-call state the DTMF handler closes over.
+
+    `execute_transfer` is `Receptionist._execute_transfer` (async; takes a
+    department-name string and `source=`, returns a `TransferResult`).
+    `speak_goodbye` is an async no-arg callable that finalizes the call and
+    disconnects the SIP caller. `clock` is injectable so debounce tests are
+    not time-flaky.
+    """
+
+    config: BusinessConfig
+    lifecycle: CallLifecycle
+    session: AgentSession
+    sip_caller_identity: str | None
+    execute_transfer: object        # async (department: str, *, source) -> TransferResult
+    speak_goodbye: object           # async () -> None
+    clock: object = time.monotonic  # injectable for tests
+
+    last_press_ts: dict[str, float] = field(default_factory=dict)
+    action_in_flight: bool = False
+
+
+async def _dispatch_dtmf_event(event, state: _DtmfHandlerState) -> None:
+    """Process a single `sip_dtmf_received` event.
+
+    Keypad presses are a deterministic side channel — they do NOT go through
+    the LLM. The digit→action mapping comes from `dtmf.digits`; this handler
+    debounces rapid repeats, suppresses presses while an action is in flight,
+    speaks a brief acknowledgment, then dispatches the configured action.
+    Transfers reuse `Receptionist._execute_transfer`, so the `intake_only`
+    gate and the SIP API path live in exactly one place.
+
+    Errors during acknowledgment or dispatch are logged and swallowed so a
+    misbehaving keypress never crashes the call.
+    """
+    dtmf_cfg = state.config.dtmf
+    if dtmf_cfg is None or not dtmf_cfg.enabled:
+        return
+
+    participant_identity = getattr(getattr(event, "participant", None), "identity", None)
+    if state.sip_caller_identity and participant_identity != state.sip_caller_identity:
+        logger.info(
+            "dtmf: ignoring event from non-SIP-caller participant %s",
+            participant_identity,
+            extra={
+                "call_id": state.lifecycle.metadata.call_id,
+                "component": "agent.dtmf",
+                "digit": getattr(event, "digit", None),
+            },
+        )
+        return
+
+    digit = str(getattr(event, "digit", "")).strip()
+    action_cfg = dtmf_cfg.digits.get(digit)
+
+    if action_cfg is None:
+        state.lifecycle.record_dtmf_event(
+            digit=digit, action=None, target=None, status="unmapped",
+        )
+        logger.info(
+            "dtmf: unmapped digit %r ignored", digit,
+            extra={
+                "call_id": state.lifecycle.metadata.call_id,
+                "component": "agent.dtmf",
+            },
+        )
+        return
+
+    now = state.clock()
+    last_ts = state.last_press_ts.get(digit)
+    if last_ts is not None and (now - last_ts) < _DTMF_DEBOUNCE_SECONDS:
+        state.lifecycle.record_dtmf_event(
+            digit=digit, action=action_cfg.action, target=action_cfg.routing,
+            status="duplicate_ignored",
+        )
+        return
+    state.last_press_ts[digit] = now
+
+    if state.action_in_flight:
+        state.lifecycle.record_dtmf_event(
+            digit=digit, action=action_cfg.action, target=action_cfg.routing,
+            status="suppressed_in_flight",
+        )
+        return
+
+    event_id = state.lifecycle.record_dtmf_event(
+        digit=digit, action=action_cfg.action, target=action_cfg.routing,
+        status="pending",
+    )
+
+    state.action_in_flight = True
+    try:
+        try:
+            state.session.interrupt()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "dtmf: session.interrupt() raised; continuing",
+                extra={
+                    "call_id": state.lifecycle.metadata.call_id,
+                    "component": "agent.dtmf",
+                },
+            )
+
+        try:
+            await state.session.generate_reply(
+                instructions=f"Say briefly, verbatim: '{action_cfg.acknowledgment_en}'",
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "dtmf: acknowledgment generate_reply raised; continuing",
+                extra={
+                    "call_id": state.lifecycle.metadata.call_id,
+                    "component": "agent.dtmf",
+                },
+            )
+
+        if action_cfg.action == "transfer":
+            # _execute_transfer owns the routing lookup (and emits
+            # department_not_found if the entry is gone), so pass the name.
+            result = await state.execute_transfer(
+                action_cfg.routing, source="dtmf",
+            )
+            if result.status == "transferred":
+                state.lifecycle.update_dtmf_event_status(event_id, status="executed")
+            elif result.status == "intake_only_refused":
+                state.lifecycle.update_dtmf_event_status(
+                    event_id, status="refused_intake_only",
+                )
+                await state.session.generate_reply(
+                    instructions=(
+                        "Say: 'This line cannot transfer calls, but I can take a "
+                        "message and have someone call you back.' Then ask for "
+                        "the caller's name, callback number, and what they need. "
+                        "Then call take_message."
+                    ),
+                )
+            else:
+                # sip_api_failed or department_not_found — surface a graceful
+                # fallback to take_message either way.
+                state.lifecycle.update_dtmf_event_status(
+                    event_id, status="failed", error=result.status,
+                )
+                await state.session.generate_reply(
+                    instructions=(
+                        "Say: 'I'm having trouble transferring that call. Let me "
+                        "take a message instead.' Then ask for the caller's name, "
+                        "callback number, and what they need. Then call take_message."
+                    ),
+                )
+        elif action_cfg.action == "take_message":
+            await state.session.generate_reply(
+                instructions=_DTMF_TAKE_MESSAGE_INSTRUCTIONS,
+            )
+            state.lifecycle.update_dtmf_event_status(event_id, status="executed")
+        elif action_cfg.action == "end_call":
+            await state.speak_goodbye()
+            state.lifecycle.update_dtmf_event_status(event_id, status="executed")
+        elif action_cfg.action == "repeat_menu":
+            menu = state.config.dtmf.menu_announcement_en or ""
+            await state.session.generate_reply(
+                instructions=f"Say verbatim: '{menu}'",
+            )
+            state.lifecycle.update_dtmf_event_status(event_id, status="executed")
+        else:
+            state.lifecycle.update_dtmf_event_status(
+                event_id, status="failed", error="unknown_action",
+            )
+    finally:
+        state.action_in_flight = False
 
 
 class Receptionist(Agent):
@@ -1889,6 +2070,32 @@ async def handle_call(ctx: agents.JobContext):
     session.on("user_input_transcribed", receptionist._on_user_input_transcribed)
     session.on("function_tools_executed", receptionist._on_function_tools_executed)
     session.on("conversation_item_added", receptionist._on_conversation_item_added)
+
+    # Issue #16 DTMF auto-attendant. When enabled, keypad presses are handled
+    # deterministically off the LiveKit `sip_dtmf_received` event rather than
+    # through the LLM. Transfers reuse receptionist._execute_transfer so the
+    # intake_only gate and SIP path are shared with the voice transfer_call.
+    if config.dtmf is not None and config.dtmf.enabled:
+        _dtmf_sip_identity = _get_caller_identity(ctx)
+
+        async def _dtmf_speak_goodbye() -> None:
+            await _speak_goodbye_and_terminate(
+                session, lifecycle, ctx, reason="caller_pressed_end_key",
+            )
+
+        _dtmf_state = _DtmfHandlerState(
+            config=config,
+            lifecycle=lifecycle,
+            session=session,
+            sip_caller_identity=_dtmf_sip_identity,
+            execute_transfer=receptionist._execute_transfer,
+            speak_goodbye=_dtmf_speak_goodbye,
+        )
+
+        def _on_sip_dtmf_received(event) -> None:
+            _create_background_task(_dispatch_dtmf_event(event, _dtmf_state))
+
+        ctx.room.on("sip_dtmf_received", _on_sip_dtmf_received)
 
     # Issue #11 silence-timeout watchers. The primary path follows
     # LiveKit's user_state machine; the optional absolute path is a

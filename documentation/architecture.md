@@ -103,6 +103,12 @@ receptionist/
   - Optional wall-clock silence fallback (`voice.idle.absolute_silence_seconds`) → same `silence_timeout` reason when no non-empty final user transcript arrives before the threshold
   - Max-duration cap (`voice.idle.max_call_duration_seconds`, when set) → reason="max_duration_reached"
   - Consecutive unproductive replies (`voice.idle.unproductive_turn_threshold`) → reason="unproductive_turns_exhausted"
+- DTMF keypress (when `dtmf.enabled`) → LiveKit room emits `sip_dtmf_received`
+  → handler resolves the digit against `dtmf.digits`, debounces and suppresses
+  in-flight repeats, speaks a brief acknowledgment, then dispatches the
+  configured action (transfer via the shared `_execute_transfer` helper,
+  take_message via a collection prompt, end_call, or repeat_menu). Each press
+  is recorded via `lifecycle.record_dtmf_event(...)`.
 
 ### 5. Disconnect
 1. `session` emits `close` event
@@ -163,6 +169,18 @@ and links come from YAML; the model only chooses a configured `packet_key` and
 caller-confirmed destination. `send_info_packet` refuses SMS in v1, validates
 the destination shape, sends through SMTP/Resend via `info_packets.py`, and
 stores the result in call metadata for auditability.
+
+### DTMF as a deterministic side channel
+
+Keypad presses are not routed through the LLM. The handler reads the
+digit→action mapping from YAML and runs the action directly off LiveKit's
+`sip_dtmf_received` event. Transfers share the same `_execute_transfer` helper
+as the LLM `transfer_call` tool, so the `intake_only` gate and SIP API path
+exist in exactly one place. The handler debounces same-digit repeats (1.5s) and
+suppresses presses while an action is in flight, and only acts on events from
+the resolved SIP caller participant. Every press is recorded as a
+`DtmfEventRecord` in `CallMetadata.dtmf_events` and rendered in the call-end
+email's "Keypad actions" section.
 
 ### Local dev worker generation guard
 

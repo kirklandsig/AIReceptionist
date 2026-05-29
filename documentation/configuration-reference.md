@@ -28,6 +28,7 @@ This document is a complete reference for the YAML business configuration file u
   - [sip](#sip)
   - [intakes](#intakes)
   - [info_packets](#info_packets)
+  - [dtmf](#dtmf)
 - [Validation Rules](#validation-rules)
 - [Loading Behavior](#loading-behavior)
 - [Tips and Best Practices](#tips-and-best-practices)
@@ -1034,6 +1035,55 @@ info_packets:
 
 ---
 
+### dtmf
+
+Optional inbound DTMF auto-attendant (issue #16). When enabled, caller keypad
+presses are handled deterministically by the agent runtime — they do **not**
+go through the LLM. Each digit maps to one action: transfer to a routing entry,
+take a message, end the call, or repeat the menu. Transfers reuse the same SIP
+transfer path as the voice `transfer_call` tool, so an `agent.mode: intake_only`
+line refuses keypad transfers exactly as it refuses spoken ones.
+
+Rapid duplicate presses of the same digit are debounced (1.5s window), and a
+press that arrives while another keypad action is still running is suppressed.
+Every press — acted on or not — is recorded in call metadata and rendered in
+the call-end summary email's "Keypad actions" section.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `enabled` | bool | No | `false` | Master switch. When false or omitted, keypad presses are ignored. |
+| `menu_announcement_en` | string | No | `None` | English menu Riley speaks once after the greeting. When omitted, DTMF still works but no menu is announced. Required if any digit uses `action: repeat_menu`. |
+| `menu_announcement_es` | string | No | `None` | Spanish menu text (reserved for localized announcements). |
+| `digits` | map | No | `{}` | Map of keypad key → action. Keys must be one of `0`–`9`, `*`, `#` (quote them in YAML). |
+| `digits[*].action` | enum | Yes | - | One of `transfer`, `take_message`, `end_call`, `repeat_menu`. |
+| `digits[*].routing` | string | Conditional | `None` | Required when `action: transfer`. Must match a `routing[*].name` entry. |
+| `digits[*].acknowledgment_en` | string | Yes | - | Short line Riley speaks (verbatim) when the digit is pressed. |
+| `digits[*].acknowledgment_es` | string | No | `None` | Spanish acknowledgment (reserved). |
+
+**Example:**
+
+```yaml
+dtmf:
+  enabled: true
+  menu_announcement_en: "Press 1 for the front desk, 0 to leave a message, or 9 to hang up."
+  digits:
+    "1":
+      action: transfer
+      routing: "Front Desk"
+      acknowledgment_en: "Transferring you to the front desk now."
+    "0":
+      action: take_message
+      acknowledgment_en: "Sure, I can take a message."
+    "9":
+      action: end_call
+      acknowledgment_en: "Thanks for calling. Goodbye."
+    "*":
+      action: repeat_menu
+      acknowledgment_en: "Here are the options again."
+```
+
+---
+
 ## Validation Rules
 
 The following validation rules are enforced by the Pydantic models in `config.py`:
@@ -1067,6 +1117,9 @@ The following validation rules are enforced by the Pydantic models in `config.py
 | Info packet links | info_packets.packets[*].links[*].url | Must be `http://` or `https://` |
 | Enabled info packets require email | info_packets + email | `info_packets.enabled` requires top-level `email:` config |
 | Info packet default key | info_packets.default_packet | Must match a configured packet key |
+| DTMF digit keys | dtmf.digits | Keys must be one of `0`-`9`, `*`, `#` |
+| DTMF transfer routing | dtmf.digits[*].routing | Required for `action: transfer` and must match an existing `routing[*].name` |
+| DTMF repeat_menu requires menu | dtmf.menu_announcement_en | Required when any digit uses `action: repeat_menu` |
 
 ---
 

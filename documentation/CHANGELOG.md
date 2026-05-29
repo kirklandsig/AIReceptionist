@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **DTMF auto-attendant (issue #16).** Configure `dtmf.digits` to map keypad
+  presses to actions: transfer to a routing entry, take a message, end the
+  call, or repeat the menu. Presses are handled deterministically off LiveKit's
+  `sip_dtmf_received` event, not through the LLM. Transfers reuse the same SIP
+  transfer path as the voice `transfer_call` tool, so the `intake_only` gate
+  applies to both. Same-digit repeats are debounced and in-flight presses are
+  suppressed. Each press is recorded in call metadata with a per-event status,
+  and the call-end summary email renders a "Keypad actions" section. An
+  optional `dtmf.menu_announcement_en` is spoken once after the greeting.
 - **Structured new-client intake by phone.** New `intakes` config block lets
   Riley walk a caller through a configurable question script per case type
   and email a structured submission at call-end. Two new function tools —

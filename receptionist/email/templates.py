@@ -204,6 +204,16 @@ def build_call_end_email(
                 f"- {record.packet_display_name} via {record.channel} "
                 f"to {record.destination}: {status}\n"
             )
+    if metadata.dtmf_events:
+        body_text += "Keypad actions:\n"
+        for record in metadata.dtmf_events:
+            status = (
+                record.status if record.error is None
+                else f"{record.status} ({record.error})"
+            )
+            target = f" -> {record.target}" if record.target else ""
+            action = record.action or "-"
+            body_text += f"- {record.digit}: {action}{target} [{status}]\n"
     captured_messages = list(captured_messages or [])
     if captured_messages:
         body_text += "\nCaptured Content:\n"
@@ -281,6 +291,33 @@ def build_call_end_email(
             "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Packet</th>"
             "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Channel</th>"
             "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Destination</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Status</th>"
+            "</tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody>"
+            "</table></td></tr>"
+        )
+    if metadata.dtmf_events:
+        rows = []
+        for record in metadata.dtmf_events:
+            status = (
+                record.status if record.error is None
+                else f"{record.status} ({record.error})"
+            )
+            rows.append(
+                "<tr>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(record.digit)}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(record.action or '-')}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(record.target or '-')}</td>"
+                f"<td style='padding:4px;border:1px solid #ccc'>{e(status)}</td>"
+                "</tr>"
+            )
+        body_html += (
+            "<tr><td><strong>Keypad actions</strong></td><td>"
+            "<table cellpadding='0' style='border-collapse:collapse'>"
+            "<thead><tr>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Digit</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Action</th>"
+            "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Target</th>"
             "<th style='padding:4px;border:1px solid #ccc;text-align:left'>Status</th>"
             "</tr></thead>"
             f"<tbody>{''.join(rows)}</tbody>"

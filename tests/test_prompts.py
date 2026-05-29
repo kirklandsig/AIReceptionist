@@ -412,3 +412,57 @@ def test_info_packets_prompt_requires_consent_and_confirmed_email():
     assert "send_info_packet" in prompt
     assert "permission" in prompt.lower() or "consent" in prompt.lower()
     assert "character-by-character" in prompt
+
+
+def test_prompt_includes_dtmf_menu_when_enabled(v2_yaml):
+    from receptionist.config import BusinessConfig
+    from receptionist.prompts import build_system_prompt
+
+    yaml = v2_yaml + """
+dtmf:
+  enabled: true
+  menu_announcement_en: "Press 1 for the front desk, 0 to leave a message."
+  digits:
+    "1":
+      action: transfer
+      routing: "Front Desk"
+      acknowledgment_en: "Transferring."
+"""
+    config = BusinessConfig.from_yaml_string(yaml)
+    prompt = build_system_prompt(config)
+
+    assert "Press 1 for the front desk" in prompt
+    assert "after the greeting" in prompt.lower()
+
+
+def test_prompt_omits_dtmf_when_disabled(v2_yaml):
+    from receptionist.config import BusinessConfig
+    from receptionist.prompts import build_system_prompt
+
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    prompt = build_system_prompt(config)
+
+    assert "dtmf" not in prompt.lower()
+    assert "press 1" not in prompt.lower()
+
+
+def test_prompt_omits_dtmf_when_no_menu_announcement_configured(v2_yaml):
+    from receptionist.config import BusinessConfig
+    from receptionist.prompts import build_system_prompt
+
+    yaml = v2_yaml + """
+dtmf:
+  enabled: true
+  digits:
+    "1":
+      action: transfer
+      routing: "Front Desk"
+      acknowledgment_en: "Transferring."
+"""
+    config = BusinessConfig.from_yaml_string(yaml)
+    prompt = build_system_prompt(config)
+
+    # No menu announcement configured -> no prompt addition; Riley simply
+    # answers the call as usual and DTMF still works silently in the
+    # background.
+    assert "after the greeting" not in prompt.lower()

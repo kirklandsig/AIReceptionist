@@ -193,6 +193,30 @@ def _build_calendar_block(config: BusinessConfig) -> str:
     )
 
 
+def _build_dtmf_block(config: BusinessConfig) -> str:
+    """Build the keypad-menu section, or empty string when DTMF is off or no
+    menu announcement is configured.
+
+    DTMF presses are handled deterministically by the agent runtime, NOT the
+    LLM — so this block exists only to make the agent *speak* the menu once
+    after greeting. If no `menu_announcement_en` is set, DTMF still works
+    silently and no prompt text is added.
+    """
+    if config.dtmf is None or not config.dtmf.enabled:
+        return ""
+    if not config.dtmf.menu_announcement_en:
+        return ""
+    return (
+        "\n## Keypad menu\n"
+        "After the greeting, speak the following keypad menu once, verbatim:\n"
+        f"\n  {config.dtmf.menu_announcement_en}\n"
+        "\n"
+        "Do not repeat the menu on later turns unless the caller asks. The "
+        "system handles keypad presses automatically; you do not need to "
+        "interpret them.\n"
+    )
+
+
 def build_system_prompt(config: BusinessConfig) -> str:
     hours_lines = []
     for day_name in [
@@ -217,6 +241,7 @@ def build_system_prompt(config: BusinessConfig) -> str:
     calendar_block = _build_calendar_block(config)
     intakes_block = _build_intakes_block(config)
     info_packets_block = _build_info_packets_block(config)
+    dtmf_block = _build_dtmf_block(config)
 
     if config.agent.mode == "intake_only":
         return f"""You are the automated intake system for {config.business.name}, a {config.business.type}.
@@ -228,7 +253,7 @@ phone, run the configured intake when appropriate, and capture a callback
 message when intake is not appropriate.
 
 {language_block}
-{intakes_block}{info_packets_block}
+{intakes_block}{info_packets_block}{dtmf_block}
 ENDING CALLS:
 When the caller has clearly finished — for example they say "goodbye",
 "thanks, bye", "that's all I needed", or you have already explained you
@@ -265,7 +290,7 @@ DEPARTMENTS YOU CAN TRANSFER TO:
 When a caller asks to be transferred, use the transfer_call tool with the department name.
 When a caller wants to leave a message, use the take_message tool to record their name, message, and callback number.
 When asked about business hours, use the get_business_hours tool.
-{calendar_block}{intakes_block}{info_packets_block}
+{calendar_block}{intakes_block}{info_packets_block}{dtmf_block}
 ENDING CALLS:
 When the caller has clearly finished — for example they say "goodbye",
 "thanks, bye", "that's all I needed", or you have already explained you

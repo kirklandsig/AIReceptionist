@@ -275,6 +275,14 @@ I can transfer you to Scheduling, Billing, or Clinical.
 Would any of those help?"
 ```
 
+### Notes
+
+`transfer_call` delegates SIP transfer logic to an internal
+`_execute_transfer` helper. The DTMF auto-attendant handler (issue #16) also
+uses that helper, so the intake-only refusal and SIP API failure paths behave
+identically whether the transfer was triggered by the LLM tool or by a keypad
+press. Public tool behavior is unchanged.
+
 ---
 
 ## take_message

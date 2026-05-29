@@ -422,3 +422,43 @@ def test_call_end_email_omits_recording_link_when_include_recording_link_false()
 
     assert "example.com/r/123.mp3" not in body_text
     assert "example.com/r/123.mp3" not in body_html
+
+
+def test_call_end_email_renders_keypad_actions_section():
+    from receptionist.email.templates import build_call_end_email
+    from receptionist.messaging.models import DispatchContext
+    from receptionist.transcript.metadata import CallMetadata, DtmfEventRecord
+
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.dtmf_events.append(DtmfEventRecord(
+        digit="1", action="transfer", target="Front Desk", status="executed",
+    ))
+    md.dtmf_events.append(DtmfEventRecord(
+        digit="5", action=None, target=None, status="unmapped",
+    ))
+    md.mark_finalized()
+
+    subject, body_text, body_html = build_call_end_email(
+        md, DispatchContext(business_name="Acme", call_id="room-1"),
+    )
+
+    assert "Keypad actions" in body_text
+    assert "1" in body_text and "Front Desk" in body_text and "executed" in body_text
+    assert "5" in body_text and "unmapped" in body_text
+    assert "Keypad actions" in body_html
+
+
+def test_call_end_email_omits_keypad_actions_section_when_empty():
+    from receptionist.email.templates import build_call_end_email
+    from receptionist.messaging.models import DispatchContext
+    from receptionist.transcript.metadata import CallMetadata
+
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    md.mark_finalized()
+
+    subject, body_text, body_html = build_call_end_email(
+        md, DispatchContext(business_name="Acme", call_id="room-1"),
+    )
+
+    assert "Keypad actions" not in body_text
+    assert "Keypad actions" not in body_html

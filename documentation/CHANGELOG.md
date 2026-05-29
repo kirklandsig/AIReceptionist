@@ -76,6 +76,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requires the pidfile PID to be this checkout's `receptionist.agent dev`,
   requires a registration after the current restart marker, and fails if it
   sees unexpected same-checkout orphan workers.
+- The worker now performs a best-effort signaling warmup in each job-runner
+  subprocess at startup (a read-only LiveKit API call that warms DNS/TLS to
+  the LiveKit host), reducing first-call cold-start latency that could cause
+  the first call after idle to ring without pickup. The warmup never blocks
+  startup and logs under `component=agent.warmup`. See the cold-start entry in
+  [`documentation/troubleshooting.md`](troubleshooting.md).
 
 ### Fixed
 - **Agent-initiated `end_call` no longer drops the call-end and deferred

@@ -17,7 +17,7 @@ business:
 
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   # Recommended production safety nets for long intake calls:
   # idle:
   #   absolute_silence_seconds: 120

@@ -95,10 +95,16 @@ RECEPTIONIST_AGENT_NAME=receptionist
 OPENAI_API_KEY=sk-your-openai-key
 ```
 
-`OPENAI_API_KEY` is optional when your test business YAML uses
-`voice.auth.type: "oauth_codex"`. For that path, run
-`python -m receptionist.voice setup <business>` and see
-[ChatGPT OAuth Setup](chatgpt-oauth-setup.md).
+`OPENAI_API_KEY` is required for the Realtime API. Set `voice.auth.type:
+"api_key"` (the default) and `voice.model: "gpt-realtime"` (the GA model) in
+your business YAML.
+
+> **Deprecated:** the `voice.auth.type: "oauth_codex"` path (ChatGPT/Codex OAuth
+> tokens) no longer works. OpenAI sunset the Realtime *Beta* API; the GA endpoint
+> rejects OAuth tokens and the handshake fails with HTTP 500 ("The Realtime Beta
+> API is no longer supported"), causing dead air on calls. Use a standard
+> `sk-...` API key instead. See
+> [Troubleshooting](troubleshooting.md#realtime-handshake-fails-with-500--beta-api-sunset-chatgpt-oauth-no-longer-works).
 
 **For testing without LiveKit/OpenAI**: You can run the unit tests without these credentials. They are only needed for running the agent itself.
 

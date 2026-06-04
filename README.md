@@ -7,6 +7,8 @@
 
 > **This project is in active development.** Core functionality works (voice conversations, FAQ answering, call transfers, message taking), but expect breaking changes and rough edges. Contributions welcome.
 
+> ⚠️ **2026-06-03 — OpenAI sunset the Realtime *Beta* API.** The GA Realtime API requires a standard OpenAI API key (`sk-...`). **ChatGPT/Codex OAuth (`voice.auth.type: oauth_codex`) no longer authenticates Realtime** — deployments using it will connect the call but the caller hears silence. Set `voice.auth.type: api_key` and `voice.model: gpt-realtime`. See [troubleshooting → "Realtime handshake fails with `500` / Beta API sunset"](documentation/troubleshooting.md).
+
 # AI Receptionist -- Open Source, Self-Hosted, No Compromises
 
 A production-grade, open-source AI receptionist that answers your business phone calls using OpenAI's Realtime API -- the same speech-to-speech model that powers ChatGPT Advanced Voice. Self-hosted. No vendor lock-in. No monthly SaaS fees bleeding you dry.
@@ -33,7 +35,7 @@ This project solves all of it:
 
 - **OpenAI Realtime API (speech-to-speech).** No transcription chain. The model hears the caller and speaks back directly. Sub-second response times. Natural turn-taking. The same model behind ChatGPT Advanced Voice.
 - **Self-hosted.** Runs on your infrastructure. Your data stays on your servers. Full control.
-- **No monthly SaaS fee.** Use a normal OpenAI API key or authenticate with a ChatGPT/Codex OAuth token so eligible ChatGPT subscriptions can power Realtime. No platform markup, no per-seat pricing, no "enterprise tier" upsell.
+- **No monthly SaaS fee.** Use a normal OpenAI API key (`sk-...`). No platform markup, no per-seat pricing, no "enterprise tier" upsell. (A ChatGPT/Codex OAuth path previously let eligible subscriptions power Realtime, but OpenAI's 2026-06-03 Realtime Beta sunset disabled OAuth for Realtime — a standard API key is now required.)
 - **Fully configurable.** Business hours, FAQs, call routing, voice selection, personality -- all defined in a simple YAML file. Change anything, redeploy in seconds.
 - **Multi-business from a single deployment.** One agent process handles calls for multiple businesses. Each phone number routes to its own config.
 - **Open source under AGPL-3.0.** The code is yours. Fork it, modify it, extend it. Nobody can take this and lock it behind a paywall without releasing their changes.
@@ -47,7 +49,7 @@ This project solves all of it:
 | **Voice fidelity** | OpenAI Realtime speech-to-speech -- near-human quality | Cascaded STT + LLM + TTS -- robotic, high latency |
 | **Response latency** | Sub-second (direct speech-to-speech) | 1-3 seconds (multi-hop pipeline) |
 | **Turn-taking** | Natural, model-native | Awkward pauses, interruptions |
-| **Monthly cost** | API-key usage or ChatGPT subscription auth; no platform fee | $200-500/month subscription + per-minute overages |
+| **Monthly cost** | OpenAI API-key usage (metered per minute); no platform fee | $200-500/month subscription + per-minute overages |
 | **Data privacy** | Your servers, your data | Third-party stores your call data |
 | **Customization** | Full source code, modify anything | Limited to what their dashboard exposes |
 | **Vendor lock-in** | None -- open source, standard SIP | Proprietary platform, migration is painful |
@@ -72,7 +74,7 @@ This project solves all of it:
 ## Prerequisites
 
 - Python 3.11+
-- OpenAI auth: either an API key with Realtime API access or ChatGPT OAuth via Codex CLI
+- OpenAI API key (`sk-...`) with Realtime API access. (ChatGPT/Codex OAuth no longer authenticates Realtime as of the 2026-06-03 Beta sunset — see banner above.)
 - LiveKit server ([self-hosted](https://docs.livekit.io/home/self-hosting/local/) or [LiveKit Cloud](https://cloud.livekit.io))
 - SIP trunk provider (Twilio or Telnyx) with a phone number
 
@@ -92,7 +94,7 @@ pip install -e .
 cp .env.example .env
 # Edit .env with your LiveKit keys:
 #   LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, RECEPTIONIST_AGENT_NAME
-# Add OPENAI_API_KEY, or configure ChatGPT OAuth in your business YAML.
+# Add OPENAI_API_KEY (a standard sk-... key). ChatGPT/Codex OAuth no longer works for Realtime (2026-06-03 Beta sunset).
 ```
 
 3. **Configure your business:**
@@ -148,26 +150,22 @@ Key sections:
 
 ### OpenAI Realtime Auth
 
-The default path is still `OPENAI_API_KEY`, but each business can also use a
-ChatGPT subscription login through Codex OAuth:
+Authenticate Realtime with a standard OpenAI API key (`sk-...`). The default
+`auth.type` is `api_key`, which reads `OPENAI_API_KEY` from the environment:
 
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   auth:
-    type: "oauth_codex"
-    path: "secrets/my-business/openai_auth.json"
+    type: "api_key"   # reads OPENAI_API_KEY by default
 ```
 
-Set it up with:
-
-```bash
-python -m receptionist.voice setup my-business
-```
-
-See [`documentation/chatgpt-oauth-setup.md`](documentation/chatgpt-oauth-setup.md)
-for the full guide, including multi-business token files and refresh behavior.
+> ⚠️ **The `oauth_codex` (ChatGPT/Codex OAuth) auth type no longer works for
+> Realtime.** OpenAI's 2026-06-03 Realtime *Beta* sunset disabled OAuth for the
+> GA Realtime API — deployments using it connect the call but the caller hears
+> silence. Use `auth.type: api_key` with a real `sk-...` key. See
+> [troubleshooting → "Realtime handshake fails with `500` / Beta API sunset"](documentation/troubleshooting.md).
 
 ## Message delivery channels
 
@@ -251,7 +249,7 @@ languages:
   allowed: ["en", "es", "fr"]
 ```
 
-`gpt-realtime-1.5` auto-detects the caller's language. If the caller speaks one of the allowed languages, the agent responds in that language for the rest of the call. If the caller speaks an un-whitelisted language, the agent politely redirects in `primary`.
+`gpt-realtime` (the GA Realtime model) auto-detects the caller's language. If the caller speaks one of the allowed languages, the agent responds in that language for the rest of the call. If the caller speaks an un-whitelisted language, the agent politely redirects in `primary`.
 
 ## Retention
 
@@ -287,11 +285,11 @@ This loads `config/businesses/my-business.yaml`. Add as many business configs as
 
 ## Cost
 
-You can authenticate Realtime with either a normal OpenAI API key or a
-ChatGPT/Codex OAuth token. API-key deployments pay OpenAI Platform usage
-directly. ChatGPT OAuth deployments use the signed-in ChatGPT account's
-subscription entitlements when that account has access to the configured
-Realtime model. There is no AIReceptionist platform fee or markup.
+You authenticate Realtime with a standard OpenAI API key (`sk-...`) and pay
+OpenAI Platform usage directly, metered per audio minute. (A ChatGPT/Codex
+OAuth subscription path previously powered Realtime, but OpenAI's 2026-06-03
+Realtime Beta sunset disabled OAuth for Realtime — an API key is now required.)
+There is no AIReceptionist platform fee or markup.
 
 **Estimated cost:** ~$0.20-0.30 per minute of conversation.
 

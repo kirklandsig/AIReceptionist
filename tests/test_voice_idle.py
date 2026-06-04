@@ -268,8 +268,8 @@ def test_unproductive_counter_ignored_when_disabled(v2_yaml):
     """When `voice.idle.unproductive_hangup_enabled: false`, the counter is
     a no-op and the agent will never end on this path."""
     yaml_text = v2_yaml.replace(
-        '  model: "gpt-realtime-1.5"',
-        '  model: "gpt-realtime-1.5"\n  idle:\n    unproductive_hangup_enabled: false',
+        '  model: "gpt-realtime"',
+        '  model: "gpt-realtime"\n  idle:\n    unproductive_hangup_enabled: false',
     )
     r = _bare_receptionist(yaml_text)
     for _ in range(20):

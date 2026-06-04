@@ -22,11 +22,12 @@ business:
   timezone: "America/New_York"
 
 voice:
-  voice_id: "marin"              # OpenAI Realtime voice; "marin"/"cedar" are trained for gpt-realtime-1.5
-  model: "gpt-realtime-1.5"      # options: gpt-realtime, gpt-realtime-1.5, gpt-realtime-mini
+  voice_id: "marin"              # OpenAI Realtime voice; "marin"/"cedar" are GA Realtime voices
+  model: "gpt-realtime"          # GA Realtime model; options: gpt-realtime, gpt-realtime-2, gpt-realtime-mini
   # auth:
-  #   type: "api_key"             # reads OPENAI_API_KEY by default
-  #   # OR: type: "oauth_codex" with path: "./secrets/example-dental/openai_auth.json"
+  #   type: "api_key"             # reads OPENAI_API_KEY by default — REQUIRED for GA Realtime
+  #   # NOTE: oauth_codex (ChatGPT/Codex OAuth) no longer authenticates the GA
+  #   # Realtime API as of the 2026-06-03 beta sunset — use a standard sk- API key.
   # idle:
   #   silence_hangup_enabled: true
   #   away_seconds: 15

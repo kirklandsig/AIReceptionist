@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config load instead of during a live call.
 
 ### Fixed
+- **Realtime Beta API sunset (production outage).** OpenAI disabled the
+  Realtime *Beta* API on 2026-06-03; the GA endpoint no longer accepts
+  ChatGPT/Codex OAuth tokens, so deployments using `voice.auth.type:
+  oauth_codex` began failing every call with a `500` WebSocket handshake error
+  and the caller hearing dead air. Resolved by switching affected tenants to
+  `voice.auth.type: api_key` (a standard `sk-` key) and the GA model
+  `gpt-realtime`. Added a troubleshooting entry ("Realtime handshake fails with
+  `500` / Beta API sunset") documenting the symptom, root cause, and fix.
 - Made call finalization more resilient: recording/transcript failures no
   longer prevent deferred message emails from firing, deferred message queues
   are cleared after dispatch, and background tasks are retained until they
@@ -58,6 +66,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and email subject normalization.
 
 ### Changed
+- Default `voice.model` is now `gpt-realtime` (the GA Realtime model), changed
+  from `gpt-realtime-1.5` which was tied to the now-retired Realtime Beta path.
+  Example configs, the configuration reference model table, and test fixtures
+  were updated accordingly. `gpt-realtime-1.5` remains a valid string but is no
+  longer the recommended default.
 - Updated public documentation and examples to reflect the current
   `messages.channels` schema, implemented webhook delivery, stricter webhook
   URL validation, current test layout, and optional voice idle/auth blocks.

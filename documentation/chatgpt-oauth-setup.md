@@ -1,5 +1,16 @@
 # ChatGPT OAuth Setup
 
+> ⚠️ **DEPRECATED for Realtime as of 2026-06-03.** OpenAI sunset the Realtime
+> *Beta* API on that date. The **GA Realtime API does not accept ChatGPT/Codex
+> OAuth tokens** — it requires a standard OpenAI API key (`sk-...`). A
+> deployment using `voice.auth.type: oauth_codex` will connect the call but the
+> caller hears silence (the Realtime WebSocket fails with a `500` handshake
+> error). **Use `voice.auth.type: api_key` instead** (see
+> [Configuration Reference → voice.auth](configuration-reference.md#voice) and
+> [Troubleshooting → "Realtime handshake fails with `500`"](troubleshooting.md)).
+> This document is retained for historical reference only; the flow below no
+> longer produces a working Realtime connection.
+
 AIReceptionist can authenticate OpenAI Realtime with either a normal OpenAI
 Platform API key or a ChatGPT login token from the Codex CLI. The ChatGPT OAuth
 path is useful when you already have a ChatGPT Plus/Pro/Team/Enterprise account
@@ -26,9 +37,10 @@ Use API-key auth instead when:
 - The ChatGPT account does not have access to the configured `voice.model`.
 
 Model access and rate limits still come from OpenAI. If a ChatGPT account does
-not have access to `gpt-realtime-1.5`, the agent will fail at call startup with
-an auth/model-access error and you should use a different ChatGPT account or an
-OpenAI API key.
+not have access to the configured Realtime model, the agent will fail at call
+startup with an auth/model-access error and you should use a different ChatGPT
+account or an OpenAI API key. (Since the 2026-06-03 GA migration, an OpenAI API
+key is required regardless — see the deprecation note at the top.)
 
 ## Requirements
 

@@ -85,7 +85,7 @@ agent:
 
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   idle:
     absolute_silence_seconds: 120
 
@@ -253,18 +253,19 @@ Voice configuration for the OpenAI Realtime API.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `voice_id` | string | No | `"marin"` | The OpenAI voice to use for the receptionist. |
-| `model` | string | No | `"gpt-realtime-1.5"` | The OpenAI Realtime model variant to use. |
-| `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. |
+| `model` | string | No | `"gpt-realtime"` | The OpenAI Realtime (GA) model variant to use. |
+| `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. **GA Realtime requires a standard `sk-` API key**; ChatGPT/Codex OAuth (`oauth_codex`) no longer authenticates Realtime as of the 2026-06-03 beta sunset. |
 
-**Available models**:
+**Available models** (GA Realtime):
 
 | Model | Description |
 |-------|-------------|
-| `gpt-realtime-1.5` | Current high-quality speech-to-speech model (default) |
-| `gpt-realtime` | Latest speech-to-speech model alias |
-| `gpt-4o-realtime-preview` | Original Advanced Voice model |
+| `gpt-realtime` | Recommended GA default; auto-tracks OpenAI's best stable snapshot |
+| `gpt-realtime-2` | Newest / most capable GA snapshot (higher per-minute cost) |
+| `gpt-realtime-mini` | Cheaper, faster, lower-capability tier |
+| `gpt-realtime-1.5` | Older snapshot; was tied to the retired Realtime Beta path |
 
-**Recommendation**: keep the default `gpt-realtime-1.5` unless you have a specific reason to pin another variant.
+**Recommendation**: keep the default `gpt-realtime` unless you have a specific reason to pin another variant. Use `gpt-realtime-2` for the newest model at higher cost.
 
 **Available voices**:
 
@@ -280,12 +281,12 @@ Voice configuration for the OpenAI Realtime API.
 | `verse` | Rich, expressive |
 | `marin` | Natural, approachable (default) |
 
-**Recommendation**: `marin` works well with `gpt-realtime-1.5`. `ash` is good for warmer, more personal businesses. `sage` suits authoritative contexts like law firms.
+**Recommendation**: `marin` works well with `gpt-realtime`. `ash` is good for warmer, more personal businesses. `sage` suits authoritative contexts like law firms.
 
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
 ```
 
 #### `voice.auth`
@@ -306,13 +307,20 @@ var name.
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   auth:
     type: "api_key"
     env: "ACME_OPENAI_KEY"  # default: OPENAI_API_KEY
 ```
 
 ##### ChatGPT / Codex OAuth auth
+
+> ⚠️ **Deprecated / no longer functional (2026-06-03).** OpenAI sunset the
+> Realtime *Beta* API; the GA Realtime endpoint **rejects ChatGPT/Codex OAuth
+> tokens** (the handshake fails with HTTP 500 and the caller hears dead air).
+> Use **API key auth** above with a standard `sk-...` key. The description below
+> is retained for historical reference only. See
+> [Troubleshooting → "Realtime handshake fails with `500` / Beta API sunset"](troubleshooting.md).
 
 Use the Codex CLI / ChatGPT-login OAuth access token. This lets a business use
 the signed-in ChatGPT account's subscription entitlements for OpenAI Realtime
@@ -326,7 +334,7 @@ endpoint and writes the rotated tokens back to the same file.
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   auth:
     type: "oauth_codex"
     path: "~/.codex/auth.json"  # default
@@ -350,7 +358,7 @@ validates the token, and updates the business YAML in place:
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   auth:
     type: "oauth_codex"
     path: "secrets/example-dental/openai_auth.json"
@@ -390,7 +398,7 @@ Use a raw bearer token directly or read it from an env var. Prefer
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
   auth:
     type: "oauth_static"
     token_env: "OPENAI_OAUTH_TOKEN"

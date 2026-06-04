@@ -182,7 +182,7 @@ LIVEKIT_URL=wss://...cloud  # Correct
 
 **Symptom**: Agent connects to LiveKit but fails when a call arrives, with OpenAI authentication errors in logs. Examples include `401`, `Invalid bearer token`, `insufficient_scope`, or a missing env-var error from `voice.auth`.
 
-**Cause**: The configured Realtime auth source is missing, expired, or does not have access to the selected Realtime model.
+**Cause**: The configured Realtime auth source is missing, expired, or does not have access to the selected Realtime model. **Note**: a `500` handshake error (rather than `401`) on `wss://api.openai.com/v1/realtime` is a *different* problem — the Realtime Beta sunset; see "Realtime handshake fails with `500`" below. As of the 2026-06-03 beta sunset, `voice.auth.type: oauth_codex` (ChatGPT/Codex OAuth) **no longer authenticates GA Realtime** — use `type: api_key`.
 
 **Solution**:
 1. If `voice.auth` is omitted, verify `OPENAI_API_KEY` in `.env` starts with `sk-`.
@@ -296,14 +296,45 @@ is ~12 seconds), the provider gives up before the agent answers.
 
 **Symptom**: Call connects, but no greeting is played and the caller hears nothing.
 
-**Cause**: Audio pipeline issue — typically the OpenAI Realtime session did not start correctly, or there is a media routing problem.
+**Cause**: Audio pipeline issue — typically the OpenAI Realtime session did not start correctly, or there is a media routing problem. The most common variant is the Realtime WebSocket failing to open at all; see the next entry if logs show a `500 ... wss://api.openai.com/v1/realtime` handshake error.
 
 **Solution**:
-1. Check agent logs for errors during session creation.
+1. Check agent logs for errors during session creation. A `WSServerHandshakeError: 500` against `wss://api.openai.com/v1/realtime` followed by `AgentSession is closing due to unrecoverable error` is the Realtime-connection failure described in the next entry.
 2. Verify the OpenAI API key has Realtime API access.
 3. Check that the voice ID in your config is valid (see [available voices](configuration-reference.md#voice)).
 4. Try a different voice to rule out voice-specific issues.
 5. Restart the agent and try again.
+
+### Realtime handshake fails with `500` / Beta API sunset (ChatGPT-OAuth no longer works)
+
+**Symptom**: Every call connects but the caller hears dead air. Logs show, per
+call: `WSServerHandshakeError: 500, message='Invalid response status', url='wss://api.openai.com/v1/realtime?model=...'`,
+three retries, then `AgentSession is closing due to unrecoverable error: OpenAI Realtime API client connection error`.
+The worker is otherwise healthy and registered.
+
+**Cause**: OpenAI **sunset the Realtime *Beta* API on 2026-06-03**. The endpoint
+now returns the error event *"The Realtime Beta API is no longer supported.
+Please use /v1/realtime for the GA API."* The **GA Realtime API does not accept
+ChatGPT/Codex OAuth tokens** (`voice.auth.type: oauth_codex`) — it requires a
+standard OpenAI API key (`sk-...`). Deployments that authenticated Realtime via
+Codex OAuth break the moment the beta shape is disabled, even though the OAuth
+token itself has not expired and no code or config changed. Confirm by probing
+the GA handshake with the OAuth bearer: it returns `500`, and the subprotocol
+form returns *"Missing bearer or basic authentication in header."*
+
+**Solution**:
+1. Obtain a standard OpenAI API key (`sk-...` / `sk-proj-...`) on the account
+   that should be billed for Realtime usage (platform.openai.com → API keys).
+   GA Realtime is metered per audio minute; consider a usage limit on the key.
+2. Put the key in the worker's environment, e.g. `OPENAI_API_KEY=sk-...` in
+   `.env` (gitignored). The worker loads `.env` at startup.
+3. Switch the tenant's `voice.auth` from `type: oauth_codex` to
+   `type: api_key` (which reads `OPENAI_API_KEY` by default), and set
+   `voice.model: gpt-realtime` (the GA model; `gpt-realtime-1.5` was tied to
+   the retired beta path).
+4. Restart the worker and place a live test call. A healthy call logs
+   `about_to_session_start` → `session_start_returned` within ~1–2s and no
+   `Invalid response status`.
 
 ### Call transfers fail
 

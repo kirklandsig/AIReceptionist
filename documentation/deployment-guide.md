@@ -30,8 +30,13 @@ This guide covers everything needed to deploy AI Receptionist in production: Liv
 Before deploying, ensure you have:
 
 - **Python 3.11+** installed
-- **OpenAI auth**: either an API key with Realtime API access or
-  [ChatGPT OAuth](chatgpt-oauth-setup.md) through Codex CLI
+- **OpenAI auth**: a standard OpenAI API key (`sk-...` / `sk-proj-...`) with
+  Realtime API access
+  > **Deprecated:** ChatGPT/Codex OAuth (`voice.auth.type: oauth_codex`) is no
+  > longer a working Realtime auth path. As of 2026-06-03 OpenAI sunset the
+  > Realtime *Beta* API and the GA endpoint rejects ChatGPT/Codex OAuth tokens,
+  > so OAuth deployments connect the SIP call but produce dead air. Use an API
+  > key instead. See [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) for context.
 - **LiveKit account** (Cloud) or server infrastructure (self-hosted)
 - **SIP trunk provider account** (Twilio or Telnyx)
 - **Phone number** provisioned through your SIP trunk provider
@@ -67,8 +72,12 @@ Required for API-key auth only:
 |----------|-------------|---------|
 | `OPENAI_API_KEY` | OpenAI API key with Realtime API access | `sk-proj-xxxxxxxxxxxxx` |
 
-If every deployed business has `voice.auth.type: "oauth_codex"`, `OPENAI_API_KEY`
-is not required. See [ChatGPT OAuth Setup](chatgpt-oauth-setup.md).
+> **Deprecated:** Earlier guidance said `OPENAI_API_KEY` was unnecessary when
+> every business used `voice.auth.type: "oauth_codex"`. That path no longer
+> works — as of 2026-06-03 the GA Realtime API rejects ChatGPT/Codex OAuth
+> tokens, so OAuth-only deployments produce dead air. Set `OPENAI_API_KEY` to a
+> real `sk-` key and use `voice.auth.type: "api_key"`. See
+> [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) for background.
 
 **Security**: Never commit `.env` to version control. The `.env.example` file contains placeholder values and is safe to commit.
 
@@ -191,8 +200,10 @@ OPENAI_API_KEY=sk-your-openai-key \
 python -m receptionist.agent start
 ```
 
-Omit `OPENAI_API_KEY` when every deployed business config uses
-`voice.auth.type: "oauth_codex"`.
+> **Deprecated:** Omitting `OPENAI_API_KEY` for `voice.auth.type: "oauth_codex"`
+> deployments no longer works — the GA Realtime API rejects ChatGPT/Codex OAuth
+> tokens (dead air on every call as of 2026-06-03). Always set `OPENAI_API_KEY`
+> to a real `sk-` key and use `voice.auth.type: "api_key"`.
 
 ---
 
@@ -577,9 +588,11 @@ stdout_logfile=/var/log/ai-receptionist/output.log
 environment=LIVEKIT_URL="wss://...",LIVEKIT_API_KEY="...",LIVEKIT_API_SECRET="...",OPENAI_API_KEY="..."
 ```
 
-For ChatGPT OAuth-only deployments, omit `OPENAI_API_KEY` and mount the
-configured `secrets/<business>/openai_auth.json` token files with the business
-configs.
+> **Deprecated:** ChatGPT OAuth-only deployments (omitting `OPENAI_API_KEY` and
+> mounting `secrets/<business>/openai_auth.json` token files) no longer work.
+> As of 2026-06-03 the GA Realtime API rejects ChatGPT/Codex OAuth tokens, so
+> these deployments produce dead air. Set `OPENAI_API_KEY` to a real `sk-` key
+> and use `voice.auth.type: "api_key"`.
 
 ---
 
@@ -657,15 +670,16 @@ A modest VPS (2 CPU, 4GB RAM) can comfortably handle 5-10 concurrent calls.
 
 ### OpenAI Realtime Auth
 
-API-key deployments pay OpenAI Platform Realtime usage directly. ChatGPT OAuth
-deployments use the signed-in ChatGPT account's subscription entitlements when
-that account has access to the configured Realtime model. To manage costs and
-access:
+API-key deployments pay OpenAI Platform Realtime usage directly, metered per
+audio minute. To manage costs:
 
 - **Keep calls concise**: A well-configured receptionist resolves calls quickly.
 - **API keys**: Track usage and set spending alerts in the OpenAI dashboard.
-- **ChatGPT OAuth**: Monitor subscription/model access on the ChatGPT account
-  used for each business token file.
+
+> **Deprecated:** ChatGPT OAuth deployments previously billed against the
+> signed-in ChatGPT account's subscription entitlements. That path no longer
+> works — as of 2026-06-03 the GA Realtime API rejects ChatGPT/Codex OAuth
+> tokens, and GA Realtime is metered per audio minute. Use an API key.
 
 ### SIP Trunk
 
@@ -677,8 +691,9 @@ LiveKit Cloud offers a free tier. For high-volume deployments, review LiveKit's 
 
 ### Monthly Cost Estimate
 
-These examples assume OpenAI Platform API-key billing. ChatGPT OAuth deployments
-use the signed-in ChatGPT account's subscription/model access instead.
+These examples assume OpenAI Platform API-key billing (GA Realtime, metered per
+audio minute). ChatGPT OAuth subscription billing is no longer available — that
+auth path was retired when OpenAI sunset the Realtime Beta API on 2026-06-03.
 
 | Business Profile | Calls/Day | Avg Duration | Monthly Cost |
 |-----------------|-----------|-------------|-------------|
@@ -694,7 +709,7 @@ Before going live, verify:
 
 - [ ] `.env` file is not committed to version control
 - [ ] `.env` file permissions restrict access (e.g., `chmod 600 .env`)
-- [ ] OpenAI API key has appropriate spending limits, or ChatGPT OAuth token files are stored securely per business
+- [ ] OpenAI API key (`sk-...`) is set and has appropriate spending limits (ChatGPT/Codex OAuth is no longer a working Realtime auth path as of 2026-06-03)
 - [ ] LiveKit API credentials are kept secure
 - [ ] Config YAML files do not contain sensitive information beyond phone numbers
 - [ ] Message storage directory has appropriate filesystem permissions

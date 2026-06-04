@@ -167,7 +167,7 @@ def test_v2_schema_loads(v2_yaml):
     config = BusinessConfig.from_yaml_string(v2_yaml)
     assert config.business.name == "Test Dental"
     assert config.voice.voice_id == "marin"
-    assert config.voice.model == "gpt-realtime-1.5"
+    assert config.voice.model == "gpt-realtime"
     assert config.voice.auth is None
 
 
@@ -257,8 +257,8 @@ info_packets:
 
 def _v2_yaml_with_voice_auth(v2_yaml: str, auth_block: str) -> str:
     return v2_yaml.replace(
-        '  model: "gpt-realtime-1.5"',
-        f'  model: "gpt-realtime-1.5"\n  auth:\n{auth_block}',
+        '  model: "gpt-realtime"',
+        f'  model: "gpt-realtime"\n  auth:\n{auth_block}',
     )
 
 

@@ -12,7 +12,7 @@ business:
 
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime"
 
 languages:
   primary: "en"

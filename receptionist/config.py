@@ -156,7 +156,7 @@ class VoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     voice_id: str = "marin"
-    model: str = "gpt-realtime-1.5"
+    model: str = "gpt-realtime"
     auth: VoiceAuth | None = None
     idle: VoiceIdleConfig = Field(default_factory=VoiceIdleConfig)
 

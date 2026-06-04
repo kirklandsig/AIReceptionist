@@ -21,7 +21,7 @@ Traditional IVR systems frustrate callers with rigid menus. Human receptionists 
 |----------|-------------|
 | [Architecture](architecture.md) | How the system works end-to-end: call flow, component responsibilities, data model, and design decisions. |
 | [Configuration Reference](configuration-reference.md) | Complete reference for the YAML business configuration file — every field, every validation rule, every default. |
-| [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) | Use a ChatGPT/Codex login token for OpenAI Realtime so businesses can run from ChatGPT subscription entitlements instead of an API key. |
+| [ChatGPT OAuth Setup](chatgpt-oauth-setup.md) | **Deprecated / no longer functional.** This path used a ChatGPT/Codex login token for OpenAI Realtime. The GA Realtime API no longer accepts ChatGPT/Codex OAuth tokens — use a standard OpenAI API key (`sk-...`) instead. Kept for historical reference only. |
 | [Deployment Guide](deployment-guide.md) | Step-by-step instructions for deploying with LiveKit Cloud or self-hosted LiveKit, including SIP trunk setup with Twilio and Telnyx. |
 | [Telephony Setup](telephony-setup.md) | Trade-offs between porting your number to a SIP trunk provider (Path A), bringing your own carrier via BYOC (Path B), and keeping a copper landline via an FXS gateway + on-prem PBX (Path C). |
 | [RingCentral + Twilio Setup](ringcentral-setup.md) | Reception-group deployment using a Twilio DID as the RingCentral external member and LiveKit SIP bridge. |
@@ -92,7 +92,7 @@ See the [Deployment Guide](deployment-guide.md) for production setup and the [Co
 
 - **Python 3.11+** (tested on 3.14.2, Windows 11)
 - **LiveKit Server** — Cloud account or self-hosted instance
-- **OpenAI auth** — either an API key with Realtime API access or [ChatGPT OAuth](chatgpt-oauth-setup.md) through Codex CLI
+- **OpenAI auth** — an OpenAI API key (`sk-...`) with Realtime API access. (The former [ChatGPT OAuth](chatgpt-oauth-setup.md) path through Codex CLI is deprecated and no longer works with the GA Realtime API.)
 - **SIP Trunk** — Twilio or Telnyx account for phone number connectivity
 
 ---

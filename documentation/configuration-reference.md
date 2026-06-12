@@ -1046,8 +1046,11 @@ or rewrite packet text. V1 supports email only, configured text and links only,
 and no attachments or PDFs.
 
 `info_packets.enabled: true` requires the top-level `email:` sender block. The
-caller destination address is supplied at call time after Riley asks permission
-and confirms the email address character-by-character.
+caller destination address is supplied at call time after Riley asks
+permission; the send itself is gated by a two-step confirmation — the first
+`send_info_packet` call returns the parsed address for letter-by-letter
+read-back, and the email is sent only on a second call with
+`destination_confirmed=true` and a matching address.
 
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|

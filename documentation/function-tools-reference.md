@@ -716,7 +716,7 @@ async def send_info_packet(
 | `packet_key` | str | Yes | Key from `info_packets.packets[*].key`. |
 | `channel` | str | No | Must be `"email"` in v1. Other values are refused. |
 | `destination` | str | Yes | Caller-confirmed email address. |
-| `consent_confirmed` | bool | Yes | Must be `true` only after the caller gives permission and confirms the email address. |
+| `consent_confirmed` | bool | Yes | Must be `true` only after the caller gives permission to send the packet. Passed on the first call, before the address read-back. |
 | `destination_confirmed` | bool | No (default `false`) | Must be `true` only on the second call, after the caller heard the read-back of the exact address the tool returned and explicitly confirmed it. |
 
 ### Return Value

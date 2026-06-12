@@ -686,8 +686,9 @@ top-level `email:` config, or an SMTP/Resend transport failure.
 **Solution**:
 1. Verify `info_packets.enabled: true` and at least one configured packet key.
 2. Verify top-level `email:` sender config works for normal call-end emails.
-3. Confirm the transcript shows Riley asked permission and confirmed the email
-   address before calling `send_info_packet` with `consent_confirmed=true`.
+3. Confirm the transcript shows Riley asked permission before the first
+   `send_info_packet` call (`consent_confirmed=true` covers permission only;
+   address confirmation is the separate round-trip in step 4).
 4. A packet that is never sent after the caller gives an address usually means
    the confirmation round-trip didn't complete: the first `send_info_packet`
    call only returns the parsed address for read-back, and the model never

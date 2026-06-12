@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- AI-generated call summary in call-end emails (`email.summary` config block, default model gpt-5-mini).
 - **DTMF auto-attendant (issue #16).** Configure `dtmf.digits` to map keypad
   presses to actions: transfer to a routing entry, take a message, end the
   call, or repeat the menu. Presses are handled deterministically off LiveKit's

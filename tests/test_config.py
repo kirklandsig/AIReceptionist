@@ -1123,3 +1123,46 @@ dtmf:
 """
     with pytest.raises(ValidationError, match="acknowledgment_en"):
         BusinessConfig.from_yaml_string(yaml)
+
+
+def test_email_summary_defaults():
+    from receptionist.config import EmailSummaryConfig
+    s = EmailSummaryConfig()
+    assert s.enabled is True
+    assert s.model == "gpt-5-mini"
+    assert s.reasoning_effort == "medium"
+    assert s.api_key_env == "OPENAI_API_KEY"
+    assert s.timeout_seconds == 20.0
+    assert s.max_transcript_chars == 24000
+
+
+def test_email_config_gets_default_summary_block():
+    from receptionist.config import EmailConfig
+    cfg = EmailConfig.model_validate({
+        "from": "ai@example.com",
+        "sender": {"type": "resend", "resend": {"api_key": "re_x"}},
+    })
+    assert cfg.summary.enabled is True
+    assert cfg.summary.model == "gpt-5-mini"
+
+
+def test_email_summary_rejects_bad_values():
+    from receptionist.config import EmailSummaryConfig
+    with pytest.raises(ValueError):
+        EmailSummaryConfig(model="   ")
+    with pytest.raises(ValueError):
+        EmailSummaryConfig(timeout_seconds=0)
+    with pytest.raises(ValueError):
+        EmailSummaryConfig(max_transcript_chars=0)
+
+
+def test_email_summary_parses_from_yaml_block():
+    from receptionist.config import EmailConfig
+    cfg = EmailConfig.model_validate({
+        "from": "ai@example.com",
+        "sender": {"type": "resend", "resend": {"api_key": "re_x"}},
+        "summary": {"enabled": False, "model": "gpt-5.5", "reasoning_effort": None},
+    })
+    assert cfg.summary.enabled is False
+    assert cfg.summary.model == "gpt-5.5"
+    assert cfg.summary.reasoning_effort is None

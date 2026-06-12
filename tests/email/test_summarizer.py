@@ -1,7 +1,9 @@
 # tests/email/test_summarizer.py
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -211,3 +213,28 @@ async def test_summary_applies_configured_timeout(monkeypatch, mocker):
         captured_messages=[], config=_config(timeout_seconds=7.5),
     )
     assert spy.call_args.kwargs["timeout"] == 7.5
+
+
+@pytest.mark.asyncio
+async def test_summary_wall_clock_timeout_returns_none(monkeypatch, mocker):
+    """The httpx timeout is per-phase, not wall-clock: a slow-dripping
+    response can run far past it, and the lifecycle awaits the summary
+    before SIP teardown on some paths. asyncio.wait_for must bound the
+    WHOLE request to timeout_seconds."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class _HangingClient:
+        def __init__(self, *a, **k): ...
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k):
+            await asyncio.sleep(30)
+
+    mocker.patch.object(httpx, "AsyncClient", _HangingClient)
+    start = time.monotonic()
+    result = await generate_call_summary(
+        segments=[], metadata=_metadata(), submission=None,
+        captured_messages=[], config=_config(timeout_seconds=0.05),
+    )
+    assert result is None
+    assert time.monotonic() - start < 5

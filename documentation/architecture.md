@@ -43,6 +43,7 @@ receptionist/
 │   ├── sender.py            EmailSender protocol, EmailSendError, EmailAttachment
 │   ├── smtp.py              SMTPSender (aiosmtplib)
 │   ├── resend.py            ResendSender (httpx → Resend API)
+│   ├── summarizer.py        generate_call_summary — OpenAI chat-completion, never-raises, wall-clock-capped
 │   └── templates.py         message / call-end / intake / info-packet email templates
 │
 ├── intakes/                 Structured intake persistence
@@ -123,6 +124,10 @@ receptionist/
 4. The LiveKit RTC job keeps the event loop alive until the room closes; close-time artifact work runs from the scheduled task
 
 ## Key design decisions
+
+### AI summary — generated once per call, before channel fan-out
+
+In consolidated mode (`on_call_end: true`), `generate_call_summary(...)` is called exactly once per call before the email channel fan-out begins. The function is wall-clock-capped (`email.summary.timeout_seconds`, default 20 s): if the OpenAI chat-completion call exceeds that deadline, or fails for any reason, it returns `None` silently and the email sends without a Summary section. This design means a slow or unavailable summarization model never delays or blocks the staff notification email.
 
 ### Sync-file, background-others dispatch
 `take_message` awaits the **file channel synchronously** — guarantees a durable copy exists before the LLM tells the caller "message saved." Email and webhook fire as background tasks; on exhausted retries, failure records land in `.failures/`.

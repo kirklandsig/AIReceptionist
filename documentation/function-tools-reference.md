@@ -321,7 +321,7 @@ Returns a confirmation message (e.g., "Your message has been recorded. Someone w
 
 2. The per-call `Dispatcher` sends the message through `messages.channels`.
 
-3. File and webhook channels run immediately so the caller only hears success after the message is durable or posted. Email channels are deferred until call end so the final transcript path is available and can be embedded in the email body. If call-end emails are enabled, the same captured message content is also rendered near the top of the call summary above recording/transcript details.
+3. File and webhook channels run immediately so the caller only hears success after the message is durable or posted. Email channels are deferred until call end so the final transcript path is available and the transcript can be attached. When `email.triggers.on_call_end` is **true** (consolidated mode), the captured message content rides in the single call-end email and no separate per-message email fires. When `on_call_end` is **false** (legacy mode), a separate message email fires at call-end when `triggers.on_message` is true.
 
 ### File Storage Details
 

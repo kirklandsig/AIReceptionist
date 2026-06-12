@@ -724,10 +724,18 @@ the email and fires it at call-end with the freshly-written transcript path,
 so the full conversation can be attached to the email. File and webhook
 channels still fire mid-call.
 
-When `email.triggers.on_call_end` is also enabled, the call summary email
-receives the same pending `take_message` entries before the queue is cleared
-and renders them in a Captured Content section above recording/transcript
-details.
+When `email.triggers.on_call_end` is **false** (legacy mode), the deferred
+message email fires at call-end when `triggers.on_message` is true; a booking
+email fires when `triggers.on_booking` is true and an appointment was booked;
+an intake email fires whenever a pending submission exists.
+
+When `email.triggers.on_call_end` is **true** (consolidated mode), exactly one
+staff email is produced per call. The lifecycle generates an optional AI Summary
+(wall-clock-capped, never-raises — see [`email.summary`](#emailsummary)), then
+fires a single call-end email that absorbs all pending `take_message` entries,
+the intake submission, booking details, DTMF events, and the transcript as a
+`.txt` attachment. The separate per-message, per-intake, and per-booking emails
+are suppressed regardless of the other trigger flags.
 
 #### Channel: `type: "file"`
 
@@ -792,8 +800,8 @@ your config has no email channels and no email triggers.
 | `sender.smtp.use_tls` | bool | No | `true` | STARTTLS on; set false only for self-hosted relays you control. |
 | `sender.resend` | object | Conditional | — | Required when `sender.type=resend`. |
 | `sender.resend.api_key` | string | Yes | — | Resend API key, typically `${VAR}` interpolated. |
-| `triggers.on_message` | bool | No | `true` | Fire an email per `take_message` invocation (deferred to call-end so the transcript can be attached). |
-| `triggers.on_call_end` | bool | No | `false` | Fire a call summary email at the end of every call. |
+| `triggers.on_message` | bool | No | `true` | When `on_call_end` is **false** (legacy mode): fire a separate email per `take_message` invocation, deferred to call-end so the transcript can be attached. When `on_call_end` is **true** (consolidated mode): `take_message` content rides in the call-end email regardless of this flag — `on_message` only gates whether a *separate* per-message email fires, and it is suppressed in consolidated mode. |
+| `triggers.on_call_end` | bool | No | `false` | When **true**, enables consolidated mode: exactly **one** staff email is produced per call. This single email absorbs all content — captured messages, intake submission (final or partial), booking details, packet records, DTMF events, optional AI Summary, and the transcript attachment. The separate per-message, per-intake, and per-booking emails are suppressed. When **false** (default), legacy mode: the separate message, intake, and booking emails fire independently based on their own trigger flags. |
 | `triggers.on_booking` | bool | No | `false` | Fire an email when `book_appointment` succeeds (requires `calendar` configured). |
 | `summary` | object | No | see defaults | AI-generated call summary settings. See the [`email.summary`](#emailsummary) subsection below. |
 
@@ -840,7 +848,7 @@ Controls the AI-generated call summary that appears in the call-end email. The b
 | `model` | string | `"gpt-5-mini"` | OpenAI chat-completion model used to generate the summary. Tenant-overridable (e.g. `gpt-5.5` for higher quality). Must be non-empty. |
 | `reasoning_effort` | string or null | `"medium"` | Passed as the `reasoning_effort` parameter to the chat-completion call. Set to `null` for models that reject the parameter (e.g. the gpt-4o family). |
 | `api_key_env` | string | `"OPENAI_API_KEY"` | Name of the environment variable holding the OpenAI API key used for summary generation. |
-| `timeout_seconds` | float | `20.0` | HTTP timeout for the summary API call. Must be greater than 0. |
+| `timeout_seconds` | float | `20.0` | Wall-clock cap on the summary API call — the await is cancelled and the email sends without a Summary section if this deadline is exceeded. Must be greater than 0. |
 | `max_transcript_chars` | int | `24000` | Maximum characters of transcript text passed to the model. Longer transcripts are truncated to this limit before summarization. Must be greater than 0. |
 
 **Degradation behavior:** when `enabled` is `true` but the API key env var is missing, or the API call fails (timeout, model error), the call-end email is sent without a Summary section and a warning is logged. The email is never suppressed due to a summary failure.

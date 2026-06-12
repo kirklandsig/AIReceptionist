@@ -47,13 +47,15 @@ class EmailChannel:
         self.policy = RetryPolicy(max_attempts=3, initial_delay=initial_delay, factor=2.0)
 
     async def deliver(self, message: Message, context: DispatchContext) -> None:
+        attachments = await self._transcript_attachments(context)
         subject, body_text, body_html = build_message_email(
             message,
             context,
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
+            transcript_attached=bool(attachments),
         )
-        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, attachments)
 
     async def deliver_call_end(
         self,
@@ -61,21 +63,32 @@ class EmailChannel:
         context: DispatchContext,
         *,
         captured_messages: list[Message] | tuple[Message, ...] | None = None,
+        intake_submission: IntakeSubmission | None = None,
+        case_type_display: str | None = None,
+        ai_summary: str | None = None,
     ) -> None:
+        attachments = await self._transcript_attachments(context)
         subject, body_text, body_html = build_call_end_email(
             metadata,
             context,
             captured_messages=captured_messages,
+            intake_submission=intake_submission,
+            case_type_display=case_type_display,
+            ai_summary=ai_summary,
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
+            transcript_attached=bool(attachments),
         )
-        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, attachments)
 
     async def deliver_booking(
         self, metadata: CallMetadata, context: DispatchContext
     ) -> None:
-        subject, body_text, body_html = build_booking_email(metadata, context)
-        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
+        attachments = await self._transcript_attachments(context)
+        subject, body_text, body_html = build_booking_email(
+            metadata, context, transcript_attached=bool(attachments),
+        )
+        await self._send_with_retry(subject, body_text, body_html, attachments)
 
     async def deliver_intake(
         self,
@@ -84,14 +97,16 @@ class EmailChannel:
         *,
         case_type_display: str | None = None,
     ) -> None:
+        attachments = await self._transcript_attachments(context)
         subject, body_text, body_html = build_intake_email(
             submission,
             context,
             case_type_display=case_type_display,
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
+            transcript_attached=bool(attachments),
         )
-        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, attachments)
 
     async def _transcript_attachments(self, context: DispatchContext) -> list[EmailAttachment]:
         """Read the markdown transcript and wrap it as a .txt attachment.

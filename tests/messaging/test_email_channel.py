@@ -9,6 +9,7 @@ from receptionist.config import (
     EmailChannel as EmailChannelConfig,
     EmailConfig, EmailSenderConfig, EmailTriggers, ResendConfig, SMTPConfig,
 )
+from receptionist.intakes.models import IntakeAnswer, IntakeSubmission
 from receptionist.messaging.channels.email import EmailChannel
 from receptionist.messaging.models import Message, DispatchContext
 from receptionist.transcript.metadata import CallMetadata
@@ -215,6 +216,32 @@ async def test_deliver_call_end_unreadable_transcript_still_sends(mocker):
 
     sender_send.assert_called_once()
     assert sender_send.call_args.kwargs["attachments"] == []
+    assert "Transcript unavailable" in sender_send.call_args.kwargs["body_text"]
+
+
+@pytest.mark.asyncio
+async def test_deliver_call_end_passes_new_kwargs_to_template(tmp_path, mocker):
+    cfg = EmailChannelConfig(type="email", to=["owner@acme.com"])
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+    channel = EmailChannel(cfg, _email_config_smtp())
+    md = CallMetadata(call_id="room-1", business_name="Acme", caller_phone="+16315551234")
+    sub = IntakeSubmission(
+        case_type="workers_comp", business_name="Acme", call_id="room-1",
+        caller_name="Maria Lopez", callback_number="+13475550000",
+        answers=[IntakeAnswer(question_key="k", prompt="What happened?", spoken_text="Fell")],
+        status="partial",
+    )
+    await channel.deliver_call_end(
+        md, DispatchContext(call_id="room-1"),
+        intake_submission=sub, case_type_display="Workers' Comp",
+        ai_summary="New client intake, partial.",
+    )
+    body = sender_send.call_args.kwargs["body_text"]
+    subject = sender_send.call_args.kwargs["subject"]
+    assert "Intake [PARTIAL]: Workers' Comp" in subject
+    assert "New client intake, partial." in body
+    assert "What happened?" in body
 
 
 @pytest.mark.asyncio

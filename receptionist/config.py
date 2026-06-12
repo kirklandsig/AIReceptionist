@@ -487,12 +487,50 @@ class EmailTriggers(BaseModel):
     on_booking: bool = False
 
 
+class EmailSummaryConfig(BaseModel):
+    """Post-call AI summary settings for the consolidated call-end email.
+
+    enabled with a missing API-key env var degrades gracefully: the email
+    is sent without a Summary section and a warning is logged.
+    """
+    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+
+    enabled: bool = True
+    model: str = "gpt-5-mini"
+    reasoning_effort: str | None = "medium"
+    api_key_env: str = "OPENAI_API_KEY"
+    timeout_seconds: float = 20.0
+    max_transcript_chars: int = 24000
+
+    @field_validator("model")
+    @classmethod
+    def _model_non_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("email.summary.model must be non-empty")
+        return v
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def _timeout_positive(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("email.summary.timeout_seconds must be > 0")
+        return v
+
+    @field_validator("max_transcript_chars")
+    @classmethod
+    def _max_chars_positive(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("email.summary.max_transcript_chars must be > 0")
+        return v
+
+
 class EmailConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     from_: str = Field(alias="from")
     sender: EmailSenderConfig
     triggers: EmailTriggers = Field(default_factory=EmailTriggers)
+    summary: EmailSummaryConfig = Field(default_factory=EmailSummaryConfig)
 
 
 # ---------------------------------------------------------------------------

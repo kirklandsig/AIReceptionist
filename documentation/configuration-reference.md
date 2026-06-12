@@ -829,6 +829,35 @@ email:
     on_call_end: true
 ```
 
+#### `email.summary`
+
+Controls the AI-generated call summary that appears in the call-end email. The block is optional; defaults produce a reasonable out-of-the-box experience.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Master switch. When `false`, the Summary section is omitted from call-end emails. |
+| `model` | string | `"gpt-5-mini"` | OpenAI chat-completion model used to generate the summary. Tenant-overridable (e.g. `gpt-5.5` for higher quality). Must be non-empty. |
+| `reasoning_effort` | string or null | `"medium"` | Passed as the `reasoning_effort` parameter to the chat-completion call. Set to `null` for models that reject the parameter (e.g. non-o-series models that don't support it). |
+| `api_key_env` | string | `"OPENAI_API_KEY"` | Name of the environment variable holding the OpenAI API key used for summary generation. |
+| `timeout_seconds` | float | `20.0` | HTTP timeout for the summary API call. Must be greater than 0. |
+| `max_transcript_chars` | int | `24000` | Maximum characters of transcript text passed to the model. Longer transcripts are truncated to this limit before summarization. Must be greater than 0. |
+
+**Degradation behavior:** when `enabled` is `true` but the API key env var is missing, or the API call fails (timeout, model error), the call-end email is sent without a Summary section and a warning is logged. The email is never suppressed due to a summary failure.
+
+```yaml
+email:
+  from: "Receptionist <noreply@acme-dental.example.com>"
+  sender:
+    type: "resend"
+    resend:
+      api_key: ${ACME_DENTAL_RESEND_API_KEY}
+  summary:
+    enabled: true
+    model: "gpt-5.5"
+    reasoning_effort: null
+    timeout_seconds: 30.0
+```
+
 ---
 
 ### recording

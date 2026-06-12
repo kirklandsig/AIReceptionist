@@ -795,6 +795,7 @@ your config has no email channels and no email triggers.
 | `triggers.on_message` | bool | No | `true` | Fire an email per `take_message` invocation (deferred to call-end so the transcript is embedded). |
 | `triggers.on_call_end` | bool | No | `false` | Fire a call summary email at the end of every call. |
 | `triggers.on_booking` | bool | No | `false` | Fire an email when `book_appointment` succeeds (requires `calendar` configured). |
+| `summary` | object | No | see defaults | AI-generated call summary settings. See the [`email.summary`](#emailsummary) subsection below. |
 
 #### SMTP example (Gmail app password)
 
@@ -837,7 +838,7 @@ Controls the AI-generated call summary that appears in the call-end email. The b
 |-------|------|---------|-------------|
 | `enabled` | bool | `true` | Master switch. When `false`, the Summary section is omitted from call-end emails. |
 | `model` | string | `"gpt-5-mini"` | OpenAI chat-completion model used to generate the summary. Tenant-overridable (e.g. `gpt-5.5` for higher quality). Must be non-empty. |
-| `reasoning_effort` | string or null | `"medium"` | Passed as the `reasoning_effort` parameter to the chat-completion call. Set to `null` for models that reject the parameter (e.g. non-o-series models that don't support it). |
+| `reasoning_effort` | string or null | `"medium"` | Passed as the `reasoning_effort` parameter to the chat-completion call. Set to `null` for models that reject the parameter (e.g. the gpt-4o family). |
 | `api_key_env` | string | `"OPENAI_API_KEY"` | Name of the environment variable holding the OpenAI API key used for summary generation. |
 | `timeout_seconds` | float | `20.0` | HTTP timeout for the summary API call. Must be greater than 0. |
 | `max_transcript_chars` | int | `24000` | Maximum characters of transcript text passed to the model. Longer transcripts are truncated to this limit before summarization. Must be greater than 0. |

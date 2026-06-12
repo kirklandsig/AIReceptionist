@@ -1148,11 +1148,11 @@ def test_email_config_gets_default_summary_block():
 
 def test_email_summary_rejects_bad_values():
     from receptionist.config import EmailSummaryConfig
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="email.summary"):
         EmailSummaryConfig(model="   ")
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="email.summary"):
         EmailSummaryConfig(timeout_seconds=0)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="email.summary"):
         EmailSummaryConfig(max_transcript_chars=0)
 
 

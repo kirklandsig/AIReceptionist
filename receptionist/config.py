@@ -493,7 +493,7 @@ class EmailSummaryConfig(BaseModel):
     enabled with a missing API-key env var degrades gracefully: the email
     is sent without a Summary section and a warning is logged.
     """
-    model_config = ConfigDict(extra="forbid", protected_namespaces=())
+    model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
     model: str = "gpt-5-mini"
@@ -507,7 +507,7 @@ class EmailSummaryConfig(BaseModel):
     def _model_non_empty(cls, v: str) -> str:
         if not v.strip():
             raise ValueError("email.summary.model must be non-empty")
-        return v
+        return v.strip()
 
     @field_validator("timeout_seconds")
     @classmethod

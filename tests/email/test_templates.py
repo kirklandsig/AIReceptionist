@@ -462,3 +462,33 @@ def test_call_end_email_omits_keypad_actions_section_when_empty():
 
     assert "Keypad actions" not in body_text
     assert "Keypad actions" not in body_html
+
+
+def test_pretty_phone_formats_nanp_numbers():
+    from receptionist.email.templates import _pretty_phone
+    assert _pretty_phone("+16317667104") == "+1 (631) 766-7104"
+    assert _pretty_phone("6317667104") == "+1 (631) 766-7104"
+    assert _pretty_phone("16317667104") == "+1 (631) 766-7104"
+
+
+def test_pretty_phone_leaves_non_nanp_verbatim():
+    from receptionist.email.templates import _pretty_phone
+    assert _pretty_phone("+442071234567") == "+442071234567"
+    assert _pretty_phone("Unknown") == "Unknown"
+    assert _pretty_phone(None) == "Unknown"
+    assert _pretty_phone("") == "Unknown"
+
+
+def test_same_phone_compares_last_ten_digits():
+    from receptionist.email.templates import _same_phone
+    assert _same_phone("+16317667104", "(631) 766-7104") is True
+    assert _same_phone("+16317667104", "+16317667105") is False
+    assert _same_phone(None, "+16317667104") is False
+    assert _same_phone("", "") is False
+
+
+def test_transcript_filename_sanitizes_call_id():
+    from receptionist.email.templates import transcript_filename
+    assert transcript_filename("room-1") == "transcript_room-1.txt"
+    assert transcript_filename("licomplaw-_+1631@x") == "transcript_licomplaw-_-1631-x.txt"
+    assert transcript_filename(None) == "transcript_unknown.txt"

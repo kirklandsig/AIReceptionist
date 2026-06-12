@@ -1,6 +1,7 @@
 # receptionist/messaging/channels/email.py
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -52,7 +53,7 @@ class EmailChannel:
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
         )
-        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
 
     async def deliver_call_end(
         self,
@@ -68,13 +69,13 @@ class EmailChannel:
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
         )
-        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
 
     async def deliver_booking(
         self, metadata: CallMetadata, context: DispatchContext
     ) -> None:
         subject, body_text, body_html = build_booking_email(metadata, context)
-        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
 
     async def deliver_intake(
         self,
@@ -90,9 +91,9 @@ class EmailChannel:
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
         )
-        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
+        await self._send_with_retry(subject, body_text, body_html, await self._transcript_attachments(context))
 
-    def _transcript_attachments(self, context: DispatchContext) -> list[EmailAttachment]:
+    async def _transcript_attachments(self, context: DispatchContext) -> list[EmailAttachment]:
         """Read the markdown transcript and wrap it as a .txt attachment.
 
         Returns [] when the channel disables transcripts, no transcript was
@@ -101,7 +102,7 @@ class EmailChannel:
         if not self.channel_config.include_transcript or not context.transcript_markdown_path:
             return []
         try:
-            content = Path(context.transcript_markdown_path).read_bytes()
+            content = await asyncio.to_thread(Path(context.transcript_markdown_path).read_bytes)
         except OSError:
             logger.warning(
                 "transcript attachment unavailable: %s",

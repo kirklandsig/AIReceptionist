@@ -1,6 +1,7 @@
 # receptionist/email/summarizer.py
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Sequence
@@ -117,11 +118,17 @@ async def generate_call_summary(
         body["reasoning_effort"] = config.reasoning_effort
 
     try:
-        async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
-            resp = await client.post(
-                _API_URL, json=body,
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
+        # The inner httpx timeout is per-phase (connect/read/write/pool), so a
+        # slow-dripping response can run far past it. asyncio.wait_for bounds
+        # the WHOLE request to timeout_seconds wall-clock; the httpx timeout
+        # stays for fast-fail on connect.
+        async def _post() -> httpx.Response:
+            async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+                return await client.post(
+                    _API_URL, json=body,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+        resp = await asyncio.wait_for(_post(), timeout=config.timeout_seconds)
     except Exception as e:
         logger.warning(
             "call summary request failed: %s", e,

@@ -49,8 +49,13 @@ A typical call looks like this:
    English overview. The final JSON file is written and the intake email is
    queued for call-end.
 7. If `info_packets.enabled: true`, Riley asks whether the caller wants the
-   configured packet emailed. Riley calls `send_info_packet` only after the
-   caller gives permission and confirms the email address.
+   configured packet emailed. Sending is a two-step round-trip: after the
+   caller gives permission and spells the address, Riley calls
+   `send_info_packet` with the spelled address and `consent_confirmed=true`.
+   The tool does not send yet — it returns the parsed address, which Riley
+   reads back to the caller letter by letter. Only after the caller
+   explicitly confirms does Riley call `send_info_packet` again with the
+   same address and `destination_confirmed=true`, which performs the send.
 
 ---
 
@@ -238,8 +243,11 @@ destination.
 Important constraints:
 
 - Riley must ask permission before sending a packet.
-- Riley must ask the caller to spell the email address and confirm it
-  character-by-character.
+- The destination is confirmed in a tool-enforced round-trip: Riley asks the
+  caller to spell the email address and passes it to `send_info_packet`;
+  the tool returns the parsed address without sending; Riley reads it back
+  letter by letter; only an explicit "yes" plus a second call with
+  `destination_confirmed=true` and the same address triggers the send.
 - V1 is email-only. SMS and attachments are not supported.
 - Packet subject, body, and links are configured in YAML. Riley must not
   generate marketing copy or summarize packet content herself.
@@ -306,13 +314,15 @@ When `info_packets.enabled: true`, the return message tells Riley to offer the
 configured packet next. Riley still must ask permission and confirm the email
 address before calling `send_info_packet`.
 
-### `send_info_packet(packet_key, channel, destination, consent_confirmed)`
+### `send_info_packet(packet_key, channel, destination, consent_confirmed, destination_confirmed)`
 
-Called only after the caller consents and confirms the destination email.
-`channel` must be `"email"` in v1 and `consent_confirmed` must be `true`.
-Unknown packet keys, invalid email addresses, unsupported channels, and email
-transport failures return safe corrective messages rather than internal error
-details.
+Called only after the caller consents. `channel` must be `"email"` in v1 and
+`consent_confirmed` must be `true`. The first call with a destination does
+NOT send — it returns the parsed address for Riley to read back letter by
+letter. The send happens only on a second call with the same address
+(case-insensitive) and `destination_confirmed=true`. Unknown packet keys,
+invalid email addresses, unsupported channels, and email transport failures
+return safe corrective messages rather than internal error details.
 
 ---
 

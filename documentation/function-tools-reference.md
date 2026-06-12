@@ -38,7 +38,7 @@ The Receptionist agent exposes the following function tools to the OpenAI Realti
 | `book_appointment` | Book a specific previously-offered slot | Caller confirms a time |
 | `record_intake_answer` | Record one answer in an in-progress intake | Caller is going through a structured intake |
 | `finalize_intake` | Submit the completed intake | Riley has captured all required answers and confirmed critical fields |
-| `send_info_packet` | Email a configured information packet to the caller | Caller consented and confirmed an email address |
+| `send_info_packet` | Email a configured information packet to the caller (two-step: first call returns the address for read-back, second call with `destination_confirmed=true` sends) | Caller consented and confirmed an email address |
 | `end_call` | Say goodbye and hang up | Caller has clearly finished the conversation |
 
 These tools are defined as methods on the `Receptionist` class in `agent.py`, decorated with `@function_tool()`. The LiveKit Agents SDK and OpenAI Realtime API handle the serialization, invocation, and result passing automatically.
@@ -678,10 +678,22 @@ confirmed.
 ### Purpose
 
 Send a configured, pre-approved information packet to a caller by email. This
-tool is consent-gated: Riley must ask permission first and confirm the email
-address character-by-character before calling it. V1 supports email only and
-configured text/links only; no SMS, attachments, or model-generated packet
-copy are sent.
+tool is consent-gated AND destination-gated. Riley must ask permission first;
+beyond that, the tool enforces a two-step destination confirmation (mirroring
+the check-before-book pattern used for calendar slots):
+
+1. **First call** — Riley passes the spelled address with
+   `consent_confirmed=true`. The tool does NOT send. It stores the parsed
+   address and returns an instruction to read that exact address back to the
+   caller letter by letter.
+2. **Second call** — only after the caller explicitly confirms, Riley calls
+   again with the same `destination` and `destination_confirmed=true`. The
+   send happens only when the confirmed address matches the stored pending
+   address (case-insensitive). A mismatched or out-of-the-blue confirmation
+   re-issues the read-back instruction instead of sending.
+
+V1 supports email only and configured text/links only; no SMS, attachments,
+or model-generated packet copy are sent.
 
 ### Signature
 
@@ -693,6 +705,7 @@ async def send_info_packet(
     channel: str = "email",
     destination: str = "",
     consent_confirmed: bool = False,
+    destination_confirmed: bool = False,
 ) -> str
 ```
 
@@ -704,15 +717,25 @@ async def send_info_packet(
 | `channel` | str | No | Must be `"email"` in v1. Other values are refused. |
 | `destination` | str | Yes | Caller-confirmed email address. |
 | `consent_confirmed` | bool | Yes | Must be `true` only after the caller gives permission and confirms the email address. |
+| `destination_confirmed` | bool | No (default `false`) | Must be `true` only on the second call, after the caller heard the read-back of the exact address the tool returned and explicitly confirmed it. |
 
 ### Return Value
 
-- Success: confirms the packet was sent to the destination address.
+- First call (or confirmation for a different address): a read-back
+  instruction — "Do not send yet. Read this email address back to the caller
+  letter by letter exactly as written: `<destination>`. After the caller
+  explicitly confirms it is correct, call send_info_packet again with the
+  same destination and destination_confirmed=true. ..." No email is sent.
+- Success (second call, matching address): confirms the packet was sent to
+  the destination address. The pending address is cleared, so a third call
+  with a stale `destination_confirmed=true` restarts the read-back instead
+  of sending a duplicate.
 - No consent: tells Riley to ask permission and confirm the address first.
 - Unsupported channel: refuses and states email is the only supported channel.
 - Unknown packet or invalid email: returns a safe corrective instruction.
 - Transport failure: logs the full exception and tells Riley the office will
-  follow up.
+  follow up. The pending address is kept, so a retry with the same confirmed
+  address attempts the send again.
 
 ### Side Effects
 
@@ -798,6 +821,7 @@ Caller: "Do you do teeth whitening?"
 | `take_message` | File write fails | Apology + ask to try again |
 | `get_business_hours` | Config error | General hours from system prompt |
 | `send_info_packet` | Missing consent | Ask permission and confirm the email address before sending |
+| `send_info_packet` | Destination not yet confirmed (first call, mismatched address, or stale confirmation) | Read the parsed address back letter by letter, then call again with `destination_confirmed=true` |
 | `send_info_packet` | Unsupported channel or invalid email | Email-only / ask caller to spell the address again |
 | `send_info_packet` | Email transport fails | Generic follow-up message; full error logged internally |
 | `end_call` | `remove_participant` fails | Falls back to `delete_room`; caller is disconnected either way |

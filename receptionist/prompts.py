@@ -145,10 +145,13 @@ def _build_info_packets_block(config: BusinessConfig) -> str:
         "Rules:\n"
         "  - Ask the caller for permission before sending anything.\n"
         "  - Email is the only supported channel in this version; do not offer SMS.\n"
-        "  - Ask the caller to spell the email address, then confirm it\n"
-        "    character-by-character before calling send_info_packet.\n"
-        "  - Call send_info_packet only with consent_confirmed=true after\n"
-        "    permission and the email address are confirmed.\n"
+        "  - Ask the caller to spell the email address, then call send_info_packet\n"
+        "    with the spelled address and consent_confirmed=true. The tool will NOT\n"
+        "    send yet - it returns the exact address to read back.\n"
+        "  - Read that address back to the caller letter by letter. Only after an\n"
+        "    explicit yes, call send_info_packet again with the same address and\n"
+        "    destination_confirmed=true. If the caller corrects you, start over\n"
+        "    with the corrected address.\n"
         "  - Never generate, summarize, or alter packet content yourself. The\n"
         "    packet email contains only configured text and links.\n"
     )
@@ -271,6 +274,7 @@ IMPORTANT RULES:
 - Ask whether the caller is ready before starting a structured intake.
 - If the caller is not ready or needs a person, use take_message with their
   name, callback number, and what they need.
+- Never remain silent after using a tool. Immediately tell the caller the result or the next step out loud.
 """
 
     return f"""You are the receptionist for {config.business.name}, a {config.business.type}.
@@ -311,4 +315,5 @@ IMPORTANT RULES:
 - Never make up information. If you don't know, say so and offer alternatives.
 - Always confirm before transferring a call.
 - If the caller seems upset, be empathetic and offer to connect them with a person.
+- Never remain silent after using a tool. Immediately tell the caller the result or the next step out loud.
 """

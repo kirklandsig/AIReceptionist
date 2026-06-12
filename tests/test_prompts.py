@@ -411,7 +411,23 @@ def test_info_packets_prompt_requires_consent_and_confirmed_email():
     prompt = build_system_prompt(config)
     assert "send_info_packet" in prompt
     assert "permission" in prompt.lower() or "consent" in prompt.lower()
-    assert "character-by-character" in prompt
+    # Two-step protocol: first call returns the address to read back,
+    # the send requires a second call with destination_confirmed=true.
+    assert "destination_confirmed=true" in prompt
+    assert "letter by letter" in prompt.lower()
+    assert "read" in prompt.lower()
+
+
+def test_prompt_forbids_silence_after_tool_use_in_both_modes():
+    """Shared behavioral rule: the agent must speak after every tool call.
+    Emitted in both receptionist and intake_only prompt modes."""
+    rule = "Never remain silent after using a tool"
+    receptionist_prompt = build_system_prompt(_make_config())
+    assert rule in receptionist_prompt
+    intake_only_prompt = build_system_prompt(
+        BusinessConfig.from_yaml_string(INTAKE_ONLY_YAML),
+    )
+    assert rule in intake_only_prompt
 
 
 def test_prompt_includes_dtmf_menu_when_enabled(v2_yaml):

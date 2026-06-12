@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- send_info_packet now enforces a two-step destination confirmation: the
+  first call returns the parsed address for letter-by-letter read-back;
+  sending requires a second call with destination_confirmed=true and a
+  matching address.
 - When `email.triggers.on_call_end` is enabled, each call now produces exactly
   ONE staff email: the call-end email absorbs message, intake, and booking
   content (plus the optional AI Summary section), and the separate per-trigger

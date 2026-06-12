@@ -688,7 +688,12 @@ top-level `email:` config, or an SMTP/Resend transport failure.
 2. Verify top-level `email:` sender config works for normal call-end emails.
 3. Confirm the transcript shows Riley asked permission and confirmed the email
    address before calling `send_info_packet` with `consent_confirmed=true`.
-4. Check `agent.log` for `component=agent.info_packets` if the call-end summary
+4. A packet that is never sent after the caller gives an address usually means
+   the confirmation round-trip didn't complete: the first `send_info_packet`
+   call only returns the parsed address for read-back, and the model never
+   called back with `destination_confirmed=true`. Check the transcript for the
+   letter-by-letter read-back and the caller's explicit confirmation.
+5. Check `agent.log` for `component=agent.info_packets` if the call-end summary
    shows `transport_failed`.
 
 ### Call-end email has no Summary section

@@ -77,7 +77,11 @@ def _config_with_packets(v2_yaml: str):
 def _bare_packet_receptionist(config, lifecycle):
     from receptionist.agent import Receptionist
 
-    obj = SimpleNamespace(config=config, lifecycle=lifecycle)
+    obj = SimpleNamespace(
+        config=config,
+        lifecycle=lifecycle,
+        _pending_packet_destination=None,
+    )
     raw = Receptionist.send_info_packet
     raw = raw.fnc if hasattr(raw, "fnc") else raw
     obj._send_info_packet = raw.__get__(obj)
@@ -171,12 +175,24 @@ async def test_send_info_packet_tool_sends_email_and_records_success(v2_yaml, mo
     lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
     r = _bare_packet_receptionist(config, lifecycle)
     send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    # First call: tool hands back the address for read-back, no send yet.
+    first = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="claimant@example.com",
+        consent_confirmed=True,
+    )
+    assert "claimant@example.com" in first
+    send_mock.assert_not_called()
+    # Second call with destination_confirmed: the send happens.
     result = await r._send_info_packet(
         SimpleNamespace(),
         packet_key="firm_overview",
         channel="email",
         destination="claimant@example.com",
         consent_confirmed=True,
+        destination_confirmed=True,
     )
     assert "sent" in result.lower()
     send_mock.assert_awaited_once()
@@ -270,21 +286,194 @@ async def test_send_info_packet_tool_records_transport_failure(v2_yaml, mocker):
     config = _config_with_packets(v2_yaml)
     lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
     r = _bare_packet_receptionist(config, lifecycle)
-    mocker.patch(
+    send_mock = mocker.patch(
         "receptionist.agent.send_info_packet_email",
         AsyncMock(side_effect=RuntimeError("smtp failed")),
     )
-    result = await r._send_info_packet(
+    first = await r._send_info_packet(
         SimpleNamespace(),
         packet_key="firm_overview",
         channel="email",
         destination="claimant@example.com",
         consent_confirmed=True,
     )
+    assert "claimant@example.com" in first
+    send_mock.assert_not_called()
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="claimant@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
     assert "trouble" in result.lower() or "follow up" in result.lower()
     record = lifecycle.metadata.info_packet_sends[0]
     assert record.status == "failed"
     assert record.error == "transport_failed"
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_first_call_returns_readback_and_does_not_send(v2_yaml, mocker):
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+    )
+    assert "jane@example.com" in result
+    send_mock.assert_not_called()
+    assert r._pending_packet_destination == "jane@example.com"
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_confirmed_wrong_address_reprompts(v2_yaml, mocker):
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="a@example.com",
+        consent_confirmed=True,
+    )
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="b@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert "b@example.com" in result
+    send_mock.assert_not_called()
+    assert r._pending_packet_destination == "b@example.com"
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_confirmed_without_prior_call_reprompts(v2_yaml, mocker):
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert "jane@example.com" in result
+    assert "read" in result.lower()
+    send_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_match_is_case_insensitive(v2_yaml, mocker):
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="Jane@Example.com",
+        consent_confirmed=True,
+    )
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert "sent" in result.lower()
+    send_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_success_clears_pending(v2_yaml, mocker):
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+    )
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert "sent" in result.lower()
+    assert r._pending_packet_destination is None
+    # A stale confirmation must NOT trigger an accidental duplicate send.
+    third = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert "jane@example.com" in third
+    assert send_mock.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_transport_failure_keeps_pending(v2_yaml, mocker):
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch(
+        "receptionist.agent.send_info_packet_email",
+        AsyncMock(side_effect=RuntimeError("smtp failed")),
+    )
+    await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+    )
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert "trouble" in result.lower() or "follow up" in result.lower()
+    # Pending survives a transport failure so a retry with the same
+    # confirmed address still attempts the send.
+    assert r._pending_packet_destination == "jane@example.com"
+    await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="jane@example.com",
+        consent_confirmed=True,
+        destination_confirmed=True,
+    )
+    assert send_mock.call_count == 2
 
 
 @pytest.mark.asyncio

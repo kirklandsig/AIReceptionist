@@ -49,12 +49,12 @@ class CallLifecycle:
         # so the call-end fan-out doesn't reconstruct them per fire.
         self._email_channels = self._build_email_channels()
         # take_message defers its email portion to call-end time so the full
-        # transcript can be embedded. Each enqueued Message is fired once via
-        # every configured EmailChannel during on_call_ended, AFTER the
-        # transcript files have been written.
+        # transcript can be attached as a .txt file. Each enqueued Message is
+        # fired once via every configured EmailChannel during on_call_ended,
+        # AFTER the transcript files have been written.
         self._pending_message_emails: list[Message] = []
         # finalize_intake() defers the intake email to call-end too, for
-        # the same transcript-embedding reason as deferred message emails.
+        # the same transcript-attachment reason as deferred message emails.
         # Only one intake submission can be pending per call (a caller can
         # only run one intake per call); the assignment overwrites any
         # earlier in-progress submission, which is the correct behaviour
@@ -116,8 +116,8 @@ class CallLifecycle:
 
         The structured JSON file is persisted by the tool immediately so
         the receiving team still has the data even if the call drops
-        before on_call_ended runs. The email is deferred so the embedded
-        transcript file path is real.
+        before on_call_ended runs. The email is deferred so the transcript
+        attached as a .txt file comes from a real on-disk path.
 
         Overwrites any previously enqueued submission for this call —
         only one intake per call is expected, and a re-finalize replaces
@@ -133,8 +133,8 @@ class CallLifecycle:
         tool path (so the caller hears immediate confirmation and the data
         is durable on disk). The email portion is queued here and drained
         in on_call_ended() with a DispatchContext that includes the real
-        transcript path, so the email template can embed the full
-        conversation. Without this deferral the email would fire mid-call
+        transcript path, so the email can attach the full conversation as
+        a .txt file. Without this deferral the email would fire mid-call
         and the transcript file would not yet exist.
         """
         self._pending_message_emails.append(message)
@@ -400,7 +400,13 @@ class CallLifecycle:
             self._pending_message_emails.clear()
             if consolidate:
                 ai_summary: str | None = None
-                if self._email_channels and self.config.email.summary.enabled:
+                has_content = bool(
+                    segments
+                    or captured_messages
+                    or self._pending_intake_submission is not None
+                    or self.metadata.appointment_booked
+                )
+                if has_content and self._email_channels and self.config.email.summary.enabled:
                     try:
                         ai_summary = await generate_call_summary(
                             segments=segments,

@@ -725,6 +725,7 @@ async def test_consolidation_suppresses_separate_booking_email(tmp_path, config,
 @pytest.mark.asyncio
 async def test_consolidation_passes_ai_summary(tmp_path, config, mocker):
     from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
 
     cfg = _consolidated_config(config, tmp_path)
     deliver_call_end_mock = AsyncMock()
@@ -733,6 +734,7 @@ async def test_consolidation_passes_ai_summary(tmp_path, config, mocker):
     mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
 
     lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    lifecycle.enqueue_message_email(Message("J", "+15551110000", "m", "Test Dental"))
     await lifecycle.on_call_ended()
 
     summary_mock.assert_called_once()
@@ -761,6 +763,7 @@ async def test_consolidation_summary_failure_still_sends_email(tmp_path, config,
 @pytest.mark.asyncio
 async def test_no_summary_generated_when_disabled(tmp_path, config, mocker):
     from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
 
     cfg = _consolidated_config(config, tmp_path)
     cfg = cfg.model_copy(update={
@@ -774,6 +777,9 @@ async def test_no_summary_generated_when_disabled(tmp_path, config, mocker):
     mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
 
     lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    # Content present (so the empty-call gate passes) — the summary must
+    # still be skipped because summary.enabled is False.
+    lifecycle.enqueue_message_email(Message("J", "+15551110000", "m", "Test Dental"))
     await lifecycle.on_call_ended()
 
     summary_mock.assert_not_called()
@@ -870,6 +876,7 @@ async def test_consolidation_multi_channel_generates_summary_once(tmp_path, conf
     generation (the LLM call is per-call, not per-channel)."""
     from receptionist.config import EmailChannel as EmailChannelConfig
     from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
 
     cfg = _consolidated_config(config, tmp_path)
     cfg = cfg.model_copy(update={
@@ -886,7 +893,26 @@ async def test_consolidation_multi_channel_generates_summary_once(tmp_path, conf
     mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
 
     lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    lifecycle.enqueue_message_email(Message("J", "+15551110000", "m", "Test Dental"))
     await lifecycle.on_call_ended()
 
     assert deliver_call_end_mock.call_count == 2
     summary_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_no_summary_for_empty_call(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    cfg = _consolidated_config(config, tmp_path)
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    summary_mock = AsyncMock(return_value="nope")
+    mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
+
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    await lifecycle.on_call_ended()
+
+    summary_mock.assert_not_called()
+    deliver_call_end_mock.assert_called_once()
+    assert deliver_call_end_mock.call_args.kwargs["ai_summary"] is None

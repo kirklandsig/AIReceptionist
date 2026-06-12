@@ -99,6 +99,11 @@ async def test_call_end_writes_transcript_and_fires_call_end_email(tmp_path, v2_
 
     lifecycle = CallLifecycle(config=config, call_id="room-xyz", caller_phone="+15551112222")
     lifecycle.record_faq_answered("hours")  # simulate a tool invocation
+    # Captured speech is required for the AI summary (empty calls skip it).
+    from receptionist.transcript.capture import SpeakerRole, TranscriptSegment
+    lifecycle.transcript_capture = MagicMock(segments=[
+        TranscriptSegment(role=SpeakerRole.USER, text="What are your hours?", created_at=0.0),
+    ])
 
     await lifecycle.on_call_ended()
     await _drain_pending_tasks()

@@ -25,6 +25,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AI summary generation is wall-clock capped by `email.summary.timeout_seconds`
   (default 20 s): if the OpenAI chat-completion call exceeds this deadline or
   fails for any reason, the Summary section is omitted and the email still sends.
+- The AI summary is skipped entirely for calls with no transcript and no
+  captured content (no message, intake, or booking) — e.g. an instant hangup —
+  instead of spending an LLM call on an empty call.
 
 ### Added
 - AI-generated call summary in call-end emails (`email.summary` config block, default model gpt-5-mini).

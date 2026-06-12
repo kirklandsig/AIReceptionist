@@ -1231,7 +1231,7 @@ class Receptionist(Agent):
         )
         try:
             # Email portion is deferred to call-end so the message email can
-            # embed the full transcript (which doesn't exist on disk yet
+            # attach the full transcript as a .txt file (which doesn't exist on disk yet
             # because the call is still in progress). File and webhook
             # channels fire immediately so the caller gets confirmation
             # and the message is durable on disk before we say "saved".

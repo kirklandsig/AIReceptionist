@@ -320,8 +320,8 @@ def build_call_end_email(
     if intake_submission is not None:
         body_text += (
             f"\nIntake{intake_marker}: {intake_label}\n"
-            f"Intake caller: {intake_submission.caller_name}\n"
-            f"Intake callback: {_pretty_phone(intake_submission.callback_number)}\n"
+            f"Intake caller: {intake_submission.caller_name.strip() or '(not yet collected)'}\n"
+            f"Intake callback: {_pretty_phone(intake_submission.callback_number) if intake_submission.callback_number.strip() else '(not yet collected)'}\n"
             f"Language: {intake_submission.language}\n"
         )
         if intake_submission.english_overview:
@@ -419,8 +419,8 @@ def build_call_end_email(
         body_html += (
             f"<h3>Intake{intake_marker} — {e(intake_label)}</h3>"
             f"<table cellpadding='4'>"
-            f"<tr><td><strong>Intake caller</strong></td><td>{e(intake_submission.caller_name)}</td></tr>"
-            f"<tr><td><strong>Intake callback</strong></td><td>{e(_pretty_phone(intake_submission.callback_number))}</td></tr>"
+            f"<tr><td><strong>Intake caller</strong></td><td>{e(intake_submission.caller_name.strip() or '(not yet collected)')}</td></tr>"
+            f"<tr><td><strong>Intake callback</strong></td><td>{e(_pretty_phone(intake_submission.callback_number) if intake_submission.callback_number.strip() else '(not yet collected)')}</td></tr>"
             f"<tr><td><strong>Language</strong></td><td>{e(intake_submission.language)}</td></tr>"
             f"</table>"
         )

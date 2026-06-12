@@ -469,9 +469,9 @@ def test_call_end_email_omits_keypad_actions_section_when_empty():
 
 def test_pretty_phone_formats_nanp_numbers():
     from receptionist.email.templates import _pretty_phone
-    assert _pretty_phone("+16317667104") == "+1 (631) 766-7104"
-    assert _pretty_phone("6317667104") == "+1 (631) 766-7104"
-    assert _pretty_phone("16317667104") == "+1 (631) 766-7104"
+    assert _pretty_phone("+16315550104") == "+1 (631) 555-0104"
+    assert _pretty_phone("6315550104") == "+1 (631) 555-0104"
+    assert _pretty_phone("16315550104") == "+1 (631) 555-0104"
 
 
 def test_pretty_phone_leaves_non_nanp_verbatim():
@@ -484,16 +484,16 @@ def test_pretty_phone_leaves_non_nanp_verbatim():
 
 def test_same_phone_compares_last_ten_digits():
     from receptionist.email.templates import _same_phone
-    assert _same_phone("+16317667104", "(631) 766-7104") is True
-    assert _same_phone("+16317667104", "+16317667105") is False
-    assert _same_phone(None, "+16317667104") is False
+    assert _same_phone("+16315550104", "(631) 555-0104") is True
+    assert _same_phone("+16315550104", "+16315550105") is False
+    assert _same_phone(None, "+16315550104") is False
     assert _same_phone("", "") is False
 
 
 def test_transcript_filename_sanitizes_call_id():
     from receptionist.email.templates import transcript_filename
     assert transcript_filename("room-1") == "transcript_room-1.txt"
-    assert transcript_filename("licomplaw-_+1631@x") == "transcript_licomplaw-_-1631-x.txt"
+    assert transcript_filename("tenant-a_+1555@x") == "transcript_tenant-a_-1555-x.txt"
     assert transcript_filename(None) == "transcript_unknown.txt"
 
 
@@ -604,12 +604,12 @@ def test_intake_email_still_renders_answers_after_refactor():
 
 def test_same_phone_seven_digit_local_never_hides_callback():
     from receptionist.email.templates import _same_phone
-    assert _same_phone("766-7104", "+16317667104") is False
+    assert _same_phone("555-0104", "+16315550104") is False
 
 
 def test_same_phone_cross_country_collision_documented():
     from receptionist.email.templates import _same_phone
-    assert _same_phone("+526317667104", "+16317667104") is True
+    assert _same_phone("+526315550104", "+16315550104") is True
 
 
 def test_call_end_email_reports_unavailable_when_not_attached():
@@ -621,6 +621,18 @@ def test_call_end_email_reports_unavailable_when_not_attached():
     assert "Transcript attached" not in body_text
     assert "Transcript unavailable — see path: transcripts/room-1.md" in body_text
     assert "Transcript unavailable" in body_html
+
+
+def test_consolidated_partial_intake_shows_not_yet_collected():
+    sub = _submission(status="partial")
+    sub.caller_name = ""
+    sub.callback_number = ""
+    _, body_text, body_html = build_call_end_email(
+        _metadata(), DispatchContext(), intake_submission=sub,
+    )
+    assert "Intake caller: (not yet collected)" in body_text
+    assert "Intake callback: (not yet collected)" in body_text
+    assert "(not yet collected)" in body_html
 
 
 def test_booking_email_uses_attachment_note():

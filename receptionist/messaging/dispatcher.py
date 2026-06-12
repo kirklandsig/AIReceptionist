@@ -57,8 +57,8 @@ class Dispatcher:
         `skip_email_channel=True` omits any `EmailChannel` from the fan-out.
         The `take_message` tool sets this so the email portion can be
         deferred to call-end time (where the lifecycle has a transcript
-        path available and can embed the full conversation). File and
-        webhook channels still fire normally.
+        path available and can attach the full conversation as a .txt
+        file). File and webhook channels still fire normally.
         """
         channels = self.channels
         if skip_email_channel:

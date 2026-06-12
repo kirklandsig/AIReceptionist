@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from receptionist.config import EmailChannel as EmailChannelConfig, EmailConfig
-from receptionist.email.sender import EmailSendError, EmailSender
+from receptionist.email.sender import EmailAttachment, EmailSendError, EmailSender
 from receptionist.email.smtp import SMTPSender
 from receptionist.email.resend import ResendSender
 from receptionist.email.templates import (
@@ -12,6 +13,7 @@ from receptionist.email.templates import (
     build_call_end_email,
     build_intake_email,
     build_message_email,
+    transcript_filename,
 )
 from receptionist.intakes.models import IntakeSubmission
 from receptionist.messaging.models import Message, DispatchContext
@@ -50,7 +52,7 @@ class EmailChannel:
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
         )
-        await self._send_with_retry(subject, body_text, body_html)
+        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
 
     async def deliver_call_end(
         self,
@@ -66,13 +68,13 @@ class EmailChannel:
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
         )
-        await self._send_with_retry(subject, body_text, body_html)
+        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
 
     async def deliver_booking(
         self, metadata: CallMetadata, context: DispatchContext
     ) -> None:
         subject, body_text, body_html = build_booking_email(metadata, context)
-        await self._send_with_retry(subject, body_text, body_html)
+        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
 
     async def deliver_intake(
         self,
@@ -88,9 +90,35 @@ class EmailChannel:
             include_transcript=self.channel_config.include_transcript,
             include_recording_link=self.channel_config.include_recording_link,
         )
-        await self._send_with_retry(subject, body_text, body_html)
+        await self._send_with_retry(subject, body_text, body_html, self._transcript_attachments(context))
 
-    async def _send_with_retry(self, subject: str, body_text: str, body_html: str) -> None:
+    def _transcript_attachments(self, context: DispatchContext) -> list[EmailAttachment]:
+        """Read the markdown transcript and wrap it as a .txt attachment.
+
+        Returns [] when the channel disables transcripts, no transcript was
+        written, or the file is unreadable — the email must still send.
+        """
+        if not self.channel_config.include_transcript or not context.transcript_markdown_path:
+            return []
+        try:
+            content = Path(context.transcript_markdown_path).read_bytes()
+        except OSError:
+            logger.warning(
+                "transcript attachment unavailable: %s",
+                context.transcript_markdown_path,
+                extra={"component": "email.attachment"},
+            )
+            return []
+        return [EmailAttachment(
+            filename=transcript_filename(context.call_id),
+            content=content,
+            content_type="text/plain",
+        )]
+
+    async def _send_with_retry(
+        self, subject: str, body_text: str, body_html: str,
+        attachments: list[EmailAttachment] | None = None,
+    ) -> None:
         async def _send() -> None:
             await self.sender.send(
                 from_=self.email_config.from_,
@@ -98,6 +126,7 @@ class EmailChannel:
                 subject=subject,
                 body_text=body_text,
                 body_html=body_html,
+                attachments=attachments or [],
             )
 
         await retry_with_backoff(

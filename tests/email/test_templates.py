@@ -74,7 +74,7 @@ def test_call_end_email_includes_captured_messages_above_transcript(tmp_path):
 
     _, body_text, body_html = build_call_end_email(
         md,
-        DispatchContext(transcript_markdown_path=str(transcript_md)),
+        DispatchContext(transcript_markdown_path=str(transcript_md), call_id="room-1"),
         captured_messages=[msg],
     )
 
@@ -83,11 +83,12 @@ def test_call_end_email_includes_captured_messages_above_transcript(tmp_path):
     assert "Caller: Jane Doe" in body_text
     assert "Callback: +15551112222" in body_text
     assert "Please call me back about my appointment." in body_text
-    assert body_text.index("Captured Content:") < body_text.index("--- Transcript ---")
+    assert "--- Transcript ---" not in body_text
+    assert "Transcript attached: transcript_room-1.txt" in body_text
     assert "Captured Content" in body_html
     assert "Jane Doe" in body_html
     assert "Please call me back about my appointment." in body_html
-    assert body_html.index("Captured Content") < body_html.index("Transcript")
+    assert "Transcript attached:" in body_html
 
 
 def test_call_end_email_omits_captured_content_when_no_messages():
@@ -210,7 +211,7 @@ def test_call_end_email_html_matches_text_summary_fields():
     assert "Appointment:" in body_text
     assert "FAQs answered:" in body_text
     assert "Languages: en, es" in body_text
-    assert "Transcript: transcripts/room-1.md" in body_text
+    assert "Transcript path: transcripts/room-1.md" in body_text
     assert "Appointment" in body_html
     assert "calendar.google.com" in body_html
     assert "FAQs answered" in body_html
@@ -301,10 +302,10 @@ def test_call_end_email_omits_agent_end_reason_when_unset():
     assert "Agent end reason" not in body_html
 
 
-def test_call_end_email_embeds_transcript_content_when_include_transcript_true(tmp_path):
-    """include_transcript=True embeds the actual transcript content into the
-    email body, not just the file path. Operators reading the call summary
-    should see the conversation without opening another file or another link.
+def test_call_end_email_notes_attachment_when_include_transcript_true(tmp_path):
+    """include_transcript=True notes the transcript attachment in the body
+    (filename + on-disk path) without embedding the conversation inline —
+    the actual content rides along as a .txt attachment built by the channel.
     """
     transcript_md = tmp_path / "transcript.md"
     transcript_md.write_text(
@@ -314,18 +315,18 @@ def test_call_end_email_embeds_transcript_content_when_include_transcript_true(t
         encoding="utf-8",
     )
     md = _metadata()
-    context = DispatchContext(transcript_markdown_path=str(transcript_md))
+    context = DispatchContext(transcript_markdown_path=str(transcript_md), call_id="room-1")
 
     subject, body_text, body_html = build_call_end_email(
         md, context, include_transcript=True,
     )
 
-    # Whole transcript appears verbatim in plain-text body
-    assert "Thanks for calling Acme Dental." in body_text
-    assert "I need to reschedule my Tuesday appointment." in body_text
-    # And in the HTML body (escaped where appropriate)
-    assert "Thanks for calling Acme Dental." in body_html
-    assert "I need to reschedule my Tuesday appointment." in body_html
+    assert "Thanks for calling Acme Dental." not in body_text
+    assert "I need to reschedule my Tuesday appointment." not in body_text
+    assert "Thanks for calling Acme Dental." not in body_html
+    assert "I need to reschedule my Tuesday appointment." not in body_html
+    assert "Transcript attached: transcript_room-1.txt" in body_text
+    assert "Transcript path: " in body_text
 
 
 def test_call_end_email_omits_transcript_when_include_transcript_false(tmp_path):
@@ -343,30 +344,30 @@ def test_call_end_email_omits_transcript_when_include_transcript_false(tmp_path)
 
     assert "sensitive content" not in body_text
     assert "sensitive content" not in body_html
-    assert "Transcript:" not in body_text
+    assert "Transcript" not in body_text
     assert "Transcript" not in body_html
 
 
-def test_call_end_email_falls_back_to_path_when_transcript_file_missing(tmp_path):
-    """If the markdown file is missing for some reason, the email should still
-    send and include the path so the operator can find the JSON copy. Do not
-    crash the call-end flow over an unreadable transcript."""
+def test_call_end_email_notes_attachment_even_when_transcript_file_missing(tmp_path):
+    """The template never reads the transcript file; a missing markdown file
+    still yields the attachment-note lines (filename + path) and no crash.
+    The unreadable-file fallback now lives in the channel layer."""
     missing = tmp_path / "does-not-exist.md"
     md = _metadata()
-    context = DispatchContext(transcript_markdown_path=str(missing))
+    context = DispatchContext(transcript_markdown_path=str(missing), call_id="room-1")
 
     subject, body_text, body_html = build_call_end_email(
         md, context, include_transcript=True,
     )
 
     assert str(missing) in body_text
-    assert "transcript_unavailable" in body_text.lower() or "could not read" in body_text.lower()
+    assert "Transcript attached: transcript_room-1.txt" in body_text
+    assert "Transcript attached:" in body_html
 
 
-def test_message_email_embeds_transcript_content_when_include_transcript_true(tmp_path):
-    """When a caller leaves a message, the message email should carry the
-    same conversational context the call-end email gets, so the recipient
-    can see what was discussed before the take_message tool fired."""
+def test_message_email_notes_attachment_when_include_transcript_true(tmp_path):
+    """When a caller leaves a message, the message email notes the transcript
+    attachment (filename + path) instead of embedding the conversation."""
     transcript_md = tmp_path / "t.md"
     transcript_md.write_text(
         "**Agent:** Thanks for calling.\n"
@@ -375,14 +376,16 @@ def test_message_email_embeds_transcript_content_when_include_transcript_true(tm
         encoding="utf-8",
     )
     msg = _message()
-    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md), call_id="room-1")
 
     subject, body_text, body_html = build_message_email(
         msg, ctx, include_transcript=True,
     )
 
-    assert "I need to leave a message for Alex." in body_text
-    assert "I need to leave a message for Alex." in body_html
+    assert "I need to leave a message for Alex." not in body_text
+    assert "I need to leave a message for Alex." not in body_html
+    assert "Transcript attached: transcript_room-1.txt" in body_text
+    assert "Transcript path: " in body_text
 
 
 def test_message_email_omits_transcript_when_include_transcript_false(tmp_path):

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Call transcripts are now attached to notification emails as `.txt` files
+  (`transcript_<call_id>.txt`) instead of being embedded inline between
+  `--- Transcript ---` markers. The email body shows the attachment filename
+  and the on-disk transcript path; an unreadable transcript file logs a
+  warning and the email still sends without the attachment. Applies to
+  message, call-end, booking, and intake emails when the channel's
+  `include_transcript` is true.
+
 ### Added
 - AI-generated call summary in call-end emails (`email.summary` config block, default model gpt-5-mini).
 - **DTMF auto-attendant (issue #16).** Configure `dtmf.digits` to map keypad

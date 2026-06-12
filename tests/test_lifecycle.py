@@ -744,18 +744,19 @@ async def test_consolidation_passes_ai_summary(tmp_path, config, mocker):
 @pytest.mark.asyncio
 async def test_consolidation_summary_failure_still_sends_email(tmp_path, config, mocker):
     from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
 
     cfg = _consolidated_config(config, tmp_path)
     deliver_call_end_mock = AsyncMock()
     mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
-    mocker.patch(
-        "receptionist.lifecycle.generate_call_summary",
-        AsyncMock(side_effect=RuntimeError("unexpected")),
-    )
+    summary_mock = AsyncMock(side_effect=RuntimeError("unexpected"))
+    mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
 
     lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    lifecycle.enqueue_message_email(Message("J", "+15551110000", "m", "Test Dental"))
     await lifecycle.on_call_ended()
 
+    summary_mock.assert_called_once()
     deliver_call_end_mock.assert_called_once()
     assert deliver_call_end_mock.call_args.kwargs["ai_summary"] is None
 

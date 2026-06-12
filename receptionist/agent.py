@@ -1035,6 +1035,11 @@ class Receptionist(Agent):
         self._intake_case_type: str | None = None
         self._intake_language: str = "en"
         self._intake_started_at: str | None = None
+        # Info-packet destination gate (mirrors the _offered_slot_batches
+        # check-before-book pattern): send_info_packet refuses to send until
+        # the model has been handed this exact address to read back and the
+        # caller confirmed it. Holds the lowercased pending address.
+        self._pending_packet_destination: str | None = None
 
     def _get_calendar_client(self):
         """Lazily construct and cache the Google Calendar client for this call."""
@@ -1470,8 +1475,12 @@ class Receptionist(Agent):
         channel: str = "email",
         destination: str = "",
         consent_confirmed: bool = False,
+        destination_confirmed: bool = False,
     ) -> str:
-        """Send a configured information packet after caller consent."""
+        """Send a configured information packet after caller consent. The
+        first call with a destination returns a read-back instruction; the
+        send happens only when called again with destination_confirmed=true
+        and the same address."""
         packets_cfg = self.config.info_packets
         if packets_cfg is None or not packets_cfg.enabled:
             return (
@@ -1502,6 +1511,17 @@ class Receptionist(Agent):
             return (
                 "Information packet email is not configured. Tell the caller "
                 "the office will follow up."
+            )
+        normalized = destination.lower()
+        if not destination_confirmed or normalized != self._pending_packet_destination:
+            self._pending_packet_destination = normalized
+            return (
+                "Do not send yet. Read this email address back to the caller "
+                f"letter by letter exactly as written: {destination}. After the "
+                "caller explicitly confirms it is correct, call send_info_packet "
+                "again with the same destination and destination_confirmed=true. "
+                "If the caller corrects the address, call again with the "
+                "corrected address."
             )
         try:
             await send_info_packet_email(
@@ -1537,6 +1557,10 @@ class Receptionist(Agent):
             channel="email",
             destination=destination,
         )
+        # Clear the gate so a stale confirmation can't trigger an accidental
+        # duplicate send. (On transport failure above it stays set, so a
+        # retry with the same confirmed address still works.)
+        self._pending_packet_destination = None
         return f"Information packet sent to {destination}."
 
     @function_tool()

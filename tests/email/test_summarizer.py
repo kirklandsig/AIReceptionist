@@ -71,6 +71,7 @@ async def test_summary_omits_reasoning_effort_when_none(monkeypatch):
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_summary_skips_without_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = await generate_call_summary(
@@ -81,6 +82,7 @@ async def test_summary_skips_without_api_key(monkeypatch):
 
 
 @pytest.mark.asyncio
+@respx.mock
 async def test_summary_disabled_returns_none(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     result = await generate_call_summary(
@@ -142,6 +144,7 @@ async def test_summary_truncates_transcript_to_last_chars(monkeypatch):
     body = json.loads(route.calls[0].request.content)
     transcript_part = body["messages"][1]["content"].split("TRANSCRIPT:\n", 1)[1]
     assert len(transcript_part) <= 1000
+    assert transcript_part.endswith("x" * 50)
 
 
 @pytest.mark.asyncio
@@ -165,3 +168,46 @@ async def test_summary_includes_intake_and_message_facts(monkeypatch):
     assert "partial" in content
     assert "Jane Doe" in content
     assert "Call me back" in content
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_summary_returns_none_on_non_string_content(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    respx.post(_API_URL).mock(return_value=httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": [{"type": "text", "text": "hi"}]}}]},
+    ))
+    result = await generate_call_summary(
+        segments=_segments(), metadata=_metadata(), submission=None,
+        captured_messages=[], config=_config(),
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("content", [None, "", "   "])
+@respx.mock
+async def test_summary_returns_none_on_empty_content(monkeypatch, content):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    respx.post(_API_URL).mock(return_value=httpx.Response(
+        200, json={"choices": [{"message": {"content": content}}]},
+    ))
+    result = await generate_call_summary(
+        segments=_segments(), metadata=_metadata(), submission=None,
+        captured_messages=[], config=_config(),
+    )
+    assert result is None
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_summary_applies_configured_timeout(monkeypatch, mocker):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    respx.post(_API_URL).mock(return_value=_ok_response())
+    spy = mocker.patch.object(httpx, "AsyncClient", wraps=httpx.AsyncClient)
+    await generate_call_summary(
+        segments=[], metadata=_metadata(), submission=None,
+        captured_messages=[], config=_config(timeout_seconds=7.5),
+    )
+    assert spy.call_args.kwargs["timeout"] == 7.5

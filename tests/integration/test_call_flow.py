@@ -92,6 +92,10 @@ async def test_call_end_writes_transcript_and_fires_call_end_email(tmp_path, v2_
 
     smtp_send = AsyncMock()
     mocker.patch("receptionist.email.smtp.SMTPSender.send", smtp_send)
+    mocker.patch(
+        "receptionist.lifecycle.generate_call_summary",
+        AsyncMock(return_value="Test summary."),
+    )
 
     lifecycle = CallLifecycle(config=config, call_id="room-xyz", caller_phone="+15551112222")
     lifecycle.record_faq_answered("hours")  # simulate a tool invocation
@@ -109,10 +113,12 @@ async def test_call_end_writes_transcript_and_fires_call_end_email(tmp_path, v2_
     assert lifecycle.metadata.outcomes == {"hung_up"}  # no transfer or message event
     assert lifecycle.metadata.faqs_answered == ["hours"]
 
-    # Call-end email sent
+    # Exactly ONE consolidated call-end email sent
     smtp_send.assert_called_once()
     kwargs = smtp_send.call_args.kwargs
+    assert kwargs["subject"].startswith("Call from")
     assert "hung_up" in kwargs["subject"].lower() or "Hung up" in kwargs["subject"]
+    assert "Test summary." in kwargs["body_text"]
 
 
 @pytest.mark.asyncio
@@ -120,6 +126,10 @@ async def test_call_end_email_includes_transcript_path(tmp_path, v2_yaml, mocker
     config = _full_config(tmp_path, v2_yaml)
     smtp_send = AsyncMock()
     mocker.patch("receptionist.email.smtp.SMTPSender.send", smtp_send)
+    mocker.patch(
+        "receptionist.lifecycle.generate_call_summary",
+        AsyncMock(return_value="Test summary."),
+    )
 
     lifecycle = CallLifecycle(config=config, call_id="room-xyz", caller_phone=None)
     await lifecycle.on_call_ended()

@@ -5,6 +5,7 @@ import logging
 from typing import Any
 
 from receptionist.config import BusinessConfig
+from receptionist.email.summarizer import generate_call_summary
 from receptionist.intakes.models import IntakeSubmission
 from receptionist.messaging.models import DispatchContext, Message
 from receptionist.recording.egress import (
@@ -356,14 +357,19 @@ class CallLifecycle:
                     },
                 )
 
-        # Fan out email triggers
+        # Fan out email triggers.
+        # Consolidated mode (triggers.on_call_end=True): exactly ONE email per
+        # call — the call-end email absorbs pending message(s), the pending
+        # intake submission, and booking details, so the separate per-trigger
+        # emails are suppressed. Legacy mode (on_call_end=False) preserves the
+        # original separate emails so tenants without call-end summaries
+        # still receive their data.
         if self.config.email:
             captured_messages = list(self._pending_message_emails)
-            # Deferred message emails go first: they're a per-take_message
-            # invocation, and we want them paired with the same transcript
-            # context the call-end and booking emails get.
+            consolidate = self.config.email.triggers.on_call_end
             if (
-                self.config.email.triggers.on_message
+                not consolidate
+                and self.config.email.triggers.on_message
                 and self._pending_message_emails
                 and self._email_channels
             ):
@@ -389,38 +395,59 @@ class CallLifecycle:
                                     "component": "lifecycle.message_email",
                                 },
                             )
-            # Always clear the pending queue once finalization runs, even if
-            # email is disabled or channels are missing — the lifecycle is
-            # finalized exactly once, so a leftover queue can only mislead
-            # operators reading lifecycle state in tests/diagnostics.
+            # Always clear the pending queue once finalization runs (see
+            # original comment — leftover queues mislead diagnostics).
             self._pending_message_emails.clear()
-            if self.config.email.triggers.on_call_end:
-                await self._fire_email_trigger(
-                    "call_end",
-                    lambda ch, ctx: ch.deliver_call_end(
-                        self.metadata, ctx, captured_messages=captured_messages,
-                    ),
-                    artifact, transcript_result,
-                )
-            if self.config.email.triggers.on_booking and self.metadata.appointment_booked:
-                await self._fire_email_trigger(
-                    "booking", lambda ch, ctx: ch.deliver_booking(self.metadata, ctx),
-                    artifact, transcript_result,
-                )
-            # Intake email: fires whenever there's a pending submission. We
-            # do NOT gate it behind a trigger flag because the intake tool
-            # was explicitly invoked by the caller path — the existence of
-            # a pending submission IS the trigger.
-            if self._pending_intake_submission is not None:
+            if consolidate:
+                ai_summary: str | None = None
+                if self._email_channels and self.config.email.summary.enabled:
+                    try:
+                        ai_summary = await generate_call_summary(
+                            segments=segments,
+                            metadata=self.metadata,
+                            submission=self._pending_intake_submission,
+                            captured_messages=captured_messages,
+                            config=self.config.email.summary,
+                        )
+                    except Exception:
+                        # Belt and braces: the summarizer is contract-bound to
+                        # never raise, but a summary must never block the email.
+                        logger.exception(
+                            "call summary generation failed; sending email without it",
+                            extra={
+                                "call_id": self.metadata.call_id,
+                                "component": "email.summary",
+                            },
+                        )
                 submission = self._pending_intake_submission
                 display = self._intake_case_type_display
                 await self._fire_email_trigger(
-                    "intake",
-                    lambda ch, ctx: ch.deliver_intake(
-                        submission, ctx, case_type_display=display,
+                    "call_end",
+                    lambda ch, ctx: ch.deliver_call_end(
+                        self.metadata, ctx,
+                        captured_messages=captured_messages,
+                        intake_submission=submission,
+                        case_type_display=display,
+                        ai_summary=ai_summary,
                     ),
                     artifact, transcript_result,
                 )
+            else:
+                if self.config.email.triggers.on_booking and self.metadata.appointment_booked:
+                    await self._fire_email_trigger(
+                        "booking", lambda ch, ctx: ch.deliver_booking(self.metadata, ctx),
+                        artifact, transcript_result,
+                    )
+                if self._pending_intake_submission is not None:
+                    submission = self._pending_intake_submission
+                    display = self._intake_case_type_display
+                    await self._fire_email_trigger(
+                        "intake",
+                        lambda ch, ctx: ch.deliver_intake(
+                            submission, ctx, case_type_display=display,
+                        ),
+                        artifact, transcript_result,
+                    )
         # Always clear the pending intake reference once finalization runs,
         # whether or not we had an email config to send through. The
         # structured JSON file on disk is the durable copy; the email is

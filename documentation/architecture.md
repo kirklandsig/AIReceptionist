@@ -117,8 +117,9 @@ receptionist/
    - `metadata.mark_finalized()` (sets end_ts, duration, outcome="hung_up" if none)
    - If recording: `stop_recording(handle)` returns artifact URL (local path or s3://)
    - If transcripts: `write_transcript_files(...)` writes JSON + Markdown
-   - If a message or intake email was queued during the call, deliver those deferred emails with the final transcript context. Intake emails may be final or partial, depending on whether `finalize_intake` ran.
-   - If `email.triggers.on_call_end`: `EmailChannel.deliver_call_end(metadata, context, captured_messages=...)` for each configured email channel. The lifecycle copies pending `take_message` entries before clearing the queue so the call summary email can render them above recording/transcript details. Packet send records from `CallMetadata.info_packet_sends` are rendered in the same call-end summary.
+   - Email fan-out runs in one of two modes, selected by `email.triggers.on_call_end`:
+     - **Consolidated mode** (`on_call_end: true`): exactly **one** staff email per call. If `email.summary.enabled`, the lifecycle first calls `generate_call_summary(...)` (OpenAI chat completion over the captured transcript + call facts; never raises — any failure logs under `component=email.summary` and the email sends without a summary). It then fires `EmailChannel.deliver_call_end(metadata, context, captured_messages=..., intake_submission=..., case_type_display=..., ai_summary=...)` for each configured email channel. The single email absorbs everything: pending `take_message` entries, the pending intake submission (final or partial), booking details, packet send records, DTMF events, the optional AI Summary section, and the transcript as a `.txt` attachment. The separate message/intake/booking emails are suppressed.
+     - **Legacy mode** (`on_call_end: false`): the original separate emails fire — deferred message email(s) (when `triggers.on_message`), a booking email (when `triggers.on_booking` and an appointment was booked), and an intake email (whenever a pending submission exists). No AI summary is generated in this mode.
 4. The LiveKit RTC job keeps the event loop alive until the room closes; close-time artifact work runs from the scheduled task
 
 ## Key design decisions

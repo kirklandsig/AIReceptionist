@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- When `email.triggers.on_call_end` is enabled, each call now produces exactly
+  ONE staff email: the call-end email absorbs message, intake, and booking
+  content (plus the optional AI Summary section), and the separate per-trigger
+  emails are suppressed. When `on_call_end` is disabled, the separate message,
+  intake, and booking emails still fire exactly as before.
 - Call transcripts are now attached to notification emails as `.txt` files
   (`transcript_<call_id>.txt`) instead of being embedded inline between
   `--- Transcript ---` markers. The email body shows the attachment filename

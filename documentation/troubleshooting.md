@@ -691,6 +691,27 @@ top-level `email:` config, or an SMTP/Resend transport failure.
 4. Check `agent.log` for `component=agent.info_packets` if the call-end summary
    shows `transport_failed`.
 
+### Call-end email has no Summary section
+
+**Symptom**: The consolidated call-end email arrives, but the `Summary:` section
+is missing.
+
+**Cause**: The AI summary is best-effort by design — any failure (missing API
+key, bad model slug, timeout, HTTP error) logs a warning and the email still
+sends without it. The summary is also only generated in consolidated mode
+(`email.triggers.on_call_end: true`).
+
+**Solution**:
+1. Verify `OPENAI_API_KEY` (or whatever env var `email.summary.api_key_env`
+   names) is set on the worker host — a "call summary skipped: env ... is not
+   set" warning means it isn't.
+2. Check `journalctl -u receptionist` (or `agent.log`) for lines with
+   `component=email.summary`. The warning includes the HTTP status: `401`
+   means a bad API key, `404` means a bad `email.summary.model` slug.
+3. Confirm `email.summary.enabled` is not set to `false` in the business YAML.
+4. If the warning says the request failed or timed out, the default timeout is
+   20 seconds — increase `email.summary.timeout_seconds`.
+
 ### Message files have wrong timestamps
 
 **Symptom**: Message file timestamps do not match the expected time.

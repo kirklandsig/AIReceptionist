@@ -332,6 +332,7 @@ async def test_on_call_ended_passes_pending_messages_to_call_end_email(v2_yaml, 
         ),
     })
     deliver_call_end = mocker.patch.object(EmailChannel, "deliver_call_end", autospec=True)
+    mocker.patch("receptionist.lifecycle.generate_call_summary", AsyncMock(return_value=None))
     lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone="+15551112222")
     msg = Message("Jane Doe", "+15551112222", "Please call me back.", config.business.name)
     lifecycle.enqueue_message_email(msg)
@@ -439,7 +440,11 @@ async def test_on_call_ended_is_idempotent(tmp_path, config, mocker):
     so emails fire while the asyncio executor is still healthy; the natural
     session-close handler later calls it again. The second invocation must
     be a no-op (no duplicate emails, no double transcript writes), or we'd
-    deliver two copies of every email to the operator."""
+    deliver two copies of every email to the operator.
+
+    With on_call_end=True the lifecycle runs in consolidated mode: the
+    separate message email is suppressed (the call-end email carries the
+    message), so `deliver` must never fire — only `deliver_call_end`, once."""
     from receptionist.config import (
         EmailChannel as EmailChannelConfig, EmailConfig, EmailTriggers,
         SMTPConfig, EmailSenderConfig, TranscriptsConfig, TranscriptStorageConfig,
@@ -473,13 +478,14 @@ async def test_on_call_ended_is_idempotent(tmp_path, config, mocker):
     deliver_call_end_mock = AsyncMock()
     mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
     mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    mocker.patch("receptionist.lifecycle.generate_call_summary", AsyncMock(return_value=None))
 
     lifecycle = CallLifecycle(config=config, call_id="room-x", caller_phone="+15551112222")
     lifecycle.enqueue_message_email(Message("Jane", "+15551112222", "msg", "Test Dental"))
 
-    # First call: full pipeline runs, message email + call-end email fire.
+    # First call: full pipeline runs, ONE consolidated call-end email fires.
     await lifecycle.on_call_ended()
-    assert deliver_mock.call_count == 1
+    assert deliver_mock.call_count == 0  # consolidated: no separate message email
     assert deliver_call_end_mock.call_count == 1
     transcripts_after_first = len(list(tmp_path.glob("*.md")))
     assert transcripts_after_first == 1
@@ -487,7 +493,7 @@ async def test_on_call_ended_is_idempotent(tmp_path, config, mocker):
     # Second call (e.g. from session-close handler after agent-initiated end):
     # must NOT fire emails or rewrite transcripts.
     await lifecycle.on_call_ended()
-    assert deliver_mock.call_count == 1, "duplicate message email after idempotent re-call"
+    assert deliver_mock.call_count == 0, "consolidated: no separate message email"
     assert deliver_call_end_mock.call_count == 1, "duplicate call-end email after idempotent re-call"
     assert len(list(tmp_path.glob("*.md"))) == transcripts_after_first, \
         "transcript file count changed after idempotent re-call"
@@ -603,8 +609,209 @@ async def test_lifecycle_message_queue_does_not_fire_when_on_message_disabled(
 
     deliver_mock = AsyncMock()
     mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+    # on_call_end=True puts this config in consolidated mode; stub out the
+    # consolidated email + summarizer so no SMTP/HTTP is attempted.
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", AsyncMock())
+    mocker.patch("receptionist.lifecycle.generate_call_summary", AsyncMock(return_value=None))
 
     lifecycle = CallLifecycle(config=config, call_id="r", caller_phone=None)
     lifecycle.enqueue_message_email(Message("Jane", "+1", "msg", "Test Dental"))
     await lifecycle.on_call_ended()
     deliver_mock.assert_not_called()
+
+
+def _consolidated_config(config, tmp_path):
+    from receptionist.config import (
+        EmailChannel as EmailChannelConfig, EmailConfig,
+        TranscriptsConfig, TranscriptStorageConfig,
+    )
+    return config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@acme.com"]),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            "triggers": {"on_message": True, "on_call_end": True, "on_booking": True},
+        }),
+        "transcripts": TranscriptsConfig(
+            enabled=True,
+            storage=TranscriptStorageConfig(type="local", path=str(tmp_path)),
+            formats=["json", "markdown"],
+        ),
+    })
+
+
+@pytest.mark.asyncio
+async def test_consolidation_suppresses_separate_message_email(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.messaging.models import Message
+
+    cfg = _consolidated_config(config, tmp_path)
+    deliver_mock = AsyncMock()
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    mocker.patch("receptionist.lifecycle.generate_call_summary", AsyncMock(return_value=None))
+
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone="+15551112222")
+    msg = Message("Jane", "+15551112222", "msg", "Test Dental")
+    lifecycle.enqueue_message_email(msg)
+    await lifecycle.on_call_ended()
+
+    deliver_mock.assert_not_called()
+    deliver_call_end_mock.assert_called_once()
+    assert deliver_call_end_mock.call_args.kwargs["captured_messages"] == [msg]
+
+
+@pytest.mark.asyncio
+async def test_consolidation_suppresses_separate_intake_email(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.intakes.models import IntakeAnswer, IntakeSubmission
+
+    cfg = _consolidated_config(config, tmp_path)
+    deliver_intake_mock = AsyncMock()
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver_intake", deliver_intake_mock)
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    mocker.patch("receptionist.lifecycle.generate_call_summary", AsyncMock(return_value=None))
+
+    submission = IntakeSubmission(
+        case_type="workers_comp", business_name="Test Dental", call_id="room-x",
+        caller_name="Jane", callback_number="+13475550000",
+        answers=[IntakeAnswer(question_key="k", prompt="P?", spoken_text="A")],
+        status="final",
+    )
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone="+15551112222")
+    lifecycle.enqueue_intake_submission(submission, case_type_display="Workers' Comp")
+    await lifecycle.on_call_ended()
+
+    deliver_intake_mock.assert_not_called()
+    kwargs = deliver_call_end_mock.call_args.kwargs
+    assert kwargs["intake_submission"] is submission
+    assert kwargs["case_type_display"] == "Workers' Comp"
+    assert lifecycle._pending_intake_submission is None
+
+
+@pytest.mark.asyncio
+async def test_consolidation_suppresses_separate_booking_email(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    cfg = _consolidated_config(config, tmp_path)
+    deliver_booking_mock = AsyncMock()
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver_booking", deliver_booking_mock)
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    mocker.patch("receptionist.lifecycle.generate_call_summary", AsyncMock(return_value=None))
+
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    lifecycle.record_appointment_booked({
+        "event_id": "e", "start_iso": "2026-06-12T10:00:00-04:00",
+        "end_iso": "2026-06-12T10:30:00-04:00", "html_link": "https://cal",
+    })
+    await lifecycle.on_call_ended()
+
+    deliver_booking_mock.assert_not_called()
+    deliver_call_end_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_consolidation_passes_ai_summary(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    cfg = _consolidated_config(config, tmp_path)
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    summary_mock = AsyncMock(return_value="Caller asked about hours.")
+    mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
+
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    await lifecycle.on_call_ended()
+
+    summary_mock.assert_called_once()
+    assert deliver_call_end_mock.call_args.kwargs["ai_summary"] == "Caller asked about hours."
+
+
+@pytest.mark.asyncio
+async def test_consolidation_summary_failure_still_sends_email(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    cfg = _consolidated_config(config, tmp_path)
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    mocker.patch(
+        "receptionist.lifecycle.generate_call_summary",
+        AsyncMock(side_effect=RuntimeError("unexpected")),
+    )
+
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    await lifecycle.on_call_ended()
+
+    deliver_call_end_mock.assert_called_once()
+    assert deliver_call_end_mock.call_args.kwargs["ai_summary"] is None
+
+
+@pytest.mark.asyncio
+async def test_no_summary_generated_when_disabled(tmp_path, config, mocker):
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+
+    cfg = _consolidated_config(config, tmp_path)
+    cfg = cfg.model_copy(update={
+        "email": cfg.email.model_copy(update={
+            "summary": cfg.email.summary.model_copy(update={"enabled": False}),
+        }),
+    })
+    deliver_call_end_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver_call_end", deliver_call_end_mock)
+    summary_mock = AsyncMock(return_value="should not be called")
+    mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
+
+    lifecycle = CallLifecycle(config=cfg, call_id="room-x", caller_phone=None)
+    await lifecycle.on_call_ended()
+
+    summary_mock.assert_not_called()
+    assert deliver_call_end_mock.call_args.kwargs["ai_summary"] is None
+
+
+@pytest.mark.asyncio
+async def test_legacy_path_unchanged_when_on_call_end_false(tmp_path, config, mocker):
+    """on_call_end=False keeps the separate message email (existing tenants)."""
+    # This is already covered by test_lifecycle_queues_message_email_and_fires_at_call_end;
+    # add a summarizer assertion: it must NOT be called on the legacy path.
+    from receptionist.messaging.channels.email import EmailChannel as RuntimeEmailChannel
+    from receptionist.config import EmailChannel as EmailChannelConfig, EmailConfig
+    from receptionist.messaging.models import Message
+
+    cfg = config.model_copy(update={
+        "messages": config.messages.model_copy(update={
+            "channels": [
+                *config.messages.channels,
+                EmailChannelConfig(type="email", to=["owner@acme.com"]),
+            ],
+        }),
+        "email": EmailConfig.model_validate({
+            "from": "ai@example.com",
+            "sender": {
+                "type": "smtp",
+                "smtp": {"host": "h", "port": 587, "username": "u", "password": "p", "use_tls": True},
+            },
+            "triggers": {"on_message": True, "on_call_end": False},
+        }),
+    })
+    deliver_mock = AsyncMock()
+    mocker.patch.object(RuntimeEmailChannel, "deliver", deliver_mock)
+    summary_mock = AsyncMock(return_value="nope")
+    mocker.patch("receptionist.lifecycle.generate_call_summary", summary_mock)
+
+    lifecycle = CallLifecycle(config=cfg, call_id="r", caller_phone=None)
+    lifecycle.enqueue_message_email(Message("J", "+1", "m", "Test Dental"))
+    await lifecycle.on_call_ended()
+
+    deliver_mock.assert_called_once()
+    summary_mock.assert_not_called()

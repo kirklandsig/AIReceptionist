@@ -37,12 +37,14 @@ class SMTPSender:
         for att in attachments:
             maintype, _, subtype = att.content_type.partition("/")
             subtype = subtype or "octet-stream"
-            msg.add_attachment(
-                att.content,
-                maintype=maintype or "application",
-                subtype=subtype,
-                filename=att.filename,
-            )
+            kwargs: dict = {
+                "maintype": maintype or "application",
+                "subtype": subtype,
+                "filename": att.filename,
+            }
+            if (maintype or "application") == "text":
+                kwargs["params"] = {"charset": "utf-8"}
+            msg.add_attachment(att.content, **kwargs)
 
         try:
             await aiosmtplib.send(

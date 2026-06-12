@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from receptionist.config import SMTPConfig
-from receptionist.email.sender import EmailSendError
+from receptionist.email.sender import EmailAttachment, EmailSendError
 from receptionist.email.smtp import SMTPSender
 
 
@@ -68,3 +68,25 @@ async def test_smtp_includes_body_html_when_provided():
         )
     msg = mock_send.call_args.args[0]
     assert msg.is_multipart()
+
+
+@pytest.mark.asyncio
+async def test_smtp_text_attachment_roundtrips_utf8(mocker):
+    send_mock = AsyncMock()
+    mocker.patch("aiosmtplib.send", send_mock)
+    sender = SMTPSender(SMTPConfig(host="h", port=587, username="u", password="p", use_tls=True))
+    await sender.send(
+        from_="a@x.com", to=["b@x.com"], subject="s",
+        body_text="t", body_html=None,
+        attachments=[EmailAttachment(
+            filename="t.txt",
+            content="• Caf\xe9 — “na\xefve” r\xe9sum\xe9".encode("utf-8"),
+            content_type="text/plain",
+        )],
+    )
+    msg = send_mock.call_args.args[0]
+    attachment_part = next(p for p in msg.iter_attachments())
+    assert attachment_part.get_content_type() == "text/plain"
+    assert attachment_part.get_content_charset() == "utf-8"
+    assert attachment_part.get_content() == "• Caf\xe9 — “na\xefve” r\xe9sum\xe9"
+    msg.as_bytes()

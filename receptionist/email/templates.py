@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import re
 
 from receptionist.config import InfoPacket
 from receptionist.messaging.models import Message, DispatchContext
@@ -22,6 +23,37 @@ _OUTCOME_LABELS = {
 
 def _subject_safe(value: str | None) -> str:
     return " ".join((value or "").replace("\r", " ").replace("\n", " ").replace("\x00", " ").split())
+
+
+_NON_DIGITS_RE = re.compile(r"\D+")
+
+
+def _pretty_phone(value: str | None) -> str:
+    """Format NANP (US/Canada) numbers as +1 (XXX) XXX-XXXX; else verbatim."""
+    if not value:
+        return "Unknown"
+    digits = _NON_DIGITS_RE.sub("", value)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) == 10:
+        return f"+1 ({digits[0:3]}) {digits[3:6]}-{digits[6:]}"
+    return value
+
+
+def _same_phone(a: str | None, b: str | None) -> bool:
+    """True when two phone strings refer to the same number (last 10 digits)."""
+    da = _NON_DIGITS_RE.sub("", a or "")
+    db = _NON_DIGITS_RE.sub("", b or "")
+    if not da or not db:
+        return False
+    return da[-10:] == db[-10:]
+
+
+def transcript_filename(call_id: str | None) -> str:
+    """Attachment filename for the transcript .txt — mirrors the on-disk
+    sanitization in transcript/writer.py so the names correlate."""
+    safe = re.sub(r"[^a-zA-Z0-9_-]+", "-", call_id or "unknown")
+    return f"transcript_{safe}.txt"
 
 
 def _outcomes_display(

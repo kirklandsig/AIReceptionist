@@ -570,7 +570,7 @@ def test_consolidated_summary_section_above_intake_answers():
     assert body_text.index("Summary:") < body_text.index("What happened?")
     assert "Fell off a ladder" in body_text
     assert "New client intake completed." in body_html
-    assert body_html.index("Summary") < body_html.index("What happened?")
+    assert body_html.index("<h3>Summary</h3>") < body_html.index("What happened?")
 
 
 def test_consolidated_email_without_summary_still_has_details():
@@ -632,3 +632,21 @@ def test_booking_email_uses_attachment_note():
     )
     assert "Transcript attached: transcript_room-1.txt" in body_text
     assert "Call transcript:" not in body_text
+
+
+def test_consolidated_email_bare_call_renders_single_html_table():
+    _, _, body_html = build_call_end_email(_metadata(), DispatchContext())
+    assert body_html.count("<table") == 1
+
+
+def test_consolidated_email_escapes_malicious_intake_fields():
+    sub = _submission()
+    sub.caller_name = "<script>alert(1)</script>"
+    sub.english_overview = "<img src=x onerror=alert(1)>"
+    _, _, body_html = build_call_end_email(
+        _metadata(), DispatchContext(), intake_submission=sub,
+        ai_summary="<b>bold</b> summary",
+    )
+    assert "<script>" not in body_html
+    assert "<img src=x" not in body_html
+    assert "<b>bold</b>" not in body_html

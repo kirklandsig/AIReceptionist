@@ -5,6 +5,7 @@ import html
 import re
 
 from receptionist.config import InfoPacket
+from receptionist.intakes.models import IntakeSubmission
 from receptionist.messaging.models import Message, DispatchContext
 from receptionist.transcript.metadata import CallMetadata
 
@@ -78,7 +79,9 @@ def _outcomes_display(
     return " + ".join(labels)
 
 
-def _caller_display_name(submission, captured_messages) -> str | None:
+def _caller_display_name(
+    submission: IntakeSubmission | None, captured_messages: list[Message],
+) -> str | None:
     if submission is not None and submission.caller_name.strip():
         return submission.caller_name.strip()
     for msg in captured_messages:
@@ -87,7 +90,11 @@ def _caller_display_name(submission, captured_messages) -> str | None:
     return None
 
 
-def _distinct_callback_number(metadata, submission, captured_messages) -> str | None:
+def _distinct_callback_number(
+    metadata: CallMetadata,
+    submission: IntakeSubmission | None,
+    captured_messages: list[Message],
+) -> str | None:
     candidates: list[str] = []
     if submission is not None:
         candidates.append(submission.callback_number)
@@ -99,7 +106,12 @@ def _distinct_callback_number(metadata, submission, captured_messages) -> str | 
     return None
 
 
-def _call_context_label(metadata, submission, case_type_display, captured_messages) -> str:
+def _call_context_label(
+    metadata: CallMetadata,
+    submission: IntakeSubmission | None,
+    case_type_display: str | None,
+    captured_messages: list[Message],
+) -> str:
     if submission is not None:
         label = case_type_display or submission.case_type
         marker = "" if submission.status == "final" else " [PARTIAL]"
@@ -109,7 +121,7 @@ def _call_context_label(metadata, submission, case_type_display, captured_messag
     return _outcomes_display(metadata.outcomes, transfer_target=metadata.transfer_target)
 
 
-def _intake_answers_text(submission) -> str:
+def _intake_answers_text(submission: IntakeSubmission) -> str:
     answer_lines: list[str] = []
     for ans in submission.answers:
         spoken = ans.spoken_text.strip() or "(no answer)"
@@ -125,7 +137,7 @@ def _intake_answers_text(submission) -> str:
     return "\n\n".join(answer_lines) if answer_lines else "  (no answers captured)"
 
 
-def _intake_answers_html_table(submission) -> str:
+def _intake_answers_html_table(submission: IntakeSubmission) -> str:
     def e(s: str | None) -> str:
         return html.escape(s or "", quote=True)
 
@@ -257,7 +269,7 @@ def build_call_end_email(
     context: DispatchContext,
     *,
     captured_messages: list[Message] | tuple[Message, ...] | None = None,
-    intake_submission=None,
+    intake_submission: IntakeSubmission | None = None,
     case_type_display: str | None = None,
     ai_summary: str | None = None,
     include_transcript: bool = True,
@@ -272,6 +284,11 @@ def build_call_end_email(
     context_label = _call_context_label(
         metadata, intake_submission, case_type_display, captured_messages,
     )
+    intake_label: str | None = None
+    intake_marker = ""
+    if intake_submission is not None:
+        intake_label = case_type_display or intake_submission.case_type
+        intake_marker = "" if intake_submission.status == "final" else " [PARTIAL]"
     name_part = f" ({_subject_safe(caller_name)})" if caller_name else ""
     subject = (
         f"Call from {_subject_safe(caller_pretty)}{name_part} — "
@@ -301,17 +318,24 @@ def build_call_end_email(
     if ai_summary:
         body_text += f"\nSummary:\n{ai_summary}\n"
     if intake_submission is not None:
-        label = case_type_display or intake_submission.case_type
-        marker = "" if intake_submission.status == "final" else " [PARTIAL]"
         body_text += (
-            f"\nIntake{marker}: {label}\n"
+            f"\nIntake{intake_marker}: {intake_label}\n"
             f"Intake caller: {intake_submission.caller_name}\n"
-            f"Intake callback: {intake_submission.callback_number}\n"
+            f"Intake callback: {_pretty_phone(intake_submission.callback_number)}\n"
             f"Language: {intake_submission.language}\n"
         )
         if intake_submission.english_overview:
             body_text += f"Overview:\n  {intake_submission.english_overview}\n"
         body_text += f"Answers:\n{_intake_answers_text(intake_submission)}\n"
+    # Blank line between a Summary/Intake block and the details run below.
+    if (ai_summary or intake_submission is not None) and (
+        metadata.appointment_details
+        or metadata.faqs_answered
+        or metadata.languages_detected
+        or metadata.info_packet_sends
+        or metadata.dtmf_events
+    ):
+        body_text += "\n"
     if metadata.appointment_details:
         body_text += (
             f"Appointment: {metadata.appointment_details.get('start_iso', '?')}\n"
@@ -393,15 +417,18 @@ def build_call_end_email(
         body_html += f"<h3>Summary</h3><p>{e(ai_summary)}</p>"
     if intake_submission is not None:
         body_html += (
-            f"<h3>Intake{marker} — {e(label)}</h3>"
+            f"<h3>Intake{intake_marker} — {e(intake_label)}</h3>"
             f"<table cellpadding='4'>"
             f"<tr><td><strong>Intake caller</strong></td><td>{e(intake_submission.caller_name)}</td></tr>"
-            f"<tr><td><strong>Intake callback</strong></td><td>{e(intake_submission.callback_number)}</td></tr>"
+            f"<tr><td><strong>Intake callback</strong></td><td>{e(_pretty_phone(intake_submission.callback_number))}</td></tr>"
             f"<tr><td><strong>Language</strong></td><td>{e(intake_submission.language)}</td></tr>"
             f"</table>"
         )
         if intake_submission.english_overview:
-            body_html += f"<blockquote>{e(intake_submission.english_overview)}</blockquote>"
+            body_html += (
+                f"<p><strong>Overview</strong></p>"
+                f"<blockquote>{e(intake_submission.english_overview)}</blockquote>"
+            )
         body_html += _intake_answers_html_table(intake_submission)
     details_rows = ""
     if metadata.appointment_details:
@@ -592,7 +619,7 @@ def _format_duration(seconds: float | None) -> str:
 
 
 def build_intake_email(
-    submission,
+    submission: IntakeSubmission,
     context: DispatchContext,
     *,
     case_type_display: str | None = None,

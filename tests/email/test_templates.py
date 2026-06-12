@@ -495,3 +495,140 @@ def test_transcript_filename_sanitizes_call_id():
     assert transcript_filename("room-1") == "transcript_room-1.txt"
     assert transcript_filename("licomplaw-_+1631@x") == "transcript_licomplaw-_-1631-x.txt"
     assert transcript_filename(None) == "transcript_unknown.txt"
+
+
+from receptionist.intakes.models import IntakeAnswer, IntakeSubmission
+
+
+def _submission(status: str = "final") -> IntakeSubmission:
+    return IntakeSubmission(
+        case_type="workers_comp", business_name="Acme Dental", call_id="room-1",
+        caller_name="Maria Lopez", callback_number="+13475550000",
+        answers=[IntakeAnswer(
+            question_key="injury", prompt="What happened?",
+            spoken_text="Fell off a ladder", english_summary="Fell off a ladder",
+        )],
+        english_overview="Caller fell off a ladder at work.",
+        status=status,
+    )
+
+
+def test_consolidated_subject_leads_with_pretty_phone_and_name():
+    subject, _, _ = build_call_end_email(
+        _metadata(), DispatchContext(),
+        intake_submission=_submission(), case_type_display="Workers' Compensation",
+    )
+    assert subject.startswith("Call from +1 (555) 111-2222 (Maria Lopez)")
+    assert "Intake: Workers' Compensation" in subject
+    assert "[Acme Dental]" in subject
+
+
+def test_consolidated_subject_marks_partial_intake():
+    subject, _, _ = build_call_end_email(
+        _metadata(), DispatchContext(),
+        intake_submission=_submission(status="partial"),
+        case_type_display="Workers' Compensation",
+    )
+    assert "Intake [PARTIAL]: Workers' Compensation" in subject
+
+
+def test_consolidated_subject_message_taken_context():
+    subject, _, _ = build_call_end_email(
+        _metadata(), DispatchContext(), captured_messages=[_message()],
+    )
+    assert subject.startswith("Call from +1 (555) 111-2222 (Jane Doe)")
+    assert "Message taken" in subject
+
+
+def test_consolidated_header_caller_first_with_distinct_callback():
+    _, body_text, body_html = build_call_end_email(
+        _metadata(), DispatchContext(), intake_submission=_submission(),
+    )
+    assert body_text.startswith("Caller: +1 (555) 111-2222")
+    assert "Caller name: Maria Lopez" in body_text
+    assert "Callback number (different from calling number): +1 (347) 555-0000" in body_text
+    assert "Call from +1 (555) 111-2222" in body_html
+    assert "+1 (347) 555-0000" in body_html
+
+
+def test_consolidated_header_hides_callback_when_same_number():
+    sub = _submission()
+    sub.callback_number = "+15551112222"  # same as metadata.caller_phone
+    _, body_text, _ = build_call_end_email(
+        _metadata(), DispatchContext(), intake_submission=sub,
+    )
+    assert "Callback number" not in body_text
+
+
+def test_consolidated_summary_section_above_intake_answers():
+    _, body_text, body_html = build_call_end_email(
+        _metadata(), DispatchContext(),
+        intake_submission=_submission(), ai_summary="New client intake completed.",
+    )
+    assert "Summary:" in body_text
+    assert "New client intake completed." in body_text
+    assert body_text.index("Summary:") < body_text.index("What happened?")
+    assert "Fell off a ladder" in body_text
+    assert "New client intake completed." in body_html
+    assert body_html.index("Summary") < body_html.index("What happened?")
+
+
+def test_consolidated_email_without_summary_still_has_details():
+    _, body_text, _ = build_call_end_email(
+        _metadata(), DispatchContext(), intake_submission=_submission(), ai_summary=None,
+    )
+    assert "Summary:" not in body_text
+    assert "What happened?" in body_text
+
+
+def test_consolidated_intake_includes_overview_and_status():
+    _, body_text, _ = build_call_end_email(
+        _metadata(), DispatchContext(),
+        intake_submission=_submission(status="partial"),
+        case_type_display="Workers' Compensation",
+    )
+    assert "Intake [PARTIAL]: Workers' Compensation" in body_text
+    assert "Caller fell off a ladder at work." in body_text
+
+
+def test_intake_email_still_renders_answers_after_refactor():
+    """build_intake_email shares the answers helpers; verify no regression."""
+    from receptionist.email.templates import build_intake_email
+    subject, body_text, body_html = build_intake_email(
+        _submission(), DispatchContext(), case_type_display="Workers' Compensation",
+    )
+    assert "What happened?" in body_text
+    assert "Fell off a ladder" in body_text
+    assert "What happened?" in body_html
+
+
+def test_same_phone_seven_digit_local_never_hides_callback():
+    from receptionist.email.templates import _same_phone
+    assert _same_phone("766-7104", "+16317667104") is False
+
+
+def test_same_phone_cross_country_collision_documented():
+    from receptionist.email.templates import _same_phone
+    assert _same_phone("+526317667104", "+16317667104") is True
+
+
+def test_call_end_email_reports_unavailable_when_not_attached():
+    _, body_text, body_html = build_call_end_email(
+        _metadata(),
+        DispatchContext(transcript_markdown_path="transcripts/room-1.md", call_id="room-1"),
+        transcript_attached=False,
+    )
+    assert "Transcript attached" not in body_text
+    assert "Transcript unavailable — see path: transcripts/room-1.md" in body_text
+    assert "Transcript unavailable" in body_html
+
+
+def test_booking_email_uses_attachment_note():
+    from receptionist.email.templates import build_booking_email
+    md = _metadata()
+    md.appointment_details = {"start_iso": "2026-06-12T10:00:00-04:00", "end_iso": "2026-06-12T10:30:00-04:00", "html_link": "https://cal"}
+    _, body_text, _ = build_booking_email(
+        md, DispatchContext(transcript_markdown_path="transcripts/room-1.md", call_id="room-1"),
+    )
+    assert "Transcript attached: transcript_room-1.txt" in body_text
+    assert "Call transcript:" not in body_text

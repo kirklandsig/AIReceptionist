@@ -131,8 +131,8 @@ faqs:
 
 # Message delivery: each entry in `channels` is independent. File channel
 # fires synchronously so the take_message tool can confirm "saved" to the
-# caller. Email channel is deferred to call-end so the email body embeds
-# the full transcript.
+# caller. Email channel is deferred to call-end so the full transcript can
+# be attached as a .txt file.
 messages:
   channels:
     - type: "file"
@@ -721,8 +721,8 @@ recorded under `.failures/` for later replay.
 The `take_message` tool deliberately skips the email channel mid-call (it
 passes `skip_email_channel=True` to the dispatcher). The lifecycle queues
 the email and fires it at call-end with the freshly-written transcript path,
-so the email body can embed the full conversation. File and webhook channels
-still fire mid-call.
+so the full conversation can be attached to the email. File and webhook
+channels still fire mid-call.
 
 When `email.triggers.on_call_end` is also enabled, the call summary email
 receives the same pending `take_message` entries before the queue is cleared
@@ -754,7 +754,7 @@ File naming: `message_YYYYMMDD_HHMMSS_ffffff.json`. The JSON shape:
 |-------|------|----------|---------|-------------|
 | `type` | const `"email"` | Yes | — | Discriminator. |
 | `to` | list[string] | Yes | — | One or more recipient addresses. |
-| `include_transcript` | bool | No | `true` | When true and a markdown transcript exists, the full conversation is embedded at the bottom of every email this channel sends (message email + call-end email + booking email). |
+| `include_transcript` | bool | No | `true` | When true and a markdown transcript exists, the transcript is attached as `transcript_<call_id>.txt` to every email this channel sends (message email + call-end email + booking email + intake email). The email body shows the attachment filename and the on-disk transcript path instead of embedding the conversation inline. |
 | `include_recording_link` | bool | No | `true` | When true and the call has a recording artifact, the recording URL/path is rendered. Set false for tenants who don't want bucket links in mail. |
 
 The email channel also requires the top-level `email:` block, which holds the
@@ -792,7 +792,7 @@ your config has no email channels and no email triggers.
 | `sender.smtp.use_tls` | bool | No | `true` | STARTTLS on; set false only for self-hosted relays you control. |
 | `sender.resend` | object | Conditional | — | Required when `sender.type=resend`. |
 | `sender.resend.api_key` | string | Yes | — | Resend API key, typically `${VAR}` interpolated. |
-| `triggers.on_message` | bool | No | `true` | Fire an email per `take_message` invocation (deferred to call-end so the transcript is embedded). |
+| `triggers.on_message` | bool | No | `true` | Fire an email per `take_message` invocation (deferred to call-end so the transcript can be attached). |
 | `triggers.on_call_end` | bool | No | `false` | Fire a call summary email at the end of every call. |
 | `triggers.on_booking` | bool | No | `false` | Fire an email when `book_appointment` succeeds (requires `calendar` configured). |
 | `summary` | object | No | see defaults | AI-generated call summary settings. See the [`email.summary`](#emailsummary) subsection below. |
@@ -905,7 +905,7 @@ Per-call JSON (source of truth) and Markdown (human-readable) transcripts.
 | `enabled` | bool | Yes | — | Master switch. |
 | `storage.type` | const `"local"` | Yes | — | Only local-disk storage today. |
 | `storage.path` | string | Yes | — | Directory both formats are written to. |
-| `formats` | list[enum] | No | `["json", "markdown"]` | Subset of `["json", "markdown"]`. The Markdown format is what the email template embeds. |
+| `formats` | list[enum] | No | `["json", "markdown"]` | Subset of `["json", "markdown"]`. The Markdown format is what the email channel attaches as `transcript_<call_id>.txt`. |
 
 ```yaml
 transcripts:

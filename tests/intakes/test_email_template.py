@@ -124,14 +124,16 @@ def test_intake_email_omits_transcript_when_disabled(tmp_path):
     assert "sensitive content" not in body_text
 
 
-def test_intake_email_embeds_transcript_when_enabled(tmp_path):
+def test_intake_email_notes_attachment_when_enabled(tmp_path):
     transcript = tmp_path / "transcript.md"
     transcript.write_text("**Agent:** Hi Jane.\n**Caller:** Hi.\n", encoding="utf-8")
     sub = _submission()
     _, body_text, _ = build_intake_email(
         sub,
-        DispatchContext(transcript_markdown_path=str(transcript)),
+        DispatchContext(transcript_markdown_path=str(transcript), call_id="room-1"),
         include_transcript=True,
     )
-    assert "Hi Jane." in body_text
-    assert "--- Transcript ---" in body_text
+    assert "Hi Jane." not in body_text
+    assert "--- Transcript ---" not in body_text
+    assert "Transcript attached: transcript_room-1.txt" in body_text
+    assert "Transcript path: " in body_text

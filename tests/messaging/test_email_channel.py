@@ -11,6 +11,7 @@ from receptionist.config import (
 )
 from receptionist.messaging.channels.email import EmailChannel
 from receptionist.messaging.models import Message, DispatchContext
+from receptionist.transcript.metadata import CallMetadata
 
 
 def _email_config_smtp() -> EmailConfig:
@@ -162,56 +163,58 @@ async def test_email_channel_deliver_booking_retries_on_transient(mocker):
 
 
 @pytest.mark.asyncio
-async def test_deliver_call_end_embeds_transcript_when_include_transcript_true(
-    mocker, tmp_path,
-):
-    """The YAML knob `include_transcript: true` must reach the template so the
-    actual transcript content lands in the email body, not just the path."""
+async def test_deliver_call_end_attaches_transcript_txt(tmp_path, mocker):
+    """The YAML knob `include_transcript: true` attaches the transcript as a
+    .txt file; the conversation content stays out of the email body."""
     transcript_md = tmp_path / "t.md"
-    transcript_md.write_text(
-        "**Agent:** hi\n**Caller:** I want to reschedule.\n",
-        encoding="utf-8",
-    )
-    cfg = EmailChannelConfig(
-        type="email", to=["owner@acme.com"], include_transcript=True,
-    )
-    email_cfg = _email_config_smtp()
+    transcript_md.write_text("**Agent:** secret transcript words\n", encoding="utf-8")
+    cfg = EmailChannelConfig(type="email", to=["owner@acme.com"], include_transcript=True)
     sender_send = AsyncMock()
     mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+    channel = EmailChannel(cfg, _email_config_smtp())
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md), call_id="room-1")
 
-    channel = EmailChannel(cfg, email_cfg)
-    md = _call_metadata_for_booking()
-    md.outcomes = {"hung_up"}
-    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
     await channel.deliver_call_end(md, ctx)
 
     kwargs = sender_send.call_args.kwargs
-    assert "I want to reschedule." in kwargs["body_text"]
-    assert "I want to reschedule." in kwargs["body_html"]
+    assert "secret transcript words" not in kwargs["body_text"]
+    atts = kwargs["attachments"]
+    assert len(atts) == 1
+    assert atts[0].filename == "transcript_room-1.txt"
+    assert b"secret transcript words" in atts[0].content
+    assert atts[0].content_type == "text/plain"
 
 
 @pytest.mark.asyncio
-async def test_deliver_call_end_suppresses_transcript_when_include_transcript_false(
-    mocker, tmp_path,
-):
+async def test_deliver_call_end_no_attachment_when_include_transcript_false(tmp_path, mocker):
     transcript_md = tmp_path / "t.md"
-    transcript_md.write_text("**Agent:** confidential\n", encoding="utf-8")
-    cfg = EmailChannelConfig(
-        type="email", to=["owner@acme.com"], include_transcript=False,
-    )
-    email_cfg = _email_config_smtp()
+    transcript_md.write_text("body\n", encoding="utf-8")
+    cfg = EmailChannelConfig(type="email", to=["owner@acme.com"], include_transcript=False)
     sender_send = AsyncMock()
     mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+    channel = EmailChannel(cfg, _email_config_smtp())
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md), call_id="room-1")
 
-    channel = EmailChannel(cfg, email_cfg)
-    md = _call_metadata_for_booking()
-    md.outcomes = {"hung_up"}
-    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
     await channel.deliver_call_end(md, ctx)
 
-    kwargs = sender_send.call_args.kwargs
-    assert "confidential" not in kwargs["body_text"]
-    assert "confidential" not in kwargs["body_html"]
+    assert sender_send.call_args.kwargs["attachments"] == []
+
+
+@pytest.mark.asyncio
+async def test_deliver_call_end_unreadable_transcript_still_sends(mocker):
+    cfg = EmailChannelConfig(type="email", to=["owner@acme.com"], include_transcript=True)
+    sender_send = AsyncMock()
+    mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+    channel = EmailChannel(cfg, _email_config_smtp())
+    md = CallMetadata(call_id="room-1", business_name="Acme")
+    ctx = DispatchContext(transcript_markdown_path="Z:/does/not/exist.md", call_id="room-1")
+
+    await channel.deliver_call_end(md, ctx)
+
+    sender_send.assert_called_once()
+    assert sender_send.call_args.kwargs["attachments"] == []
 
 
 @pytest.mark.asyncio
@@ -237,33 +240,23 @@ async def test_deliver_call_end_suppresses_recording_when_include_recording_link
 
 
 @pytest.mark.asyncio
-async def test_deliver_message_embeds_transcript_when_include_transcript_true(
-    mocker, tmp_path,
-):
+async def test_deliver_message_attaches_transcript_txt(tmp_path, mocker):
     """When a take_message email fires with a transcript path in context
-    (i.e. dispatched at call-end, not mid-call), the full transcript must
-    be embedded in the message email body."""
+    (i.e. dispatched at call-end, not mid-call), the transcript rides along
+    as a .txt attachment."""
     transcript_md = tmp_path / "t.md"
-    transcript_md.write_text(
-        "**Caller:** Please tell Alex I'll call back tomorrow.\n",
-        encoding="utf-8",
-    )
-    cfg = EmailChannelConfig(
-        type="email", to=["owner@acme.com"], include_transcript=True,
-    )
-    email_cfg = _email_config_smtp()
+    transcript_md.write_text("conversation\n", encoding="utf-8")
+    cfg = EmailChannelConfig(type="email", to=["owner@acme.com"], include_transcript=True)
     sender_send = AsyncMock()
     mocker.patch("receptionist.email.smtp.SMTPSender.send", sender_send)
+    channel = EmailChannel(cfg, _email_config_smtp())
+    msg = Message("Jane", "+15551112222", "Call me", "Acme")
+    ctx = DispatchContext(transcript_markdown_path=str(transcript_md), call_id="room-1")
 
-    channel = EmailChannel(cfg, email_cfg)
-    msg = Message("Jane", "+15551112222", "Call me back tomorrow", "Acme", "2026-04-23T14:30:00+00:00")
-    ctx = DispatchContext(transcript_markdown_path=str(transcript_md))
     await channel.deliver(msg, ctx)
 
-    kwargs = sender_send.call_args.kwargs
-    assert "Please tell Alex I'll call back tomorrow." in kwargs["body_text"]
-    assert "Please tell Alex I&#x27;ll call back tomorrow." in kwargs["body_html"] \
-        or "Please tell Alex I'll call back tomorrow." in kwargs["body_html"]
+    atts = sender_send.call_args.kwargs["attachments"]
+    assert len(atts) == 1 and atts[0].filename == "transcript_room-1.txt"
 
 
 @pytest.mark.asyncio
@@ -287,3 +280,4 @@ async def test_deliver_message_suppresses_transcript_when_include_transcript_fal
     kwargs = sender_send.call_args.kwargs
     assert "super private" not in kwargs["body_text"]
     assert "super private" not in kwargs["body_html"]
+    assert kwargs["attachments"] == []

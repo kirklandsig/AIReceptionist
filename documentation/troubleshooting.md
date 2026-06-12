@@ -711,6 +711,7 @@ sends without it. The summary is also only generated in consolidated mode
 3. Confirm `email.summary.enabled` is not set to `false` in the business YAML.
 4. If the warning says the request failed or timed out, the default timeout is
    20 seconds — increase `email.summary.timeout_seconds`.
+5. If call-end emails are missing entirely after a caller-initiated mid-call hangup (not just the Summary section), check `journalctl -u receptionist` for `Executor shutdown has been called` with `component=email.summary` or `component=lifecycle` — the summary `await` (up to 20 s wall-clock) widens the historical teardown race on the natural-disconnect path. See HANDOFF addendum 2026-06-12 for the structural follow-up (`ctx.add_shutdown_callback`).
 
 ### Message files have wrong timestamps
 

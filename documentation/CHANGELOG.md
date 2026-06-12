@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning and the email still sends without the attachment. Applies to
   message, call-end, booking, and intake emails when the channel's
   `include_transcript` is true.
+- AI summary generation is wall-clock capped by `email.summary.timeout_seconds`
+  (default 20 s): if the OpenAI chat-completion call exceeds this deadline or
+  fails for any reason, the Summary section is omitted and the email still sends.
 
 ### Added
 - AI-generated call summary in call-end emails (`email.summary` config block, default model gpt-5-mini).

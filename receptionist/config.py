@@ -707,6 +707,30 @@ class IntakeQuestion(BaseModel):
     six-three-one… is that right?") and waits for confirmation before
     moving on. Use for legal name, callback number, email, DOB."""
 
+    input: Literal["voice", "dtmf"] = "voice"
+    """How the caller provides this answer. "voice" (default) = spoken, the
+    existing behavior. "dtmf" = the caller types digits on their phone keypad
+    (use for phone numbers and SSNs — digit strings the Realtime model
+    mis-hears)."""
+
+    dtmf_length: int | None = None
+    """Optional expected digit count for input:dtmf questions. When set, the
+    keypad capture auto-completes at this length (no # needed); when None the
+    caller presses # to submit. E.g. 10 for a US phone, 9 for an SSN."""
+
+    @model_validator(mode="after")
+    def _validate_dtmf_fields(self) -> "IntakeQuestion":
+        if self.dtmf_length is not None:
+            if self.input != "dtmf":
+                raise ValueError(
+                    "intake question dtmf_length requires input: dtmf"
+                )
+            if self.dtmf_length <= 0:
+                raise ValueError(
+                    "intake question dtmf_length must be a positive integer"
+                )
+        return self
+
 
 class IntakeCaseType(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -792,6 +816,18 @@ class IntakesConfig(BaseModel):
                 raise ValueError(f"duplicate intake case type key {ct.key!r}")
             seen.add(ct.key)
         return self
+
+    def has_dtmf_questions(self) -> bool:
+        """True if any question across case types opts into keypad entry.
+
+        Drives auto-enablement of the sip_dtmf_received listener even when the
+        business has no dtmf menu block.
+        """
+        return any(
+            q.input == "dtmf"
+            for ct in self.case_types
+            for q in ct.questions
+        )
 
 
 # ---------------------------------------------------------------------------

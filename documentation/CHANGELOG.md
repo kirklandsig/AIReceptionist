@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of spending an LLM call on an empty call.
 
 ### Added
+- Keypad (DTMF) entry for digit-only intake questions via `IntakeQuestion.input: dtmf` (+ optional `dtmf_length`).
 - `voice.reasoning_effort` and `voice.max_response_output_tokens` config fields.
   `reasoning_effort` (`minimal`/`low`/`medium`/`high`) configures reasoning-capable
   Realtime models such as `gpt-realtime-2` (OpenAI recommends `low` for voice

@@ -1008,6 +1008,8 @@ the [Intake Setup](intakes-setup.md) guide.
 | `case_types[*].questions[*].required` | bool | No | `true` | If `false`, Riley may skip the question if the caller declines. |
 | `case_types[*].questions[*].validation` | `text`/`phone`/`email`/`date`/`yes_no` | No | `"text"` | Advisory shape hint. Influences prompt phrasing. |
 | `case_types[*].questions[*].critical` | bool | No | `false` | If `true`, Riley verifies the answer and waits for explicit confirmation. Phone numbers, SSNs, and email addresses are read back digit-by-digit or character-by-character; names/dates are repeated naturally. |
+| `case_types[*].questions[*].input` | `voice`/`dtmf` | No | `"voice"` | How the caller provides this answer. `voice` (default) = spoken, existing behavior. `dtmf` = caller types digits on their keypad — use for phone numbers and SSNs that the Realtime model mis-hears. Setting `input: dtmf` auto-enables the DTMF capture listener even when no `dtmf` menu block is configured. |
+| `case_types[*].questions[*].dtmf_length` | int or `null` | No | `null` | Expected digit count for `input: dtmf` questions. When set, keypad capture auto-completes at this length (no `#` needed). When `null`, the caller presses `#` to submit. Must be a positive integer; requires `input: dtmf`. |
 
 **Validation rules:**
 

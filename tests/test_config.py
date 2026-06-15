@@ -598,6 +598,71 @@ recording:
         BusinessConfig.from_yaml_string(yaml_text)
 
 
+def test_intake_question_input_defaults_to_voice(v2_yaml):
+    from receptionist.config import IntakeQuestion
+    q = IntakeQuestion(key="name", prompt_en="Name?")
+    assert q.input == "voice"
+    assert q.dtmf_length is None
+
+
+def test_intake_question_accepts_dtmf_input():
+    from receptionist.config import IntakeQuestion
+    q = IntakeQuestion(key="callback", prompt_en="Number?", input="dtmf", dtmf_length=10)
+    assert q.input == "dtmf"
+    assert q.dtmf_length == 10
+
+
+def test_intake_question_rejects_dtmf_length_without_dtmf_input():
+    import pytest
+    from receptionist.config import IntakeQuestion
+    with pytest.raises(ValueError, match="dtmf_length"):
+        IntakeQuestion(key="name", prompt_en="Name?", input="voice", dtmf_length=10)
+
+
+def test_intake_question_rejects_nonpositive_dtmf_length():
+    import pytest
+    from receptionist.config import IntakeQuestion
+    with pytest.raises(ValueError, match="dtmf_length"):
+        IntakeQuestion(key="cb", prompt_en="Number?", input="dtmf", dtmf_length=0)
+
+
+def test_intakes_config_has_dtmf_questions_detects_opt_in():
+    from receptionist.config import (
+        IntakesConfig, IntakeCaseType, IntakeQuestion, IntakeSubmissionConfig,
+    )
+    cfg = IntakesConfig(
+        enabled=True,
+        submission=IntakeSubmissionConfig(file_path="./m/intakes/"),
+        case_types=[
+            IntakeCaseType(
+                key="wc", display_name="WC",
+                questions=[
+                    IntakeQuestion(key="name", prompt_en="Name?"),
+                    IntakeQuestion(key="cb", prompt_en="Number?", input="dtmf", dtmf_length=10),
+                ],
+            ),
+        ],
+    )
+    assert cfg.has_dtmf_questions() is True
+
+
+def test_intakes_config_has_dtmf_questions_false_when_all_voice():
+    from receptionist.config import (
+        IntakesConfig, IntakeCaseType, IntakeQuestion, IntakeSubmissionConfig,
+    )
+    cfg = IntakesConfig(
+        enabled=True,
+        submission=IntakeSubmissionConfig(file_path="./m/intakes/"),
+        case_types=[
+            IntakeCaseType(
+                key="wc", display_name="WC",
+                questions=[IntakeQuestion(key="name", prompt_en="Name?")],
+            ),
+        ],
+    )
+    assert cfg.has_dtmf_questions() is False
+
+
 def test_retention_defaults():
     yaml_text = """
 business: { name: "X", type: "x", timezone: "UTC" }

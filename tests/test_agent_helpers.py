@@ -725,3 +725,193 @@ def test_offered_slots_size_bounded_under_long_call():
     assert r._slot_was_offered("slot-97-2")
     assert not r._slot_was_offered("slot-50-0")
     assert not r._slot_was_offered("slot-0-0")
+
+
+# ---- RealtimeModel kwargs builder + options (Task 10) ----
+
+from receptionist.config import VoiceConfig
+from receptionist.agent import (
+    _apply_realtime_options,
+    _build_realtime_model_kwargs,
+)
+
+
+def test_realtime_kwargs_minimal_when_features_unset():
+    voice = VoiceConfig(voice_id="marin", model="gpt-realtime")
+    kwargs = _build_realtime_model_kwargs(voice, api_key="sk-test")
+    assert kwargs["model"] == "gpt-realtime"
+    assert kwargs["voice"] == "marin"
+    assert kwargs["api_key"] == "sk-test"
+    assert "reasoning" not in kwargs
+    assert "max_response_output_tokens" not in kwargs
+
+
+def test_realtime_kwargs_includes_reasoning_when_set():
+    voice = VoiceConfig(
+        voice_id="marin", model="gpt-realtime-2", reasoning_effort="low",
+    )
+    kwargs = _build_realtime_model_kwargs(voice, api_key="sk-test")
+    assert kwargs["reasoning"].effort == "low"
+
+
+class _FakeRealtimeModelWithUpdate:
+    """Stand-in whose update_options accepts max_response_output_tokens."""
+
+    def __init__(self):
+        self.applied = {}
+
+    def update_options(self, *, max_response_output_tokens=None):
+        self.applied["max_response_output_tokens"] = max_response_output_tokens
+
+
+class _FakeRealtimeModelNoTokenSetter:
+    """update_options exists but doesn't accept the token kwarg."""
+
+    def __init__(self):
+        self.called = False
+
+    def update_options(self, *, voice=None):
+        self.called = True
+
+
+def test_apply_realtime_options_sets_token_cap_via_update_options():
+    voice = VoiceConfig(
+        voice_id="marin", model="gpt-realtime-2", max_response_output_tokens=1500,
+    )
+    model = _FakeRealtimeModelWithUpdate()
+    _apply_realtime_options(model, voice)
+    assert model.applied["max_response_output_tokens"] == 1500
+
+
+def test_apply_realtime_options_noop_when_cap_unset():
+    voice = VoiceConfig(voice_id="marin", model="gpt-realtime")
+    model = _FakeRealtimeModelWithUpdate()
+    _apply_realtime_options(model, voice)
+    assert model.applied == {}
+
+
+def test_apply_realtime_options_skips_when_setter_lacks_token_param():
+    voice = VoiceConfig(
+        voice_id="marin", model="gpt-realtime-2", max_response_output_tokens=1500,
+    )
+    model = _FakeRealtimeModelNoTokenSetter()
+    _apply_realtime_options(model, voice)  # must not raise
+    assert model.called is False
+
+
+# ---- Realtime error recovery: filler + retry (Task 11) ----
+
+import asyncio as _asyncio
+from receptionist.agent import _RealtimeRecovery
+
+
+class _FakeSession:
+    def __init__(self):
+        self.said = []
+        self.say_kwargs = []
+        self.generate_reply_calls = 0
+
+    def say(self, text, **kwargs):
+        self.said.append(text)
+        self.say_kwargs.append(kwargs)
+        return SimpleNamespace()
+
+    def generate_reply(self, **kwargs):
+        self.generate_reply_calls += 1
+        return SimpleNamespace()
+
+
+def _err_event(label="realtime", message="response failed: [tokens] rate_limit_exceeded",
+               recoverable=True):
+    return SimpleNamespace(
+        error=SimpleNamespace(label=label, error=Exception(message), recoverable=recoverable),
+    )
+
+
+def test_recovery_speaks_filler_and_retries_on_recoverable_error():
+    sess = _FakeSession()
+    rec = _RealtimeRecovery(sess, filler_text="One moment.", backoff_seconds=0.0)
+
+    async def run():
+        await rec.handle_error(_err_event())
+
+    _asyncio.run(run())
+    assert sess.said == ["One moment."]
+    assert sess.generate_reply_calls == 1
+    # Filler must not pollute the chat context (it would be re-billed every
+    # turn on a speech-to-speech model — ironic on the token-rate problem).
+    assert sess.say_kwargs[0].get("add_to_chat_ctx") is False
+
+
+def test_recovery_caps_retries_per_call():
+    """A sustained realtime failure must not loop forever: after the per-call
+    cap, the handler stops auto-recovering even on fresh recoverable errors."""
+    sess = _FakeSession()
+    rec = _RealtimeRecovery(
+        sess, filler_text="One moment.", backoff_seconds=0.0, max_recoveries=2,
+    )
+
+    async def run():
+        for _ in range(5):
+            await rec.handle_error(_err_event())
+
+    _asyncio.run(run())
+    assert sess.generate_reply_calls == 2
+    assert sess.said == ["One moment.", "One moment."]
+
+
+def test_recovery_ignores_non_recoverable_error():
+    sess = _FakeSession()
+    rec = _RealtimeRecovery(sess, filler_text="One moment.", backoff_seconds=0.0)
+
+    async def run():
+        await rec.handle_error(_err_event(recoverable=False))
+
+    _asyncio.run(run())
+    assert sess.said == []
+    assert sess.generate_reply_calls == 0
+
+
+def test_recovery_dedups_concurrent_errors_to_one_retry():
+    sess = _FakeSession()
+    rec = _RealtimeRecovery(sess, filler_text="One moment.", backoff_seconds=0.02)
+
+    async def run():
+        await _asyncio.gather(
+            rec.handle_error(_err_event()),
+            rec.handle_error(_err_event()),
+            rec.handle_error(_err_event()),
+        )
+
+    _asyncio.run(run())
+    # Only one in-flight recovery should run; the others are suppressed.
+    assert sess.generate_reply_calls == 1
+    assert sess.said == ["One moment."]
+
+
+def test_recovery_disabled_with_empty_filler_still_retries():
+    sess = _FakeSession()
+    rec = _RealtimeRecovery(sess, filler_text="", backoff_seconds=0.0)
+
+    async def run():
+        await rec.handle_error(_err_event())
+
+    _asyncio.run(run())
+    assert sess.said == []  # no filler when text is empty
+    assert sess.generate_reply_calls == 1
+
+
+def test_recovery_never_raises_when_session_methods_fail():
+    class _BoomSession:
+        def say(self, *a, **k):
+            raise RuntimeError("say boom")
+
+        def generate_reply(self, *a, **k):
+            raise RuntimeError("reply boom")
+
+    rec = _RealtimeRecovery(_BoomSession(), filler_text="One moment.", backoff_seconds=0.0)
+
+    async def run():
+        await rec.handle_error(_err_event())  # must not raise
+
+    _asyncio.run(run())

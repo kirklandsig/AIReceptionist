@@ -283,6 +283,43 @@ def test_voice_auth_oauth_codex_defaults_to_codex_path(v2_yaml):
     assert config.voice.auth.path == "~/.codex/auth.json"
 
 
+def test_voice_reasoning_and_token_cap_default_off(v2_yaml):
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    assert config.voice.reasoning_effort is None
+    assert config.voice.max_response_output_tokens is None
+
+
+def test_voice_reasoning_effort_parses(v2_yaml):
+    yaml_text = v2_yaml.replace(
+        '  model: "gpt-realtime"',
+        '  model: "gpt-realtime-2"\n  reasoning_effort: "low"\n  max_response_output_tokens: 1200',
+    )
+    config = BusinessConfig.from_yaml_string(yaml_text)
+    assert config.voice.model == "gpt-realtime-2"
+    assert config.voice.reasoning_effort == "low"
+    assert config.voice.max_response_output_tokens == 1200
+
+
+def test_voice_reasoning_effort_rejects_unknown_value(v2_yaml):
+    import pytest
+    yaml_text = v2_yaml.replace(
+        '  model: "gpt-realtime"',
+        '  model: "gpt-realtime-2"\n  reasoning_effort: "turbo"',
+    )
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
+def test_voice_max_response_output_tokens_must_be_positive(v2_yaml):
+    import pytest
+    yaml_text = v2_yaml.replace(
+        '  model: "gpt-realtime"',
+        '  model: "gpt-realtime"\n  max_response_output_tokens: 0',
+    )
+    with pytest.raises(ValueError, match="max_response_output_tokens"):
+        BusinessConfig.from_yaml_string(yaml_text)
+
+
 def test_voice_auth_oauth_codex_custom_path(v2_yaml, tmp_path):
     auth_path = tmp_path / "auth.json"
     yaml_text = _v2_yaml_with_voice_auth(

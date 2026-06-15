@@ -255,6 +255,8 @@ Voice configuration for the OpenAI Realtime API.
 | `voice_id` | string | No | `"marin"` | The OpenAI voice to use for the receptionist. |
 | `model` | string | No | `"gpt-realtime"` | The OpenAI Realtime (GA) model variant to use. |
 | `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. **GA Realtime requires a standard `sk-` API key**; ChatGPT/Codex OAuth (`oauth_codex`) no longer authenticates Realtime as of the 2026-06-03 beta sunset. |
+| `reasoning_effort` | string or null | No | `null` | Reasoning effort for reasoning-capable Realtime models (`gpt-realtime-2`). One of `minimal`, `low`, `medium`, `high`. OpenAI recommends `low` for production voice latency. Leave `null` for non-reasoning models. Only applied when the installed `livekit-plugins-openai` (>= 1.6) exposes the `reasoning` parameter; ignored with a warning otherwise. |
+| `max_response_output_tokens` | int or null | No | `null` | Hard cap on tokens per model response. A finite cap protects against a runaway response exhausting the account's per-minute token rate limit — the cause of mid-call dead air on rate-limited OpenAI tiers. Leave `null` for the model default. |
 
 **Available models** (GA Realtime):
 

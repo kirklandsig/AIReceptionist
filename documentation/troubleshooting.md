@@ -535,6 +535,45 @@ any of those fields.
 
 ## Agent Behavior Issues
 
+### Long mid-call silences / agent stalls until the caller speaks again
+
+**Symptom**: After the first minute or two of a call — often right after a
+function tool runs (intake answers, sending a packet) — the agent goes silent.
+The caller says "Hello?" one or more times before the agent finally responds.
+Sometimes the call ends with no spoken goodbye.
+
+**Cause**: The OpenAI Realtime API is rejecting the model's responses because
+the account has exceeded its **tokens-per-minute (TPM) rate limit**. Realtime
+counts audio as tokens, and the full system prompt is re-sent as context on
+every turn, so a multi-turn call on a low tier (e.g. Tier 1 at 40,000 TPM)
+exhausts the per-minute budget and every subsequent response is rejected with
+`response failed: [tokens] rate_limit_exceeded`. A rejected response produces
+no speech, so the caller hears dead air until their next utterance triggers a
+fresh (sometimes-successful) attempt.
+
+Note: on `livekit-plugins-openai` < 1.6 this rejection is **not logged at INFO
+level**, so the logs look like clean gaps. Upgrade to >= 1.6 to surface the
+`RealtimeError('response failed: [tokens] rate_limit_exceeded')` lines.
+
+**Solution** (in order of impact):
+1. **Raise the OpenAI usage tier.** This is the real fix. Tier 1 is 40k TPM
+   for `gpt-realtime`; Tier 2 (after $50 cumulative spend + 7+ days, or
+   pre-paying credits to cross the threshold) lifts it ~5x. Confirm the limit
+   by reading the `x-ratelimit-limit-tokens` response header on any call with
+   the account key.
+2. **Cap response length.** Set `voice.max_response_output_tokens` (e.g.
+   `1200`) so no single response can burn an outsized share of the per-minute
+   budget.
+3. **Use a reasoning model at low effort.** `voice.model: gpt-realtime-2` with
+   `voice.reasoning_effort: low` produces tighter, cheaper responses.
+4. **Shorten the system prompt.** Trim FAQs/routing for the tenant; the prompt
+   is re-sent every turn, so its size is a per-turn token multiplier.
+
+The built-in safety net (`_RealtimeRecovery`) speaks a brief "One moment." and
+re-triggers the response on a recoverable realtime error, so the caller is not
+left in total silence — but it is a mitigation, not a substitute for adequate
+rate-limit headroom.
+
 ### Agent does not follow personality instructions
 
 **Symptom**: The receptionist does not use the tone, style, or behavior described in the personality config.

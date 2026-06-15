@@ -34,6 +34,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of spending an LLM call on an empty call.
 
 ### Added
+- `voice.reasoning_effort` and `voice.max_response_output_tokens` config fields.
+  `reasoning_effort` (`minimal`/`low`/`medium`/`high`) configures reasoning-capable
+  Realtime models such as `gpt-realtime-2` (OpenAI recommends `low` for voice
+  latency); `max_response_output_tokens` caps tokens per response to protect
+  against exhausting the account's per-minute token rate limit. Both require
+  `livekit-plugins-openai` >= 1.6 and are ignored gracefully on older builds.
+- Realtime error safety net: on a recoverable Realtime API error (most commonly
+  `rate_limit_exceeded`), the agent now speaks a brief filler and re-triggers
+  the model response instead of leaving the caller in silence. Bursts of errors
+  collapse to a single filler + retry, and recoveries are capped per call (3)
+  so a sustained failure can't loop indefinitely. The filler is not added to
+  the conversation context.
 - AI-generated call summary in call-end emails (`email.summary` config block, default model gpt-5-mini).
 - **DTMF auto-attendant (issue #16).** Configure `dtmf.digits` to map keypad
   presses to actions: transfer to a routing entry, take a message, end the

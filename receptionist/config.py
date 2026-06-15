@@ -159,6 +159,37 @@ class VoiceConfig(BaseModel):
     model: str = "gpt-realtime"
     auth: VoiceAuth | None = None
     idle: VoiceIdleConfig = Field(default_factory=VoiceIdleConfig)
+    # Reasoning effort for reasoning-capable Realtime models (e.g.
+    # gpt-realtime-2). None leaves the model's default. OpenAI recommends
+    # "low" for production voice latency. Only applied when the installed
+    # livekit-plugins-openai exposes the `reasoning` parameter.
+    reasoning_effort: str | None = None
+    # Hard cap on tokens per model response. None leaves the model default.
+    # A finite cap protects against a runaway response exhausting the
+    # account's per-minute token rate limit (the cause of mid-call dead air
+    # on rate-limited tiers).
+    max_response_output_tokens: int | None = None
+
+    @field_validator("reasoning_effort")
+    @classmethod
+    def _validate_reasoning_effort(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        allowed = {"minimal", "low", "medium", "high"}
+        if v not in allowed:
+            raise ValueError(
+                f"voice.reasoning_effort must be one of {sorted(allowed)}, got {v!r}"
+            )
+        return v
+
+    @field_validator("max_response_output_tokens")
+    @classmethod
+    def _validate_max_tokens(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError(
+                "voice.max_response_output_tokens must be a positive integer"
+            )
+        return v
 
 
 class DayHours(BaseModel):

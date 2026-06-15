@@ -44,6 +44,211 @@ DEFAULT_CONFIG_DIR = Path("config/businesses")
 DEFAULT_AGENT_NAME = "receptionist"
 _BENIGN_ENGINE_CLOSED_MESSAGE = "engine: connection error: engine is closed"
 _LIVEKIT_OPERATION_TIMEOUT_SECONDS = 10.0
+
+
+def _build_realtime_model_kwargs(voice_config, api_key: str | None) -> dict:
+    """Assemble constructor kwargs for openai.realtime.RealtimeModel.
+
+    `reasoning` and `max_response_output_tokens` are only included when the
+    business config requests them AND the installed livekit-plugins-openai
+    exposes those parameters on the relevant API surface. This keeps the call
+    working across plugin versions: older plugins (pre-1.6) silently get the
+    minimal kwargs.
+
+    Note: in 1.6 `max_response_output_tokens` is a constructor parameter on
+    some builds and an `update_options()` setter on others. We pass it as a
+    constructor kwarg when supported there; `_apply_realtime_options` covers
+    the setter path after construction.
+    """
+    import inspect
+
+    kwargs: dict = {
+        "model": voice_config.model,
+        "voice": voice_config.voice_id,
+        "api_key": api_key,
+    }
+    supported = inspect.signature(
+        openai.realtime.RealtimeModel.__init__
+    ).parameters
+
+    if voice_config.reasoning_effort is not None and "reasoning" in supported:
+        try:
+            from livekit.plugins.openai.realtime.realtime_model import (
+                RealtimeReasoning,
+            )
+
+            kwargs["reasoning"] = RealtimeReasoning(
+                effort=voice_config.reasoning_effort
+            )
+        except Exception:
+            logger.warning(
+                "voice.reasoning_effort set but RealtimeReasoning unavailable; "
+                "ignoring reasoning_effort=%r",
+                voice_config.reasoning_effort,
+                extra={"component": "agent.realtime"},
+            )
+
+    if (
+        voice_config.max_response_output_tokens is not None
+        and "max_response_output_tokens" in supported
+    ):
+        kwargs["max_response_output_tokens"] = (
+            voice_config.max_response_output_tokens
+        )
+
+    return kwargs
+
+
+def _apply_realtime_options(realtime_model, voice_config) -> None:
+    """Apply post-construction RealtimeModel options that aren't constructor args.
+
+    `max_response_output_tokens` is an `update_options()` setter in some
+    livekit-plugins-openai 1.6 builds rather than a constructor kwarg. If
+    `_build_realtime_model_kwargs` already passed it to the constructor, this
+    is a harmless no-op re-apply; if not, this is where the cap lands. Guarded
+    so an unsupported setter never breaks call setup.
+    """
+    if voice_config.max_response_output_tokens is None:
+        return
+    update_options = getattr(realtime_model, "update_options", None)
+    if update_options is None:
+        return
+    import inspect
+
+    if "max_response_output_tokens" not in inspect.signature(update_options).parameters:
+        return
+    try:
+        update_options(
+            max_response_output_tokens=voice_config.max_response_output_tokens
+        )
+    except Exception:
+        logger.warning(
+            "failed to apply max_response_output_tokens=%r via update_options",
+            voice_config.max_response_output_tokens,
+            extra={"component": "agent.realtime"},
+        )
+
+
+# Substrings in a realtime error message that mean "the model's response was
+# rejected and nothing will be spoken unless we re-trigger it." These are the
+# transient failures worth a filler + retry (the caller would otherwise hear
+# dead air until they speak again). The dominant production case is
+# `rate_limit_exceeded` on token-rate-limited OpenAI tiers.
+#
+# NOTE for future refactors: on livekit-plugins-openai 1.6 the rejected-response
+# message renders as "...response failed with error type: invalid_request_error"
+# (the specific rate-limit code lives in the API error body, not str()). So the
+# `"response failed"` hint is the one that actually matches today; `"rate_limit"`
+# is kept as forward-looking belt-and-braces. Don't remove `"response failed"`.
+_RECOVERABLE_REALTIME_ERROR_HINTS = (
+    "rate_limit",
+    "response failed",
+    "server_error",
+    "active response",
+)
+
+# Per-call cap on automatic recoveries. Once the OpenAI account has adequate
+# rate-limit headroom a recovery should fix the call in 1-2 attempts; a hard
+# cap prevents a *sustained* rate limit from turning the rest of the call into
+# an endless "One moment." → retry → fail loop. After the cap is hit the agent
+# stops auto-recovering and the existing idle/silence safety nets take over.
+_MAX_REALTIME_RECOVERIES_PER_CALL = 3
+
+
+class _RealtimeRecovery:
+    """Speaks a short filler and re-triggers a model response after a
+    recoverable realtime error, so a rejected response doesn't leave the
+    caller in silence.
+
+    Concurrency: realtime errors can arrive in bursts (the server may reject
+    several queued responses). An in-flight guard collapses a burst into a
+    single filler + single retry so we don't stack speech or hammer the API.
+    A per-call recovery counter caps total attempts so a sustained failure
+    can't loop forever. The handler never raises — call recovery must not
+    crash the session.
+    """
+
+    def __init__(
+        self,
+        session,
+        *,
+        filler_text: str = "One moment.",
+        backoff_seconds: float = 0.8,
+        max_recoveries: int = _MAX_REALTIME_RECOVERIES_PER_CALL,
+    ) -> None:
+        self._session = session
+        self._filler_text = filler_text
+        self._backoff_seconds = backoff_seconds
+        self._max_recoveries = max_recoveries
+        self._in_flight = False
+        self._recovery_count = 0
+
+    def _is_recoverable(self, error_event) -> bool:
+        err = getattr(error_event, "error", None)
+        if err is None:
+            return False
+        # Explicit non-recoverable flag from the SDK wins.
+        if getattr(err, "recoverable", True) is False:
+            return False
+        inner = getattr(err, "error", None)
+        message = str(inner) if inner is not None else str(err)
+        message = message.lower()
+        return any(hint in message for hint in _RECOVERABLE_REALTIME_ERROR_HINTS)
+
+    async def handle_error(self, error_event) -> None:
+        try:
+            if self._in_flight:
+                return
+            if self._recovery_count >= self._max_recoveries:
+                logger.warning(
+                    "realtime recovery: per-call cap (%d) reached; not "
+                    "auto-recovering further (sustained realtime failure)",
+                    self._max_recoveries,
+                    extra={"component": "agent.realtime_recovery"},
+                )
+                return
+            if not self._is_recoverable(error_event):
+                return
+            self._in_flight = True
+            self._recovery_count += 1
+            try:
+                if self._filler_text:
+                    try:
+                        # add_to_chat_ctx=False: the filler must not enter the
+                        # conversation context — on a speech-to-speech model the
+                        # full context is re-sent every turn, so a context-bound
+                        # filler would be re-billed each turn (ironic on the very
+                        # token-rate problem this recovers from).
+                        self._session.say(self._filler_text, add_to_chat_ctx=False)
+                    except Exception:
+                        logger.warning(
+                            "realtime recovery: filler say() failed",
+                            extra={"component": "agent.realtime_recovery"},
+                        )
+                if self._backoff_seconds > 0:
+                    await asyncio.sleep(self._backoff_seconds)
+                try:
+                    self._session.generate_reply()
+                    logger.info(
+                        "realtime recovery: re-triggered model response after "
+                        "recoverable error (attempt %d/%d)",
+                        self._recovery_count, self._max_recoveries,
+                        extra={"component": "agent.realtime_recovery"},
+                    )
+                except Exception:
+                    logger.warning(
+                        "realtime recovery: generate_reply() failed",
+                        extra={"component": "agent.realtime_recovery"},
+                    )
+            finally:
+                self._in_flight = False
+        except Exception:
+            logger.exception(
+                "realtime recovery handler crashed",
+                extra={"component": "agent.realtime_recovery"},
+            )
+
+
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 _GENERATION_WATCHDOG_THREAD: threading.Thread | None = None
 _GENERATION_WATCHDOG_INTERVAL_SECONDS = 2.0
@@ -2072,12 +2277,13 @@ async def handle_call(ctx: agents.JobContext):
         )
 
     idle_cfg = config.voice.idle
+    realtime_kwargs = _build_realtime_model_kwargs(
+        config.voice, api_key=await resolve_voice_bearer_async(config.voice.auth),
+    )
+    realtime_model = openai.realtime.RealtimeModel(**realtime_kwargs)
+    _apply_realtime_options(realtime_model, config.voice)
     session = AgentSession(
-        llm=openai.realtime.RealtimeModel(
-            model=config.voice.model,
-            voice=config.voice.voice_id,
-            api_key=await resolve_voice_bearer_async(config.voice.auth),
-        ),
+        llm=realtime_model,
         # Issue #11: feed the silence-hangup `away_seconds` into LiveKit's
         # built-in user-state machine. When the caller falls silent for this
         # long, `user_state` flips to "away" and we start the grace timer.
@@ -2094,6 +2300,19 @@ async def handle_call(ctx: agents.JobContext):
     session.on("user_input_transcribed", receptionist._on_user_input_transcribed)
     session.on("function_tools_executed", receptionist._on_function_tools_executed)
     session.on("conversation_item_added", receptionist._on_conversation_item_added)
+
+    # Recoverable-realtime-error safety net. When the OpenAI Realtime API
+    # rejects a model response (most commonly `rate_limit_exceeded` on
+    # token-rate-limited tiers), the agent would otherwise fall silent until
+    # the caller speaks again. `_RealtimeRecovery` speaks a brief filler and
+    # re-triggers the response. The `error` event is emitted synchronously, so
+    # the async recovery is scheduled as a background task.
+    _realtime_recovery = _RealtimeRecovery(session)
+
+    def _on_session_error(error_event) -> None:
+        _create_background_task(_realtime_recovery.handle_error(error_event))
+
+    session.on("error", _on_session_error)
 
     # Issue #16 DTMF auto-attendant. When enabled, keypad presses are handled
     # deterministically off the LiveKit `sip_dtmf_received` event rather than

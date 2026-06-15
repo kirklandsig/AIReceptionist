@@ -80,9 +80,10 @@ def _build_intakes_block(config: BusinessConfig) -> str:
         for q in ct.questions:
             req = "required" if q.required else "optional"
             critical = ", critical readback" if q.critical else ""
-            case_lines.append(f"      * {q.key}  ({req}{critical}): {q.prompt_en}")
+            keypad = ", KEYPAD ENTRY" if q.input == "dtmf" else ""
+            case_lines.append(f"      * {q.key}  ({req}{critical}{keypad}): {q.prompt_en}")
     case_block = "\n".join(case_lines)
-    return (
+    block = (
         "\nINTAKES (structured new-client intake by phone):\n"
         "You can run a structured intake using the record_intake_answer and\n"
         "finalize_intake tools. Configured case types and their question\n"
@@ -121,6 +122,20 @@ def _build_intakes_block(config: BusinessConfig) -> str:
         "their name and callback number, and note in the message that the\n"
         "intake was started but not completed.\n"
     )
+    if config.intakes.has_dtmf_questions():
+        block += (
+            "\nKEYPAD ENTRY (for questions marked 'KEYPAD ENTRY' above):\n"
+            "  - Do NOT ask the caller to say these numbers. Call\n"
+            "    await_keypad_entry with the question key and tell the caller\n"
+            "    to type the number on their phone keypad and press the pound\n"
+            "    key.\n"
+            "  - The tool returns the exact digits. Read them back one at a\n"
+            "    time to confirm, then call record_intake_answer with the\n"
+            "    confirmed digits.\n"
+            "  - If the tool reports a timeout, ask the caller to say the\n"
+            "    number and read it back digit by digit before recording.\n"
+        )
+    return block
 
 
 def _build_info_packets_block(config: BusinessConfig) -> str:

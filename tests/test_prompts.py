@@ -482,3 +482,55 @@ dtmf:
     # answers the call as usual and DTMF still works silently in the
     # background.
     assert "after the greeting" not in prompt.lower()
+
+
+def test_prompt_includes_keypad_instruction_when_question_opts_in(v2_yaml):
+    from receptionist.config import (
+        BusinessConfig, IntakesConfig, IntakeCaseType, IntakeQuestion,
+        IntakeSubmissionConfig,
+    )
+    from receptionist.prompts import build_system_prompt
+    base = BusinessConfig.from_yaml_string(v2_yaml)
+    config = base.model_copy(update={
+        "intakes": IntakesConfig(
+            enabled=True,
+            submission=IntakeSubmissionConfig(file_path="./m/intakes/"),
+            case_types=[
+                IntakeCaseType(
+                    key="wc", display_name="WC",
+                    questions=[
+                        IntakeQuestion(
+                            key="cb", prompt_en="Number?",
+                            input="dtmf", dtmf_length=10,
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    })
+    prompt = build_system_prompt(config)
+    assert "await_keypad_entry" in prompt
+    assert "pound" in prompt.lower() or "keypad" in prompt.lower()
+
+
+def test_prompt_omits_keypad_instruction_without_dtmf_questions(v2_yaml):
+    from receptionist.config import (
+        BusinessConfig, IntakesConfig, IntakeCaseType, IntakeQuestion,
+        IntakeSubmissionConfig,
+    )
+    from receptionist.prompts import build_system_prompt
+    base = BusinessConfig.from_yaml_string(v2_yaml)
+    config = base.model_copy(update={
+        "intakes": IntakesConfig(
+            enabled=True,
+            submission=IntakeSubmissionConfig(file_path="./m/intakes/"),
+            case_types=[
+                IntakeCaseType(
+                    key="wc", display_name="WC",
+                    questions=[IntakeQuestion(key="name", prompt_en="Name?")],
+                ),
+            ],
+        ),
+    })
+    prompt = build_system_prompt(config)
+    assert "await_keypad_entry" not in prompt

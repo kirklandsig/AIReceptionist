@@ -429,3 +429,53 @@ async def test_await_keypad_entry_without_handler_returns_fallback(v2_yaml, mock
     ctx.session.generate_reply = mocker.AsyncMock()
     result = await r._await_keypad_entry(ctx, question_key="cb")
     assert "say the number" in result.lower()
+
+
+@pytest.mark.asyncio
+async def test_await_keypad_entry_rearm_cancels_prior_call(v2_yaml, mocker):
+    """A second await_keypad_entry call must unblock the first immediately
+    (not hang 30s) and leave the SECOND call's capture armed."""
+    import asyncio
+    from receptionist.agent import _DtmfHandlerState
+
+    config = _config_with_dtmf_intake(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    state = _DtmfHandlerState(
+        config=config, lifecycle=lifecycle, session=mocker.MagicMock(),
+        sip_caller_identity="sip_caller",
+        execute_transfer=mocker.AsyncMock(), speak_goodbye=mocker.AsyncMock(),
+    )
+    r = _keypad_receptionist(config, lifecycle, state)
+    ctx = mocker.MagicMock()
+    ctx.session.generate_reply = mocker.AsyncMock()
+
+    # First call parks awaiting digits.
+    first = asyncio.create_task(r._await_keypad_entry(ctx, question_key="cb"))
+    for _ in range(200):
+        if state.capture is not None:
+            break
+        await asyncio.sleep(0.005)
+    first_capture = state.capture
+    assert first_capture is not None
+
+    # Second call re-arms; should cancel the first.
+    second = asyncio.create_task(r._await_keypad_entry(ctx, question_key="cb"))
+    for _ in range(200):
+        if state.capture is not None and state.capture is not first_capture:
+            break
+        await asyncio.sleep(0.005)
+    assert state.capture is not None and state.capture is not first_capture
+
+    # First call returns promptly (a fallback), not hanging 30s.
+    first_result = await asyncio.wait_for(first, timeout=2.0)
+    assert isinstance(first_result, str)
+    # Second call's capture is still live and armed.
+    assert state.capture is not None
+
+    # Drive the second to completion so we don't leak the task.
+    for d in "5550001234":
+        state.capture.buffer.add_key(d)
+    state.capture.future.set_result(state.capture.buffer.digits)
+    state.capture = None
+    second_result = await asyncio.wait_for(second, timeout=2.0)
+    assert "5550001234" in second_result

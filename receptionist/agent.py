@@ -1703,8 +1703,14 @@ class Receptionist(Agent):
             )
             return _KEYPAD_VOICE_FALLBACK
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         future: asyncio.Future = loop.create_future()
+        # If a prior keypad entry is still pending (model re-called this tool),
+        # cancel its future so the earlier call unblocks immediately instead of
+        # hanging until its 30s timeout.
+        prev = self._dtmf_state.capture
+        if prev is not None and not prev.future.done():
+            prev.future.cancel()
         self._dtmf_state.capture = _ActiveCapture(
             buffer=DigitCaptureBuffer(expected_length=question.dtmf_length),
             future=future,
@@ -1714,6 +1720,11 @@ class Receptionist(Agent):
             digits = await asyncio.wait_for(
                 future, timeout=_KEYPAD_ENTRY_TIMEOUT_SECONDS,
             )
+        except asyncio.CancelledError:
+            # A newer await_keypad_entry call superseded this one and cancelled
+            # our future. Do NOT touch _dtmf_state.capture — it now holds the
+            # newer call's live capture. Just return a benign fallback.
+            return _KEYPAD_VOICE_FALLBACK
         except asyncio.TimeoutError:
             self._dtmf_state.capture = None
             self.lifecycle.record_dtmf_event(

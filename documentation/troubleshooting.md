@@ -385,6 +385,47 @@ call failed. Check `dtmf_events` in the call-end email for status
 2. For `failed`: check the agent log for the underlying SIP API error and
    verify `sip.transfer_uri_template` is correct for your trunk.
 
+### Keypad entry not capturing digits during intake
+
+**Symptom**: When the intake reaches a phone-number or SSN question, the caller
+types digits on their keypad but the agent does not capture them — it either
+ignores the keystrokes or asks the caller to say the number aloud.
+
+**Cause**: Several possibilities.
+
+**Solution**:
+1. **Question not marked `input: dtmf`**: keypad capture only activates when
+   the intake question is explicitly set to `input: dtmf` in the YAML. If the
+   field is missing or left at the default `voice`, the `sip_dtmf_received`
+   listener never arms for that question and the model never calls
+   `await_keypad_entry`. Check the relevant question block in your business
+   YAML and add `input: dtmf` (and optionally `dtmf_length: N`).
+2. **SIP trunk not forwarding DTMF**: the handler relies on LiveKit surfacing
+   keypad events as `sip_dtmf_received`. That requires the SIP trunk to send
+   RFC 2833 / telephone-event (also called RFC 4733) out-of-band DTMF to
+   LiveKit. Trunks configured for in-band DTMF (audio tones) bypass LiveKit's
+   event layer entirely. Check your SIP trunk or PBX DTMF mode setting and
+   switch it to RFC 2833 / telephone-event. Verify by pressing a digit and
+   checking for `dtmf:` INFO log lines in `agent.log` — if none appear, the
+   trunk is not delivering events.
+3. **Non-SIP participant**: DTMF events from non-SIP participants (e.g., a
+   browser WebRTC participant in the LiveKit room during development) are
+   ignored by design. Keypad capture only acts on events from the resolved
+   SIP caller participant.
+4. **Model calls voice readback instead of keypad**: if Riley asks the caller
+   to say the number aloud rather than type it, the KEYPAD ENTRY section of
+   the system prompt is not being generated. That section only appears when at
+   least one question has `input: dtmf`. Verify the config has `input: dtmf`
+   on the correct question, restart the worker, and inspect the generated
+   system prompt with:
+   ```python
+   from receptionist.config import load_config
+   from receptionist.prompts import build_system_prompt
+   config = load_config("config/businesses/<slug>.yaml")
+   print(build_system_prompt(config))
+   ```
+   Confirm the output includes a KEYPAD ENTRY section.
+
 ### Agent never hangs up, even after caller leaves the line silent
 
 **Symptom**: After the caller stops talking — or walks away from the

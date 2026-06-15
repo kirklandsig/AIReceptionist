@@ -11,6 +11,7 @@ completed submission lands in your file/email pipeline.
 - [What the feature does](#what-the-feature-does)
 - [Configuration overview](#configuration-overview)
 - [Question schema](#question-schema)
+- [Keypad (DTMF) entry](#keypad-dtmf-entry)
 - [Spanish-language calls](#spanish-language-calls)
 - [Output: structured JSON + email](#output-structured-json--email)
 - [Partial intakes (mid-call disconnects)](#partial-intakes-mid-call-disconnects)
@@ -128,6 +129,72 @@ Each `questions[*]` entry has:
 | `required` | bool | No (default `true`) | If `false`, Riley may skip the question if the caller declines. Required questions must be present in the final submission. |
 | `validation` | `text`/`phone`/`email`/`date`/`yes_no` | No (default `text`) | Advisory shape. Influences the phrasing of the prompt but does not strictly enforce the answer's format. |
 | `critical` | bool | No (default `false`) | If `true`, Riley verifies the answer and waits for explicit "yes" before moving on. Use per-character readback only for phone numbers, SSNs, and email addresses; repeat names/dates naturally. |
+
+---
+
+## Keypad (DTMF) entry
+
+For fields that are entirely numeric — phone numbers, Social Security numbers —
+the Realtime model can mis-hear digits when the caller speaks them aloud. Mark
+those questions with `input: dtmf` to have the caller enter the digits on their
+phone keypad instead. The model handles non-numeric fields (names, dates, email
+addresses) via voice as normal; only set `input: dtmf` where every valid answer
+is a pure digit string.
+
+### Configuring a keypad question
+
+```yaml
+questions:
+  - key: callback_phone
+    prompt_en: "What is your callback phone number?"
+    required: true
+    critical: true
+    validation: phone
+    input: dtmf          # caller types on keypad; model does NOT ask them to say it
+    dtmf_length: 10      # auto-completes after 10 digits (US 10-digit number)
+
+  - key: ssn_last4
+    prompt_en: "What are the last four digits of your Social Security number?"
+    required: true
+    critical: true
+    validation: text
+    input: dtmf          # no dtmf_length: caller presses # to submit
+```
+
+| Field | Effect |
+|-------|--------|
+| `input: dtmf` | Question uses keypad entry. The model calls `await_keypad_entry` instead of asking the caller to say the number. |
+| `dtmf_length: N` | Capture auto-completes after N digits — caller does not need to press `#`. Use `10` for a US 10-digit number, `9` for a full SSN. Omit (or set `null`) when the digit count varies. |
+
+### Caller flow
+
+1. The model reaches a `dtmf` question and calls `await_keypad_entry(question_key=...)`.
+2. The model tells the caller: "Please type your number on your keypad and press pound."
+3. The caller presses digits. `*` clears the buffer and lets them start over.
+4. When the caller presses `#` (or the digit count reaches `dtmf_length`), the
+   tool returns the exact digits to the model.
+5. The model reads the digits back one by one: "I have 7-1-3-5-5-5-0-1-3-8. Is that correct?"
+6. After the caller confirms, the model calls `record_intake_answer` with the
+   confirmed digit string.
+
+If no input arrives within 30 seconds, the tool returns a voice-fallback
+instruction and the model asks the caller to say the number aloud instead,
+using the normal digit-by-digit readback for `critical` fields.
+
+### DTMF auto-enablement
+
+The `sip_dtmf_received` listener wires automatically when **any** question has
+`input: dtmf`, even if the business has no `dtmf:` menu block configured. There
+is nothing else to enable — add `input: dtmf` to a question and keypad capture
+works for that question. The menu handler and capture buffer share one event
+listener; capture takes precedence while `await_keypad_entry` is active.
+
+### Fields that should stay `voice`
+
+Email addresses, names, and free-text fields contain non-digit characters that
+cannot be entered on a standard phone keypad. Leave those at `input: voice` (the
+default). A DTMF question whose answer turns out to contain letters will not be
+capturable — the caller will be pushed to the voice-fallback path.
 
 ---
 

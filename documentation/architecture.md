@@ -104,12 +104,18 @@ receptionist/
   - Optional wall-clock silence fallback (`voice.idle.absolute_silence_seconds`) → same `silence_timeout` reason when no non-empty final user transcript arrives before the threshold
   - Max-duration cap (`voice.idle.max_call_duration_seconds`, when set) → reason="max_duration_reached"
   - Consecutive unproductive replies (`voice.idle.unproductive_turn_threshold`) → reason="unproductive_turns_exhausted"
-- DTMF keypress (when `dtmf.enabled`) → LiveKit room emits `sip_dtmf_received`
-  → handler resolves the digit against `dtmf.digits`, debounces and suppresses
-  in-flight repeats, speaks a brief acknowledgment, then dispatches the
-  configured action (transfer via the shared `_execute_transfer` helper,
-  take_message via a collection prompt, end_call, or repeat_menu). Each press
-  is recorded via `lifecycle.record_dtmf_event(...)`.
+- DTMF keypress → LiveKit room emits `sip_dtmf_received` → handler checks
+  whether a `DigitCaptureBuffer` is armed (set by `await_keypad_entry`):
+  - **Capture mode** (intake DTMF field): digit appended to the buffer;
+    `#` or `dtmf_length` auto-submit resolves the tool's future; `*` clears.
+    Press is recorded via `lifecycle.record_dtmf_event(status=intake_capture)`.
+  - **Menu mode** (when `dtmf.enabled` and no buffer is armed): handler
+    resolves the digit against `dtmf.digits`, debounces and suppresses
+    in-flight repeats, speaks a brief acknowledgment, then dispatches the
+    configured action (transfer via `_execute_transfer`, take_message,
+    end_call, or repeat_menu). Press recorded via `lifecycle.record_dtmf_event(...)`.
+  The `sip_dtmf_received` listener wires automatically when any intake question
+  has `input: dtmf`, even when no `dtmf:` menu block is configured.
 
 ### 5. Disconnect
 1. `session` emits `close` event
@@ -187,6 +193,18 @@ suppresses presses while an action is in flight, and only acts on events from
 the resolved SIP caller participant. Every press is recorded as a
 `DtmfEventRecord` in `CallMetadata.dtmf_events` and rendered in the call-end
 email's "Keypad actions" section.
+
+The same handler also supports a **capture mode** for digit-only intake fields.
+When the model calls `await_keypad_entry(question_key)` for an intake question
+marked `input: dtmf`, the tool arms a `DigitCaptureBuffer` that intercepts
+subsequent `sip_dtmf_received` events before they reach the menu-dispatch path.
+Incoming digits accumulate in the buffer; `#` submits (or the count reaches
+`dtmf_length` for auto-complete); `*` clears and restarts. When the buffer
+resolves, the tool's awaitable future is fulfilled with the exact digit string.
+The menu handler regains exclusive control after the future resolves (or on a
+30-second timeout, which triggers a voice-fallback path). The listener wires
+automatically when any intake question opts into keypad entry — no `dtmf:` menu
+block is required.
 
 ### Local dev worker generation guard
 

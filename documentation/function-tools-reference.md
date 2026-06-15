@@ -16,6 +16,7 @@ This document provides a detailed reference for each function tool exposed by th
 - [book_appointment](#book_appointment)
 - [record_intake_answer](#record_intake_answer)
 - [finalize_intake](#finalize_intake)
+- [await_keypad_entry](#await_keypad_entry)
 - [send_info_packet](#send_info_packet)
 - [end_call](#end_call)
 - [Tool Interaction Patterns](#tool-interaction-patterns)
@@ -38,6 +39,7 @@ The Receptionist agent exposes the following function tools to the OpenAI Realti
 | `book_appointment` | Book a specific previously-offered slot | Caller confirms a time |
 | `record_intake_answer` | Record one answer in an in-progress intake | Caller is going through a structured intake |
 | `finalize_intake` | Submit the completed intake | Riley has captured all required answers and confirmed critical fields |
+| `await_keypad_entry` | Pause intake flow and collect digits from the caller's phone keypad | Intake question is marked `input: dtmf` (digit-only fields such as phone numbers or SSNs) |
 | `send_info_packet` | Email a configured information packet to the caller (two-step: first call returns the address for read-back, second call with `destination_confirmed=true` sends) | Caller consented and confirmed an email address |
 | `end_call` | Say goodbye and hang up | Caller has clearly finished the conversation |
 
@@ -673,6 +675,103 @@ confirmed.
 
 ---
 
+## await_keypad_entry
+
+### Purpose
+
+Collect a digit sequence from the caller's phone keypad for an intake question
+marked `input: dtmf`. Used **instead of** asking the caller to say the number
+aloud — which the Realtime model can mis-hear — for fields that are purely
+numeric (phone numbers, Social Security numbers, etc.).
+
+When the model reaches a keypad question in the intake script, it calls this
+tool, which tells the caller to type the digits and press pound. Digits are
+buffered deterministically off LiveKit's `sip_dtmf_received` event (not
+dispatched as menu actions). Once the caller finishes, the tool returns the
+exact digit string to the model. The model reads the digits back to the caller
+to confirm, then calls `record_intake_answer` with the confirmed value.
+
+### Signature
+
+```python
+@function_tool()
+async def await_keypad_entry(self, ctx: RunContext, question_key: str) -> str
+```
+
+### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `question_key` | str | Yes | The intake question key (from `intakes.case_types[*].questions[*].key`) for which keypad entry is being collected. Must match a question configured with `input: dtmf`. |
+
+### Return Value
+
+Two shapes are possible:
+
+- **Success** — the exact digits the caller entered (e.g. `"7135550138"`).
+  The tool result also instructs the model to read the digits back to the
+  caller one by one and wait for explicit confirmation before calling
+  `record_intake_answer`.
+- **Timeout / unavailable** — a voice-fallback instruction string telling the
+  model to ask the caller to say the number aloud, using digit-by-digit
+  readback as it would for any other `critical` field.
+
+### Termination rules
+
+| Condition | Result |
+|-----------|--------|
+| Caller presses `#` | Submits whatever digits were buffered so far |
+| Digit count reaches `dtmf_length` (when set) | Auto-submits without needing `#` |
+| Caller presses `*` | Clears the buffer and restarts; caller can try again |
+| 30-second timeout with no input | Tool returns the voice-fallback instruction |
+
+### Auto-enablement
+
+The `sip_dtmf_received` listener wires automatically when **any** intake
+question has `input: dtmf` — even if the business has no `dtmf:` menu block
+configured. The menu handler and the capture buffer share one event handler;
+capture mode takes precedence when the tool has armed the buffer by calling
+`await_keypad_entry`.
+
+### Call-end email
+
+Keypad capture events (status `intake_capture`, `intake_capture_cleared`,
+`intake_capture_timeout`) are recorded in `CallMetadata.dtmf_events` and
+appear in the call-end email's "Keypad actions" section, alongside any
+menu-dispatch events.
+
+### Example Interaction
+
+```
+[Intake reaches the phone-number question, which has input: dtmf]
+
+→ Model calls: await_keypad_entry(question_key="callback_phone")
+  → Agent speaks: "Please type your phone number on your keypad and press pound."
+  → Caller types: 7 1 3 5 5 5 0 1 3 8 #
+← Tool returns: "7135550138 — read these digits back to the caller one by one
+   and wait for explicit confirmation, then call record_intake_answer."
+
+Agent speaks: "I have 7-1-3-5-5-5-0-1-3-8. Is that correct?"
+Caller: "Yes."
+
+→ Model calls: record_intake_answer(
+    case_type="workers_comp",
+    question_key="callback_phone",
+    spoken_text="7135550138",
+    language="en",
+    english_summary="7135550138"
+  )
+```
+
+### When NOT to use
+
+Fields that contain non-digit characters — names, dates, email addresses —
+cannot be captured via keypad. Keep those questions at `input: voice`
+(the default). Only set `input: dtmf` for fields that are entirely numeric and
+where mis-transcription would be harmful (phone numbers, SSNs).
+
+---
+
 ## send_info_packet
 
 ### Purpose
@@ -820,6 +919,8 @@ Caller: "Do you do teeth whitening?"
 | `transfer_call` | SIP transfer fails | Apology + offer to take a message instead |
 | `take_message` | File write fails | Apology + ask to try again |
 | `get_business_hours` | Config error | General hours from system prompt |
+| `await_keypad_entry` | 30-second timeout with no digit input | Voice-fallback instruction; model asks caller to say number aloud |
+| `await_keypad_entry` | SIP participant not present (non-SIP call) | Voice-fallback instruction; DTMF events from non-SIP participants are ignored by design |
 | `send_info_packet` | Missing consent | Ask permission and confirm the email address before sending |
 | `send_info_packet` | Destination not yet confirmed (first call, mismatched address, or stale confirmation) | Read the parsed address back letter by letter, then call again with `destination_confirmed=true` |
 | `send_info_packet` | Unsupported channel or invalid email | Email-only / ask caller to spell the address again |

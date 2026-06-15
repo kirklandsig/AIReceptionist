@@ -871,30 +871,17 @@ async def _speak_goodbye_and_terminate(
                 "to terminate", reason, extra=log_extra,
             )
 
-    # Finalize the call lifecycle before waiting for goodbye playout or
-    # removing the SIP participant. Callers often hang up during the goodbye;
-    # if finalization waits for playout, LiveKit may already be tearing down
-    # the job executor when deferred email fan-out starts.
-    logger.info(
-        "agent_end: invoking lifecycle.on_call_ended pre-terminate "
-        "(pending=%d, channels=%d)",
-        len(lifecycle._pending_message_emails),
-        len(lifecycle._email_channels),
-        extra=log_extra,
-    )
-    try:
-        await lifecycle.on_call_ended()
-        logger.info(
-            "agent_end: lifecycle.on_call_ended returned cleanly",
-            extra=log_extra,
-        )
-    except Exception:
-        logger.exception(
-            "agent_end: lifecycle.on_call_ended raised before terminate; "
-            "proceeding to terminate anyway",
-            extra=log_extra,
-        )
-
+    # Order: wait for goodbye playout -> drop the SIP caller -> finalize
+    # (transcript + email fan-out, which now includes the up-to-20s AI
+    # summary). Releasing the caller BEFORE the email work means they hear the
+    # goodbye and the line drops immediately, instead of sitting on a live
+    # line for the duration of summary generation. This is safe because:
+    #   - remove_participant (SIP BYE) drops only the caller; the agent's own
+    #     job process stays alive, so the asyncio executor is still healthy for
+    #     the email DNS/SMTP work that runs in on_call_ended.
+    #   - on_call_ended is idempotent (the session-close handler calls it too;
+    #     the second call is a guarded no-op), so finalization runs exactly
+    #     once regardless of which path reaches it first.
     if handle is not None:
         try:
             await asyncio.wait_for(handle.wait_for_playout(), timeout=10.0)
@@ -910,9 +897,36 @@ async def _speak_goodbye_and_terminate(
             )
 
     caller_identity = _get_caller_identity(job_ctx)
-    await _terminate_room(
-        job_ctx, caller_identity, job_ctx.room.name, call_id=call_id,
+    try:
+        await _terminate_room(
+            job_ctx, caller_identity, job_ctx.room.name, call_id=call_id,
+        )
+    except Exception:
+        # Never let a terminate failure skip the email fan-out — losing the
+        # call-summary email is worse than a messy hangup.
+        logger.exception(
+            "agent_end: terminate raised; finalizing lifecycle anyway",
+            extra=log_extra,
+        )
+
+    logger.info(
+        "agent_end: invoking lifecycle.on_call_ended post-terminate "
+        "(pending=%d, channels=%d)",
+        len(lifecycle._pending_message_emails),
+        len(lifecycle._email_channels),
+        extra=log_extra,
     )
+    try:
+        await lifecycle.on_call_ended()
+        logger.info(
+            "agent_end: lifecycle.on_call_ended returned cleanly",
+            extra=log_extra,
+        )
+    except Exception:
+        logger.exception(
+            "agent_end: lifecycle.on_call_ended raised",
+            extra=log_extra,
+        )
 
 
 async def _terminate_room(

@@ -227,9 +227,19 @@ async def test_speak_goodbye_and_terminate_calls_terminate_after_playout(
 
 
 @pytest.mark.asyncio
-async def test_speak_goodbye_finalizes_before_waiting_for_playout(
+async def test_speak_goodbye_terminates_before_finalizing(
     v2_yaml, monkeypatch,
 ):
+    """The caller must be released BEFORE the (potentially slow) email
+    fan-out runs. Order: speak goodbye -> wait playout -> terminate the SIP
+    leg -> finalize lifecycle (transcript + email, incl. the AI summary).
+
+    The earlier order (finalize first) made the goodbye+hangup wait on the
+    up-to-20s summary generation, so the caller heard "goodbye" then sat on
+    a live line for ~15s. Finalizing AFTER remove_participant is safe: the
+    agent's own job process survives the SIP BYE, so the asyncio executor is
+    still healthy for the email DNS/SMTP work, and on_call_ended is
+    idempotent (the close handler's later call is a guarded no-op)."""
     from receptionist.agent import _speak_goodbye_and_terminate
     from receptionist.config import BusinessConfig
 
@@ -261,7 +271,41 @@ async def test_speak_goodbye_finalizes_before_waiting_for_playout(
         session, lifecycle, job_ctx, reason="caller_goodbye",
     )
 
-    assert events == ["finalize", "playout", "terminate"]
+    assert events == ["playout", "terminate", "finalize"]
+
+
+@pytest.mark.asyncio
+async def test_speak_goodbye_still_finalizes_when_terminate_raises(
+    v2_yaml, monkeypatch,
+):
+    """If terminate fails, the email fan-out must still run — losing the
+    call summary email is worse than a messy hangup."""
+    from receptionist.agent import _speak_goodbye_and_terminate
+    from receptionist.config import BusinessConfig
+
+    config = BusinessConfig.from_yaml_string(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    finalize = AsyncMock()
+    lifecycle.on_call_ended = finalize
+
+    handle = MagicMock()
+    handle.wait_for_playout = AsyncMock()
+    session = MagicMock()
+    session.generate_reply = MagicMock(return_value=handle)
+
+    job_ctx = _job_ctx()
+    monkeypatch.setattr(
+        "receptionist.agent._get_caller_identity", lambda _ctx: "sip_17135550038",
+    )
+    monkeypatch.setattr(
+        "receptionist.agent._terminate_room",
+        AsyncMock(side_effect=RuntimeError("terminate boom")),
+    )
+
+    await _speak_goodbye_and_terminate(
+        session, lifecycle, job_ctx, reason="caller_goodbye",
+    )
+    finalize.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Agent-initiated call endings (goodbye / silence / max-duration / unproductive
+  turns) now drop the SIP caller BEFORE running the call-end fan-out
+  (transcript + email, including the AI summary). Previously the email work —
+  up to ~20 s with summary generation — ran before the hangup, so the caller
+  heard the goodbye then sat on a live line for several seconds. Email delivery
+  remains reliable (the agent's job process survives the SIP BYE; on_call_ended
+  is idempotent).
 - send_info_packet now enforces a two-step destination confirmation: the
   first call returns the parsed address for letter-by-letter read-back;
   sending requires a second call with destination_confirmed=true and a

@@ -94,6 +94,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config load instead of during a live call.
 
 ### Fixed
+- **Info packet never sent on the confirming call (consent gate trap).** The
+  two-step `send_info_packet` flow checked `consent_confirmed` before the
+  destination-confirmation logic, so the second (confirming) call — which the
+  model makes with only `destination_confirmed=true`, exactly as the read-back
+  instruction directs — was refused by the consent gate and no packet was ever
+  sent (the agent then falsely told the caller it had been). The gate now treats
+  a confirming call against the already-consented pending address as carrying
+  consent forward; consent is still required on the first call and cannot be
+  bypassed (a `destination_confirmed=true` with no prior consented read-back
+  still refuses).
 - **Realtime Beta API sunset (production outage).** OpenAI disabled the
   Realtime *Beta* API on 2026-06-03; the GA endpoint no longer accepts
   ChatGPT/Codex OAuth tokens, so deployments using `voice.auth.type:

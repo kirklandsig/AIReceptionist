@@ -1324,6 +1324,13 @@ class Receptionist(Agent):
         # check-before-book pattern): send_info_packet refuses to send until
         # the model has been handed this exact address to read back and the
         # caller confirmed it. Holds the lowercased pending address.
+        #
+        # Consent is captured on the FIRST call (which requires
+        # consent_confirmed=true to reach the read-back), so the confirming
+        # SECOND call does not need to re-pass consent_confirmed — the model
+        # only re-asserts destination_confirmed=true per the read-back
+        # instruction. _pending_packet_destination being set IS the proof that
+        # consent was already given for that address.
         self._pending_packet_destination: str | None = None
         # Shared DTMF handler state, assigned by handle_call after both the
         # Receptionist and the handler state exist. None when no DTMF listener
@@ -1874,11 +1881,6 @@ class Receptionist(Agent):
             )
         if channel.lower() != "email":
             return "I can only send information packets by email right now."
-        if not consent_confirmed:
-            return (
-                "Ask the caller for permission and confirm the email address "
-                "before sending."
-            )
         destination = (destination or "").strip()
         if not is_valid_email_destination(destination):
             return (
@@ -1898,7 +1900,24 @@ class Receptionist(Agent):
                 "the office will follow up."
             )
         normalized = destination.lower()
-        if not destination_confirmed or normalized != self._pending_packet_destination:
+        # A confirming second call (destination_confirmed=true on the same
+        # address we previously handed back) completes the send. Consent was
+        # already established on the first call — which had to pass
+        # consent_confirmed=true to reach the read-back — so we do NOT re-demand
+        # consent_confirmed here. The model, following the read-back
+        # instruction, only re-asserts destination_confirmed=true.
+        is_confirming = (
+            destination_confirmed
+            and self._pending_packet_destination == normalized
+        )
+        if not is_confirming:
+            # First call (or a corrected/new address): require consent, then
+            # arm the pending destination and hand it back for read-back.
+            if not consent_confirmed:
+                return (
+                    "Ask the caller for permission and confirm the email address "
+                    "before sending."
+                )
             self._pending_packet_destination = normalized
             return (
                 "Do not send yet. Read this email address back to the caller "

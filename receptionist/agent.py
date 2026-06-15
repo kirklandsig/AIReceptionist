@@ -1028,6 +1028,13 @@ def _capture_caller_phone_from_participant(
 
 _DTMF_DEBOUNCE_SECONDS = 1.5
 
+_KEYPAD_ENTRY_TIMEOUT_SECONDS = 30.0
+
+_KEYPAD_VOICE_FALLBACK = (
+    "Keypad entry isn't available right now. Ask the caller to say the number "
+    "instead, then read it back digit by digit and confirm before recording it."
+)
+
 _DTMF_TAKE_MESSAGE_INSTRUCTIONS = (
     "Briefly acknowledge that you will take a message. Then ask "
     "for the caller's name, their callback number, and what they "
@@ -1318,6 +1325,10 @@ class Receptionist(Agent):
         # the model has been handed this exact address to read back and the
         # caller confirmed it. Holds the lowercased pending address.
         self._pending_packet_destination: str | None = None
+        # Shared DTMF handler state, assigned by handle_call after both the
+        # Receptionist and the handler state exist. None when no DTMF listener
+        # is wired. The await_keypad_entry tool arms a capture on this state.
+        self._dtmf_state = None
 
     def _get_calendar_client(self):
         """Lazily construct and cache the Google Calendar client for this call."""
@@ -1648,6 +1659,91 @@ class Receptionist(Agent):
             submission, case_type_display=case_type_cfg.display_name,
         )
         return f"Answer recorded for {question_key}. Proceed to the next question."
+
+    @function_tool()
+    async def await_keypad_entry(self, ctx: RunContext, question_key: str) -> str:
+        """Collect a digit-only intake answer from the caller's phone keypad.
+
+        Use this INSTEAD of asking the caller to say the number for any intake
+        question marked for keypad entry (phone numbers, SSNs). Tell the caller
+        to type the number on their phone keypad and press the pound key. This
+        tool returns the exact digits they typed. Read those digits back to the
+        caller to confirm, then call record_intake_answer with the confirmed
+        digits. If this tool reports a timeout, ask the caller to say the
+        number and read it back digit by digit before recording.
+
+        Args:
+            question_key: the question.key of the keypad question being asked.
+        """
+        if self.config.intakes is None or not self.config.intakes.enabled:
+            return (
+                "Intake is not enabled. Use take_message to record the caller's "
+                "information instead."
+            )
+        question = None
+        for ct in self.config.intakes.case_types:
+            for q in ct.questions:
+                if q.key == question_key:
+                    question = q
+                    break
+            if question is not None:
+                break
+        if question is None or question.input != "dtmf":
+            return (
+                f"Question {question_key!r} is not a keypad-entry question. Ask "
+                "the caller to say the answer instead."
+            )
+        if self._dtmf_state is None:
+            logger.warning(
+                "await_keypad_entry: no DTMF handler wired; voice fallback",
+                extra={
+                    "call_id": self.lifecycle.metadata.call_id,
+                    "component": "agent.dtmf_capture",
+                },
+            )
+            return _KEYPAD_VOICE_FALLBACK
+
+        loop = asyncio.get_event_loop()
+        future: asyncio.Future = loop.create_future()
+        self._dtmf_state.capture = _ActiveCapture(
+            buffer=DigitCaptureBuffer(expected_length=question.dtmf_length),
+            future=future,
+            question_key=question_key,
+        )
+        try:
+            digits = await asyncio.wait_for(
+                future, timeout=_KEYPAD_ENTRY_TIMEOUT_SECONDS,
+            )
+        except asyncio.TimeoutError:
+            self._dtmf_state.capture = None
+            self.lifecycle.record_dtmf_event(
+                digit="", action="intake_capture", target=question_key,
+                status="intake_capture_timeout",
+            )
+            logger.info(
+                "await_keypad_entry: timed out for %s; voice fallback",
+                question_key,
+                extra={
+                    "call_id": self.lifecycle.metadata.call_id,
+                    "component": "agent.dtmf_capture",
+                },
+            )
+            return _KEYPAD_VOICE_FALLBACK
+        except Exception:
+            self._dtmf_state.capture = None
+            logger.exception(
+                "await_keypad_entry: unexpected error; voice fallback",
+                extra={
+                    "call_id": self.lifecycle.metadata.call_id,
+                    "component": "agent.dtmf_capture",
+                },
+            )
+            return _KEYPAD_VOICE_FALLBACK
+
+        return (
+            f"The caller typed: {digits}. Read these digits back one at a time "
+            "to confirm, then call record_intake_answer with this exact value."
+        )
 
     @function_tool()
     async def finalize_intake(
@@ -2391,7 +2487,13 @@ async def handle_call(ctx: agents.JobContext):
     # deterministically off the LiveKit `sip_dtmf_received` event rather than
     # through the LLM. Transfers reuse receptionist._execute_transfer so the
     # intake_only gate and SIP path are shared with the voice transfer_call.
-    if config.dtmf is not None and config.dtmf.enabled:
+    intakes_has_dtmf = (
+        config.intakes is not None
+        and config.intakes.enabled
+        and config.intakes.has_dtmf_questions()
+    )
+    menu_enabled = config.dtmf is not None and config.dtmf.enabled
+    if menu_enabled or intakes_has_dtmf:
         _dtmf_sip_identity = _get_caller_identity(ctx)
 
         async def _dtmf_speak_goodbye() -> None:
@@ -2407,6 +2509,7 @@ async def handle_call(ctx: agents.JobContext):
             execute_transfer=receptionist._execute_transfer,
             speak_goodbye=_dtmf_speak_goodbye,
         )
+        receptionist._dtmf_state = _dtmf_state
 
         def _on_sip_dtmf_received(event) -> None:
             _create_background_task(_dispatch_dtmf_event(event, _dtmf_state))

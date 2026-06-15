@@ -50,6 +50,42 @@ def _config_with_intakes(v2_yaml: str, *, intake_file_path: str):
     })
 
 
+def _config_with_dtmf_intake(v2_yaml):
+    from receptionist.config import (
+        BusinessConfig, IntakesConfig, IntakeCaseType, IntakeQuestion,
+        IntakeSubmissionConfig,
+    )
+    base = BusinessConfig.from_yaml_string(v2_yaml)
+    return base.model_copy(update={
+        "intakes": IntakesConfig(
+            enabled=True,
+            submission=IntakeSubmissionConfig(file_path="./m/intakes/"),
+            case_types=[
+                IntakeCaseType(
+                    key="wc", display_name="WC",
+                    questions=[
+                        IntakeQuestion(key="name", prompt_en="Name?"),
+                        IntakeQuestion(
+                            key="cb", prompt_en="Number?",
+                            input="dtmf", dtmf_length=10,
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    })
+
+
+def _keypad_receptionist(config, lifecycle, dtmf_state):
+    """Bare receptionist exposing await_keypad_entry, with a _dtmf_state slot."""
+    from receptionist.agent import Receptionist
+    obj = SimpleNamespace(config=config, lifecycle=lifecycle, _dtmf_state=dtmf_state)
+    raw = Receptionist.await_keypad_entry
+    fn = raw.fnc if hasattr(raw, "fnc") else raw
+    obj._await_keypad_entry = fn.__get__(obj)
+    return obj
+
+
 def _bare_receptionist(config, lifecycle):
     """Build a Receptionist-shaped object with the intake state the tools need.
 
@@ -310,3 +346,86 @@ async def test_record_intake_answer_truncates_overlong_text(
     )
     answer = r._intake_answers["caller_full_name"]
     assert len(answer.spoken_text) <= 4000
+
+
+@pytest.mark.asyncio
+async def test_await_keypad_entry_returns_captured_digits(v2_yaml, mocker):
+    import asyncio
+    from receptionist.agent import _DtmfHandlerState
+
+    config = _config_with_dtmf_intake(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    state = _DtmfHandlerState(
+        config=config, lifecycle=lifecycle, session=mocker.MagicMock(),
+        sip_caller_identity="sip_caller",
+        execute_transfer=mocker.AsyncMock(), speak_goodbye=mocker.AsyncMock(),
+    )
+    r = _keypad_receptionist(config, lifecycle, state)
+
+    async def _drive():
+        for _ in range(200):
+            if state.capture is not None:
+                break
+            await asyncio.sleep(0.005)
+        assert state.capture is not None
+        for d in "5551234567":
+            state.capture.buffer.add_key(d)
+        state.capture.future.set_result(state.capture.buffer.digits)
+        state.capture = None
+
+    ctx = mocker.MagicMock()
+    ctx.session.generate_reply = mocker.AsyncMock()
+    driver = asyncio.create_task(_drive())
+    result = await r._await_keypad_entry(ctx, question_key="cb")
+    await driver
+    assert "5551234567" in result
+
+
+@pytest.mark.asyncio
+async def test_await_keypad_entry_times_out_to_voice_fallback(v2_yaml, mocker):
+    from receptionist.agent import _DtmfHandlerState
+    import receptionist.agent as agent_module
+
+    mocker.patch.object(agent_module, "_KEYPAD_ENTRY_TIMEOUT_SECONDS", 0.05)
+    config = _config_with_dtmf_intake(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    state = _DtmfHandlerState(
+        config=config, lifecycle=lifecycle, session=mocker.MagicMock(),
+        sip_caller_identity="sip_caller",
+        execute_transfer=mocker.AsyncMock(), speak_goodbye=mocker.AsyncMock(),
+    )
+    r = _keypad_receptionist(config, lifecycle, state)
+    ctx = mocker.MagicMock()
+    ctx.session.generate_reply = mocker.AsyncMock()
+    result = await r._await_keypad_entry(ctx, question_key="cb")
+    assert "say the number" in result.lower()
+    assert state.capture is None  # disarmed on timeout
+
+
+@pytest.mark.asyncio
+async def test_await_keypad_entry_rejects_voice_question(v2_yaml, mocker):
+    from receptionist.agent import _DtmfHandlerState
+    config = _config_with_dtmf_intake(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    state = _DtmfHandlerState(
+        config=config, lifecycle=lifecycle, session=mocker.MagicMock(),
+        sip_caller_identity="sip_caller",
+        execute_transfer=mocker.AsyncMock(), speak_goodbye=mocker.AsyncMock(),
+    )
+    r = _keypad_receptionist(config, lifecycle, state)
+    ctx = mocker.MagicMock()
+    ctx.session.generate_reply = mocker.AsyncMock()
+    result = await r._await_keypad_entry(ctx, question_key="name")  # voice question
+    assert "not a keypad" in result.lower() or "say" in result.lower()
+    assert state.capture is None
+
+
+@pytest.mark.asyncio
+async def test_await_keypad_entry_without_handler_returns_fallback(v2_yaml, mocker):
+    config = _config_with_dtmf_intake(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="r-1", caller_phone=None)
+    r = _keypad_receptionist(config, lifecycle, None)  # no handler wired
+    ctx = mocker.MagicMock()
+    ctx.session.generate_reply = mocker.AsyncMock()
+    result = await r._await_keypad_entry(ctx, question_key="cb")
+    assert "say the number" in result.lower()

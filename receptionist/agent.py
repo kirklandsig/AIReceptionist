@@ -29,6 +29,7 @@ from receptionist.booking.availability import find_slots
 from receptionist.booking.models import SlotProposal
 from receptionist.config import BusinessConfig, load_config
 from receptionist.info_packets import is_valid_email_destination, send_info_packet_email
+from receptionist.intakes.dtmf_capture import CaptureStatus, DigitCaptureBuffer
 from receptionist.lifecycle import CallLifecycle
 from receptionist.messaging.dispatcher import Dispatcher
 from receptionist.messaging.models import DispatchContext, Message
@@ -1035,6 +1036,18 @@ _DTMF_TAKE_MESSAGE_INSTRUCTIONS = (
 
 
 @dataclass
+class _ActiveCapture:
+    """A live keypad-digit capture armed by the await_keypad_entry tool.
+
+    `future` is resolved with the captured digit string when the caller
+    presses # or reaches the expected length. `question_key` is for logging.
+    """
+    buffer: DigitCaptureBuffer
+    future: "asyncio.Future"
+    question_key: str
+
+
+@dataclass
 class _DtmfHandlerState:
     """Per-call state the DTMF handler closes over.
 
@@ -1055,6 +1068,8 @@ class _DtmfHandlerState:
 
     last_press_ts: dict[str, float] = field(default_factory=dict)
     action_in_flight: bool = False
+    # Set by await_keypad_entry while collecting digits for an intake answer.
+    capture: _ActiveCapture | None = None
 
 
 async def _dispatch_dtmf_event(event, state: _DtmfHandlerState) -> None:
@@ -1071,7 +1086,11 @@ async def _dispatch_dtmf_event(event, state: _DtmfHandlerState) -> None:
     misbehaving keypress never crashes the call.
     """
     dtmf_cfg = state.config.dtmf
-    if dtmf_cfg is None or not dtmf_cfg.enabled:
+    menu_enabled = dtmf_cfg is not None and dtmf_cfg.enabled
+    # Bail only when there's nothing to do with the keypress: no menu AND no
+    # armed capture. An armed capture (Task 5) routes digits even when the
+    # business config has no `dtmf` menu block.
+    if not menu_enabled and state.capture is None:
         return
 
     participant_identity = getattr(getattr(event, "participant", None), "identity", None)
@@ -1088,7 +1107,12 @@ async def _dispatch_dtmf_event(event, state: _DtmfHandlerState) -> None:
         return
 
     digit = str(getattr(event, "digit", "")).strip()
-    action_cfg = dtmf_cfg.digits.get(digit)
+
+    if state.capture is not None:
+        _feed_capture_digit(state, digit)
+        return
+
+    action_cfg = dtmf_cfg.digits.get(digit) if dtmf_cfg is not None else None
 
     if action_cfg is None:
         state.lifecycle.record_dtmf_event(
@@ -1204,6 +1228,41 @@ async def _dispatch_dtmf_event(event, state: _DtmfHandlerState) -> None:
             )
     finally:
         state.action_in_flight = False
+
+
+def _feed_capture_digit(state: _DtmfHandlerState, digit: str) -> None:
+    """Route a keypad digit into the armed capture buffer.
+
+    Resolves the capture Future on completion and disarms; logs clears. Never
+    raises — a misbehaving keypress must not crash the call.
+    """
+    capture = state.capture
+    if capture is None:
+        return
+    try:
+        status = capture.buffer.add_key(digit)
+    except Exception:
+        logger.exception(
+            "dtmf capture: add_key raised; ignoring digit",
+            extra={
+                "call_id": state.lifecycle.metadata.call_id,
+                "component": "agent.dtmf_capture",
+            },
+        )
+        return
+    if status == CaptureStatus.COMPLETE:
+        state.lifecycle.record_dtmf_event(
+            digit=digit, action="intake_capture",
+            target=capture.question_key, status="intake_capture",
+        )
+        state.capture = None
+        if not capture.future.done():
+            capture.future.set_result(capture.buffer.digits)
+    elif status == CaptureStatus.CLEARED:
+        state.lifecycle.record_dtmf_event(
+            digit=digit, action="intake_capture",
+            target=capture.question_key, status="intake_capture_cleared",
+        )
 
 
 class Receptionist(Agent):

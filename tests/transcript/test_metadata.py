@@ -164,3 +164,10 @@ def test_call_metadata_dtmf_events_defaults_empty():
 
     assert md.dtmf_events == []
     assert md.to_dict()["dtmf_events"] == []
+
+
+def test_valid_dtmf_statuses_include_intake_capture():
+    from receptionist.transcript.metadata import VALID_DTMF_STATUSES
+    assert "intake_capture" in VALID_DTMF_STATUSES
+    assert "intake_capture_cleared" in VALID_DTMF_STATUSES
+    assert "intake_capture_timeout" in VALID_DTMF_STATUSES

@@ -200,6 +200,67 @@ async def test_send_info_packet_tool_sends_email_and_records_success(v2_yaml, mo
 
 
 @pytest.mark.asyncio
+async def test_send_info_packet_second_call_sends_without_re_passing_consent(
+    v2_yaml, mocker,
+):
+    """Production regression: the model gives consent on the FIRST call, then
+    on the confirming SECOND call it passes only destination_confirmed=true
+    (the read-back instruction never tells it to re-pass consent_confirmed).
+    A matching confirmed destination must complete the send — consent was
+    already established on the first call. Previously the consent gate ran
+    first and refused the second call, so no packet was ever sent."""
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    # First call WITH consent → read-back, no send.
+    first = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="claimant@example.com",
+        consent_confirmed=True,
+    )
+    assert "claimant@example.com" in first
+    send_mock.assert_not_called()
+    # Second call: destination_confirmed only, consent_confirmed omitted
+    # (defaults False) — exactly what the live model did.
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="claimant@example.com",
+        destination_confirmed=True,
+    )
+    assert "sent" in result.lower()
+    send_mock.assert_awaited_once()
+    assert lifecycle.metadata.info_packet_sends[0].status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_send_info_packet_confirmed_without_prior_consent_call_refuses(
+    v2_yaml, mocker,
+):
+    """A confirmed destination is only honored if a prior consent call armed
+    the pending destination. destination_confirmed=true on a FRESH tool with
+    no prior consented read-back must NOT send — it falls back to asking for
+    consent. (Prevents the confirm flag alone from bypassing consent.)"""
+    config = _config_with_packets(v2_yaml)
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_packet_receptionist(config, lifecycle)
+    send_mock = mocker.patch("receptionist.agent.send_info_packet_email", AsyncMock())
+    result = await r._send_info_packet(
+        SimpleNamespace(),
+        packet_key="firm_overview",
+        channel="email",
+        destination="claimant@example.com",
+        destination_confirmed=True,  # but no prior consent call
+    )
+    send_mock.assert_not_called()
+    assert "permission" in result.lower() or "consent" in result.lower()
+
+
+@pytest.mark.asyncio
 async def test_transfer_call_refuses_in_intake_only_mode(v2_yaml):
     from receptionist.config import AgentConfig
 

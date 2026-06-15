@@ -24,6 +24,7 @@ VALID_OUTCOMES = {
 VALID_DTMF_STATUSES = {
     "pending", "executed", "failed", "unmapped",
     "duplicate_ignored", "suppressed_in_flight", "refused_intake_only",
+    "intake_capture", "intake_capture_cleared", "intake_capture_timeout",
 }
 
 

@@ -96,7 +96,7 @@ OPENAI_API_KEY=sk-your-openai-key
 ```
 
 `OPENAI_API_KEY` is required for the Realtime API. Set `voice.auth.type:
-"api_key"` (the default) and `voice.model: "gpt-realtime"` (the GA model) in
+"api_key"` (the default) and `voice.model: "gpt-realtime-2.1"` in
 your business YAML.
 
 > **Deprecated:** the `voice.auth.type: "oauth_codex"` path (ChatGPT/Codex OAuth

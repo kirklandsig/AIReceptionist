@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 from pydantic import ValidationError
-from receptionist.config import BusinessConfig, load_config
+from receptionist.config import BusinessConfig, VoiceConfig, load_config
 
 
 EXAMPLE_YAML = """
@@ -160,15 +160,17 @@ messages:
 
 # ---- v2 schema tests ----
 
-from receptionist.config import BusinessConfig
-
 
 def test_v2_schema_loads(v2_yaml):
     config = BusinessConfig.from_yaml_string(v2_yaml)
     assert config.business.name == "Test Dental"
     assert config.voice.voice_id == "marin"
-    assert config.voice.model == "gpt-realtime"
+    assert config.voice.model == "gpt-realtime-2.1"
     assert config.voice.auth is None
+
+
+def test_voice_model_defaults_to_current_full_model():
+    assert VoiceConfig().model == "gpt-realtime-2.1"
 
 
 def test_agent_mode_defaults_to_receptionist(v2_yaml):
@@ -257,8 +259,8 @@ info_packets:
 
 def _v2_yaml_with_voice_auth(v2_yaml: str, auth_block: str) -> str:
     return v2_yaml.replace(
-        '  model: "gpt-realtime"',
-        f'  model: "gpt-realtime"\n  auth:\n{auth_block}',
+        '  model: "gpt-realtime-2.1"',
+        f'  model: "gpt-realtime-2.1"\n  auth:\n{auth_block}',
     )
 
 
@@ -291,11 +293,11 @@ def test_voice_reasoning_and_token_cap_default_off(v2_yaml):
 
 def test_voice_reasoning_effort_parses(v2_yaml):
     yaml_text = v2_yaml.replace(
-        '  model: "gpt-realtime"',
-        '  model: "gpt-realtime-2"\n  reasoning_effort: "low"\n  max_response_output_tokens: 1200',
+        '  model: "gpt-realtime-2.1"',
+        '  model: "gpt-realtime-2.1"\n  reasoning_effort: "low"\n  max_response_output_tokens: 1200',
     )
     config = BusinessConfig.from_yaml_string(yaml_text)
-    assert config.voice.model == "gpt-realtime-2"
+    assert config.voice.model == "gpt-realtime-2.1"
     assert config.voice.reasoning_effort == "low"
     assert config.voice.max_response_output_tokens == 1200
 
@@ -303,8 +305,8 @@ def test_voice_reasoning_effort_parses(v2_yaml):
 def test_voice_reasoning_effort_rejects_unknown_value(v2_yaml):
     import pytest
     yaml_text = v2_yaml.replace(
-        '  model: "gpt-realtime"',
-        '  model: "gpt-realtime-2"\n  reasoning_effort: "turbo"',
+        '  model: "gpt-realtime-2.1"',
+        '  model: "gpt-realtime-2.1"\n  reasoning_effort: "turbo"',
     )
     with pytest.raises(ValueError, match="reasoning_effort"):
         BusinessConfig.from_yaml_string(yaml_text)
@@ -313,8 +315,8 @@ def test_voice_reasoning_effort_rejects_unknown_value(v2_yaml):
 def test_voice_max_response_output_tokens_must_be_positive(v2_yaml):
     import pytest
     yaml_text = v2_yaml.replace(
-        '  model: "gpt-realtime"',
-        '  model: "gpt-realtime"\n  max_response_output_tokens: 0',
+        '  model: "gpt-realtime-2.1"',
+        '  model: "gpt-realtime-2.1"\n  max_response_output_tokens: 0',
     )
     with pytest.raises(ValueError, match="max_response_output_tokens"):
         BusinessConfig.from_yaml_string(yaml_text)

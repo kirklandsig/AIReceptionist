@@ -7,7 +7,7 @@
 
 > **This project is in active development.** Core functionality works (voice conversations, FAQ answering, call transfers, message taking), but expect breaking changes and rough edges. Contributions welcome.
 
-> ⚠️ **2026-06-03 — OpenAI sunset the Realtime *Beta* API.** The GA Realtime API requires a standard OpenAI API key (`sk-...`). **ChatGPT/Codex OAuth (`voice.auth.type: oauth_codex`) no longer authenticates Realtime** — deployments using it will connect the call but the caller hears silence. Set `voice.auth.type: api_key` and `voice.model: gpt-realtime`. See [troubleshooting → "Realtime handshake fails with `500` / Beta API sunset"](documentation/troubleshooting.md).
+> ⚠️ **2026-06-03 — OpenAI sunset the Realtime *Beta* API.** The GA Realtime API requires a standard OpenAI API key (`sk-...`). **ChatGPT/Codex OAuth (`voice.auth.type: oauth_codex`) no longer authenticates Realtime** — deployments using it will connect the call but the caller hears silence. Set `voice.auth.type: api_key` and `voice.model: gpt-realtime-2.1`. See [troubleshooting → "Realtime handshake fails with `500` / Beta API sunset"](documentation/troubleshooting.md).
 
 # AI Receptionist -- Open Source, Self-Hosted, No Compromises
 
@@ -156,7 +156,7 @@ Authenticate Realtime with a standard OpenAI API key (`sk-...`). The default
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
   auth:
     type: "api_key"   # reads OPENAI_API_KEY by default
 ```
@@ -249,7 +249,7 @@ languages:
   allowed: ["en", "es", "fr"]
 ```
 
-`gpt-realtime` (the GA Realtime model) auto-detects the caller's language. If the caller speaks one of the allowed languages, the agent responds in that language for the rest of the call. If the caller speaks an un-whitelisted language, the agent politely redirects in `primary`.
+`gpt-realtime-2.1` auto-detects the caller's language. If the caller speaks one of the allowed languages, the agent responds in that language for the rest of the call. If the caller speaks an un-whitelisted language, the agent politely redirects in `primary`.
 
 ## Retention
 

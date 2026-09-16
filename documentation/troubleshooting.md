@@ -325,12 +325,12 @@ form returns *"Missing bearer or basic authentication in header."*
 **Solution**:
 1. Obtain a standard OpenAI API key (`sk-...` / `sk-proj-...`) on the account
    that should be billed for Realtime usage (platform.openai.com → API keys).
-   GA Realtime is metered per audio minute; consider a usage limit on the key.
+   Realtime audio is metered by audio tokens; consider a usage limit on the key.
 2. Put the key in the worker's environment, e.g. `OPENAI_API_KEY=sk-...` in
    `.env` (gitignored). The worker loads `.env` at startup.
 3. Switch the tenant's `voice.auth` from `type: oauth_codex` to
    `type: api_key` (which reads `OPENAI_API_KEY` by default), and set
-   `voice.model: gpt-realtime` (the GA model; `gpt-realtime-1.5` was tied to
+   `voice.model: gpt-realtime-2.1` (`gpt-realtime-1.5` was tied to
    the retired beta path).
 4. Restart the worker and place a live test call. A healthy call logs
    `about_to_session_start` → `session_start_returned` within ~1–2s and no
@@ -597,16 +597,16 @@ level**, so the logs look like clean gaps. Upgrade to >= 1.6 to surface the
 `RealtimeError('response failed: [tokens] rate_limit_exceeded')` lines.
 
 **Solution** (in order of impact):
-1. **Raise the OpenAI usage tier.** This is the real fix. Tier 1 is 40k TPM
-   for `gpt-realtime`; Tier 2 (after $50 cumulative spend + 7+ days, or
-   pre-paying credits to cross the threshold) lifts it ~5x. Confirm the limit
-   by reading the `x-ratelimit-limit-tokens` response header on any call with
-   the account key.
+1. **Check the account's OpenAI usage tier.** The public model page currently
+   lists 40k TPM for Tier 1 and 200k TPM for Tier 2, but availability and
+   effective limits are account-specific. Confirm the limit in the OpenAI
+   dashboard or from the `x-ratelimit-limit-tokens` response header.
 2. **Cap response length.** Set `voice.max_response_output_tokens` (e.g.
    `1200`) so no single response can burn an outsized share of the per-minute
    budget.
-3. **Use a reasoning model at low effort.** `voice.model: gpt-realtime-2` with
-   `voice.reasoning_effort: low` produces tighter, cheaper responses.
+3. **Reduce reasoning effort.** `voice.model: gpt-realtime-2.1` with
+   `voice.reasoning_effort: low` can reduce latency and output-token usage
+   relative to higher effort. Validate caller quality before changing it.
 4. **Shorten the system prompt.** Trim FAQs/routing for the tenant; the prompt
    is re-sent every turn, so its size is a per-turn token multiplier.
 

@@ -23,7 +23,7 @@ business:
 
 voice:
   voice_id: "marin"              # OpenAI Realtime voice; "marin"/"cedar" are GA Realtime voices
-  model: "gpt-realtime"          # GA Realtime model; options: gpt-realtime, gpt-realtime-2, gpt-realtime-mini
+  model: "gpt-realtime-2.1"      # Current full model; use gpt-realtime-2.1-mini only after workload validation
   # auth:
   #   type: "api_key"             # reads OPENAI_API_KEY by default — REQUIRED for GA Realtime
   #   # NOTE: oauth_codex (ChatGPT/Codex OAuth) no longer authenticates the GA

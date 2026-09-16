@@ -156,12 +156,12 @@ class VoiceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     voice_id: str = "marin"
-    model: str = "gpt-realtime"
+    model: str = "gpt-realtime-2.1"
     auth: VoiceAuth | None = None
     idle: VoiceIdleConfig = Field(default_factory=VoiceIdleConfig)
     # Reasoning effort for reasoning-capable Realtime models (e.g.
-    # gpt-realtime-2). None leaves the model's default. OpenAI recommends
-    # "low" for production voice latency. Only applied when the installed
+    # gpt-realtime-2.1). None leaves the model's default. Lower effort can
+    # reduce latency and output-token usage. Only applied when the installed
     # livekit-plugins-openai exposes the `reasoning` parameter.
     reasoning_effort: str | None = None
     # Hard cap on tokens per model response. None leaves the model default.

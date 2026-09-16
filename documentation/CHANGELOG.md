@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- The default Realtime model and active configuration examples now use
+  `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` is documented as an explicit
+  lower-cost option that should be validated on the caller workload before use.
 - Agent-initiated call endings (goodbye / silence / max-duration / unproductive
   turns) now drop the SIP caller BEFORE running the call-end fan-out
   (transcript + email, including the AI summary). Previously the email work —
@@ -44,9 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keypad (DTMF) entry for digit-only intake questions via `IntakeQuestion.input: dtmf` (+ optional `dtmf_length`).
 - `voice.reasoning_effort` and `voice.max_response_output_tokens` config fields.
   `reasoning_effort` (`minimal`/`low`/`medium`/`high`) configures reasoning-capable
-  Realtime models such as `gpt-realtime-2` (OpenAI recommends `low` for voice
-  latency); `max_response_output_tokens` caps tokens per response to protect
-  against exhausting the account's per-minute token rate limit. Both require
+  Realtime models such as `gpt-realtime-2.1`; lower effort can reduce latency
+  and output-token usage. `max_response_output_tokens` caps tokens per response
+  to protect against exhausting the account's per-minute token rate limit. Both require
   `livekit-plugins-openai` >= 1.6 and are ignored gracefully on older builds.
 - Realtime error safety net: on a recoverable Realtime API error (most commonly
   `rate_limit_exceeded`), the agent now speaks a brief filler and re-triggers

@@ -737,9 +737,9 @@ from receptionist.agent import (
 
 
 def test_realtime_kwargs_minimal_when_features_unset():
-    voice = VoiceConfig(voice_id="marin", model="gpt-realtime")
+    voice = VoiceConfig(voice_id="marin", model="gpt-realtime-2.1-mini")
     kwargs = _build_realtime_model_kwargs(voice, api_key="sk-test")
-    assert kwargs["model"] == "gpt-realtime"
+    assert kwargs["model"] == "gpt-realtime-2.1-mini"
     assert kwargs["voice"] == "marin"
     assert kwargs["api_key"] == "sk-test"
     assert "reasoning" not in kwargs
@@ -748,7 +748,7 @@ def test_realtime_kwargs_minimal_when_features_unset():
 
 def test_realtime_kwargs_includes_reasoning_when_set():
     voice = VoiceConfig(
-        voice_id="marin", model="gpt-realtime-2", reasoning_effort="low",
+        voice_id="marin", model="gpt-realtime-2.1", reasoning_effort="low",
     )
     kwargs = _build_realtime_model_kwargs(voice, api_key="sk-test")
     assert kwargs["reasoning"].effort == "low"
@@ -776,7 +776,7 @@ class _FakeRealtimeModelNoTokenSetter:
 
 def test_apply_realtime_options_sets_token_cap_via_update_options():
     voice = VoiceConfig(
-        voice_id="marin", model="gpt-realtime-2", max_response_output_tokens=1500,
+        voice_id="marin", model="gpt-realtime-2.1", max_response_output_tokens=1500,
     )
     model = _FakeRealtimeModelWithUpdate()
     _apply_realtime_options(model, voice)
@@ -784,7 +784,7 @@ def test_apply_realtime_options_sets_token_cap_via_update_options():
 
 
 def test_apply_realtime_options_noop_when_cap_unset():
-    voice = VoiceConfig(voice_id="marin", model="gpt-realtime")
+    voice = VoiceConfig(voice_id="marin", model="gpt-realtime-2.1")
     model = _FakeRealtimeModelWithUpdate()
     _apply_realtime_options(model, voice)
     assert model.applied == {}
@@ -792,7 +792,7 @@ def test_apply_realtime_options_noop_when_cap_unset():
 
 def test_apply_realtime_options_skips_when_setter_lacks_token_param():
     voice = VoiceConfig(
-        voice_id="marin", model="gpt-realtime-2", max_response_output_tokens=1500,
+        voice_id="marin", model="gpt-realtime-2.1", max_response_output_tokens=1500,
     )
     model = _FakeRealtimeModelNoTokenSetter()
     _apply_realtime_options(model, voice)  # must not raise

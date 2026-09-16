@@ -85,7 +85,7 @@ agent:
 
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
   idle:
     absolute_silence_seconds: 120
 
@@ -253,21 +253,26 @@ Voice configuration for the OpenAI Realtime API.
 | Field | Type | Required | Default | Description |
 |-------|------|----------|---------|-------------|
 | `voice_id` | string | No | `"marin"` | The OpenAI voice to use for the receptionist. |
-| `model` | string | No | `"gpt-realtime"` | The OpenAI Realtime (GA) model variant to use. |
+| `model` | string | No | `"gpt-realtime-2.1"` | The OpenAI Realtime model to use. |
 | `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. **GA Realtime requires a standard `sk-` API key**; ChatGPT/Codex OAuth (`oauth_codex`) no longer authenticates Realtime as of the 2026-06-03 beta sunset. |
-| `reasoning_effort` | string or null | No | `null` | Reasoning effort for reasoning-capable Realtime models (`gpt-realtime-2`). One of `minimal`, `low`, `medium`, `high`. OpenAI recommends `low` for production voice latency. Leave `null` for non-reasoning models. Only applied when the installed `livekit-plugins-openai` (>= 1.6) exposes the `reasoning` parameter; ignored with a warning otherwise. |
+| `reasoning_effort` | string or null | No | `null` | Reasoning effort for reasoning-capable Realtime models (`gpt-realtime-2.1`). One of `minimal`, `low`, `medium`, `high`. Lower effort can reduce latency and output-token usage. Leave `null` for the model default. Only applied when the installed `livekit-plugins-openai` (>= 1.6) exposes the `reasoning` parameter; ignored with a warning otherwise. |
 | `max_response_output_tokens` | int or null | No | `null` | Hard cap on tokens per model response. A finite cap protects against a runaway response exhausting the account's per-minute token rate limit — the cause of mid-call dead air on rate-limited OpenAI tiers. Leave `null` for the model default. |
 
 **Available models** (GA Realtime):
 
 | Model | Description |
 |-------|-------------|
-| `gpt-realtime` | Recommended GA default; auto-tracks OpenAI's best stable snapshot |
-| `gpt-realtime-2` | Newest / most capable GA snapshot (higher per-minute cost) |
-| `gpt-realtime-mini` | Cheaper, faster, lower-capability tier |
-| `gpt-realtime-1.5` | Older snapshot; was tied to the retired Realtime Beta path |
+| `gpt-realtime-2.1` | Current full model and project default |
+| `gpt-realtime-2.1-mini` | Lower-cost model; opt in only after validating your caller workload |
 
-**Recommendation**: keep the default `gpt-realtime` unless you have a specific reason to pin another variant. Use `gpt-realtime-2` for the newest model at higher cost.
+Check the official OpenAI model pages for current
+[`gpt-realtime-2.1`](https://developers.openai.com/api/docs/models/gpt-realtime-2.1)
+and
+[`gpt-realtime-2.1-mini`](https://developers.openai.com/api/docs/models/gpt-realtime-2.1-mini)
+pricing, availability, and rate limits. Your account's effective access and
+limits can differ from the public catalog.
+
+**Recommendation**: start with `gpt-realtime-2.1`. Consider `gpt-realtime-2.1-mini` for lower cost only after comparing completion quality, wrong side effects, latency, retries, and caller abandonment on a representative workload.
 
 **Available voices**:
 
@@ -283,12 +288,12 @@ Voice configuration for the OpenAI Realtime API.
 | `verse` | Rich, expressive |
 | `marin` | Natural, approachable (default) |
 
-**Recommendation**: `marin` works well with `gpt-realtime`. `ash` is good for warmer, more personal businesses. `sage` suits authoritative contexts like law firms.
+**Recommendation**: `marin` is the default. `ash` is good for warmer, more personal businesses. `sage` suits authoritative contexts like law firms.
 
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
 ```
 
 #### `voice.auth`
@@ -309,7 +314,7 @@ var name.
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
   auth:
     type: "api_key"
     env: "ACME_OPENAI_KEY"  # default: OPENAI_API_KEY
@@ -336,7 +341,7 @@ endpoint and writes the rotated tokens back to the same file.
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
   auth:
     type: "oauth_codex"
     path: "~/.codex/auth.json"  # default
@@ -360,7 +365,7 @@ validates the token, and updates the business YAML in place:
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
   auth:
     type: "oauth_codex"
     path: "secrets/example-dental/openai_auth.json"
@@ -400,7 +405,7 @@ Use a raw bearer token directly or read it from an env var. Prefer
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime"
+  model: "gpt-realtime-2.1"
   auth:
     type: "oauth_static"
     token_env: "OPENAI_OAUTH_TOKEN"

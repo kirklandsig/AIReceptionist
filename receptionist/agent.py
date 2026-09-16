@@ -112,11 +112,20 @@ def _apply_realtime_options(realtime_model, voice_config) -> None:
     if voice_config.max_response_output_tokens is None:
         return
     update_options = getattr(realtime_model, "update_options", None)
-    if update_options is None:
-        return
     import inspect
 
-    if "max_response_output_tokens" not in inspect.signature(update_options).parameters:
+    if (
+        update_options is None
+        or "max_response_output_tokens"
+        not in inspect.signature(update_options).parameters
+    ):
+        logger.warning(
+            "voice.max_response_output_tokens=%r set but the installed "
+            "livekit-plugins-openai RealtimeModel has no update_options("
+            "max_response_output_tokens=...); cap NOT applied",
+            voice_config.max_response_output_tokens,
+            extra={"component": "agent.realtime"},
+        )
         return
     try:
         update_options(
@@ -255,47 +264,17 @@ _GENERATION_WATCHDOG_THREAD: threading.Thread | None = None
 _GENERATION_WATCHDOG_INTERVAL_SECONDS = 2.0
 
 
-def _bc(stage: str, call_id: str) -> None:
-    """Write a per-PID breadcrumb file. Used to diagnose handle_call
-    execution flow when the shared `agent.log` is corrupted by interleaved
-    writes from multiple worker subprocesses. Atomic per-line write to a
-    per-PID file. Always also emits to stderr so we see it in agent.err
-    even if the file write fails (wrong CWD, permission denied, etc.).
-    Failures are swallowed because diagnostic logging must never crash
-    the call.
-
-    Directory resolution priority:
-    1. `RECEPTIONIST_AGENT_GENERATION_FILE` env var (set by launcher) →
-       use its directory for breadcrumbs/ subdir.
-    2. `RECEPTIONIST_CONFIG` env var + relative `secrets/<slug>/runtime/`.
-    3. Plain relative `breadcrumbs/`.
+def _trace_stage(stage: str, call_id: str) -> None:
+    """Log a handle_call setup stage. Replaces the per-PID breadcrumb file
+    tracer (stderr print + synchronous file writes on the event loop) that
+    was added to diagnose interleaved multi-process log writes; that bug is
+    closed and the stage names are still what troubleshooting docs look for.
     """
-    import sys
-    line = f"{time.time():.3f} pid={os.getpid()} call_id={call_id} stage={stage}"
-    # Stderr first — works even if file write fails. Redirected to agent.err.
-    try:
-        print(f"BC {line}", file=sys.stderr, flush=True)
-    except Exception:  # noqa: BLE001
-        pass
-    # Then attempt the per-PID file write at the best available path.
-    candidate_dirs = []
-    gen_file = os.environ.get("RECEPTIONIST_AGENT_GENERATION_FILE")
-    if gen_file:
-        candidate_dirs.append(Path(gen_file).resolve().parent / "breadcrumbs")
-    business = os.environ.get("RECEPTIONIST_CONFIG")
-    if business:
-        candidate_dirs.append(
-            Path("secrets") / business / "runtime" / "breadcrumbs"
-        )
-    candidate_dirs.append(Path("breadcrumbs"))
-    for d in candidate_dirs:
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-            with open(d / f"{os.getpid()}.bc", "a", encoding="utf-8") as f:
-                f.write(line + "\n")
-            return
-        except Exception:  # noqa: BLE001
-            continue
+    logger.info(
+        "handle_call stage=%s",
+        stage,
+        extra={"call_id": call_id, "component": "agent.setup"},
+    )
 
 
 # Spoken/returned when a transfer is attempted on an intake_only line. The
@@ -2415,18 +2394,18 @@ server.setup_fnc = _prewarm
 
 @server.rtc_session(agent_name=_resolve_agent_name())
 async def handle_call(ctx: agents.JobContext):
-    _bc("handle_call_entered", getattr(getattr(ctx, "room", None), "name", "?"))
+    _trace_stage("handle_call_entered", getattr(getattr(ctx, "room", None), "name", "?"))
     _start_generation_watchdog_once()
-    _bc("after_watchdog_start", getattr(getattr(ctx, "room", None), "name", "?"))
+    _trace_stage("after_watchdog_start", getattr(getattr(ctx, "room", None), "name", "?"))
     config = load_business_config(ctx)
-    _bc("after_load_config", getattr(getattr(ctx, "room", None), "name", "?"))
+    _trace_stage("after_load_config", getattr(getattr(ctx, "room", None), "name", "?"))
 
     lifecycle = CallLifecycle(
         config=config,
         call_id=ctx.room.name,
         caller_phone=_get_caller_phone(ctx),
     )
-    _bc("after_lifecycle_init", lifecycle.metadata.call_id)
+    _trace_stage("after_lifecycle_init", lifecycle.metadata.call_id)
 
     logger.info(
         "callerid: handle_call snapshot caller_phone_present=%s room=%s",
@@ -2727,7 +2706,7 @@ async def handle_call(ctx: agents.JobContext):
     # to a per-PID file in `secrets/<business>/runtime/breadcrumbs/` is
     # atomic and gives us reliable execution traces during live-call
     # debugging.
-    _bc("about_to_session_start", lifecycle.metadata.call_id)
+    _trace_stage("about_to_session_start", lifecycle.metadata.call_id)
     await session.start(
         room=ctx.room,
         agent=receptionist,
@@ -2741,20 +2720,20 @@ async def handle_call(ctx: agents.JobContext):
             ),
         ),
     )
-    _bc("session_start_returned", lifecycle.metadata.call_id)
+    _trace_stage("session_start_returned", lifecycle.metadata.call_id)
     try:
         await _refresh_realtime_tools(
             receptionist, call_id=lifecycle.metadata.call_id,
         )
     except Exception as exc:
-        _bc(f"refresh_realtime_tools_raised:{type(exc).__name__}:{exc!r}",
+        _trace_stage(f"refresh_realtime_tools_raised:{type(exc).__name__}:{exc!r}",
             lifecycle.metadata.call_id)
         logger.error(
             "handle_call: _refresh_realtime_tools raised; call will proceed "
             "with whatever tool registry OpenAI established during session.start",
             extra={"call_id": lifecycle.metadata.call_id, "component": "agent.setup"},
         )
-    _bc("setup_complete", lifecycle.metadata.call_id)
+    _trace_stage("setup_complete", lifecycle.metadata.call_id)
 
 
 if __name__ == "__main__":

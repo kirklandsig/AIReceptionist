@@ -58,6 +58,19 @@ class CodexOAuthVoiceAuth(BaseModel):
     type: Literal["oauth_codex"]
     path: str = "~/.codex/auth.json"
 
+    @model_validator(mode="after")
+    def warn_deprecated(self) -> CodexOAuthVoiceAuth:
+        # The GA Realtime API rejects ChatGPT/Codex OAuth tokens since the
+        # 2026-06-03 Beta sunset: the call connects and the caller hears
+        # silence. Loading still succeeds so old YAMLs parse, but say so.
+        logger.warning(
+            "voice.auth.type=oauth_codex is deprecated and no longer "
+            "authenticates the OpenAI Realtime API; calls will connect to "
+            "dead air. Switch to voice.auth.type=api_key.",
+            extra={"component": "config"},
+        )
+        return self
+
 
 class StaticOAuthVoiceAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")

@@ -158,7 +158,7 @@ def test_main_setup_respects_existing_voice_auth_path(tmp_path, monkeypatch, moc
         voice_block="""
 voice:
   voice_id: marin
-  model: gpt-realtime-1.5
+  model: gpt-realtime-2.1
   auth:
     type: oauth_codex
     path: custom/auth.json
@@ -192,7 +192,7 @@ def _write_business_config(tmp_path, slug: str, *, voice_block: str | None = Non
     voice = voice_block or """
 voice:
   voice_id: marin
-  model: gpt-realtime-1.5
+  model: gpt-realtime-2.1
 """
     (tmp_path / "config" / "businesses" / f"{slug}.yaml").write_text(f"""
 business: {{ name: "Test", type: "t", timezone: "UTC" }}

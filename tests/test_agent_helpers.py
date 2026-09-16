@@ -790,13 +790,36 @@ def test_apply_realtime_options_noop_when_cap_unset():
     assert model.applied == {}
 
 
-def test_apply_realtime_options_skips_when_setter_lacks_token_param():
+def test_apply_realtime_options_skips_when_setter_lacks_token_param(caplog):
     voice = VoiceConfig(
         voice_id="marin", model="gpt-realtime-2.1", max_response_output_tokens=1500,
     )
     model = _FakeRealtimeModelNoTokenSetter()
-    _apply_realtime_options(model, voice)  # must not raise
+    with caplog.at_level(logging.WARNING, logger="receptionist"):
+        _apply_realtime_options(model, voice)  # must not raise
     assert model.called is False
+    assert any(
+        "max_response_output_tokens" in r.getMessage() and "NOT applied" in r.getMessage()
+        for r in caplog.records
+    ), "silently dropping the token cap must be surfaced as a WARNING"
+
+
+def test_apply_realtime_options_warns_when_update_options_missing(caplog):
+    voice = VoiceConfig(
+        voice_id="marin", model="gpt-realtime-2.1", max_response_output_tokens=1500,
+    )
+    with caplog.at_level(logging.WARNING, logger="receptionist"):
+        _apply_realtime_options(object(), voice)  # must not raise
+    assert any("NOT applied" in r.getMessage() for r in caplog.records)
+
+
+def test_trace_stage_logs_stage_and_call_id(caplog):
+    from receptionist.agent import _trace_stage
+
+    with caplog.at_level(logging.INFO, logger="receptionist"):
+        _trace_stage("about_to_session_start", "call-123")
+    rec = next(r for r in caplog.records if "stage=about_to_session_start" in r.getMessage())
+    assert rec.call_id == "call-123"
 
 
 # ---- Realtime error recovery: filler + retry (Task 11) ----

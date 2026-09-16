@@ -254,7 +254,7 @@ Voice configuration for the OpenAI Realtime API.
 |-------|------|----------|---------|-------------|
 | `voice_id` | string | No | `"marin"` | The OpenAI voice to use for the receptionist. |
 | `model` | string | No | `"gpt-realtime-2.1"` | The OpenAI Realtime model to use. |
-| `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. **GA Realtime requires a standard `sk-` API key**; ChatGPT/Codex OAuth (`oauth_codex`) no longer authenticates Realtime as of the 2026-06-03 beta sunset. |
+| `auth` | object | No | omitted | Per-business auth source for Realtime. If omitted, the LiveKit OpenAI plugin uses `OPENAI_API_KEY` exactly as before. **GA Realtime requires a standard `sk-` API key**; ChatGPT/Codex OAuth (`oauth_codex`) no longer authenticates Realtime as of the 2026-06-03 beta sunset, and loading a YAML that still uses it logs a `WARNING` at startup. |
 | `reasoning_effort` | string or null | No | `null` | Reasoning effort for reasoning-capable Realtime models (`gpt-realtime-2.1`). One of `minimal`, `low`, `medium`, `high`. Lower effort can reduce latency and output-token usage. Leave `null` for the model default. Only applied when the installed `livekit-plugins-openai` (>= 1.6) exposes the `reasoning` parameter; ignored with a warning otherwise. |
 | `max_response_output_tokens` | int or null | No | `null` | Hard cap on tokens per model response. A finite cap protects against a runaway response exhausting the account's per-minute token rate limit — the cause of mid-call dead air on rate-limited OpenAI tiers. Leave `null` for the model default. |
 
@@ -262,8 +262,12 @@ Voice configuration for the OpenAI Realtime API.
 
 | Model | Description |
 |-------|-------------|
-| `gpt-realtime-2.1` | Current full model and project default |
+| `gpt-realtime-2.1` | Current full model and project default; same audio pricing as `gpt-realtime-2` |
 | `gpt-realtime-2.1-mini` | Lower-cost model; opt in only after validating your caller workload |
+| `gpt-realtime-2` | Previous full model; still available and proven in production with `reasoning_effort: low` |
+| `gpt-realtime` | Alias that tracks a stable non-reasoning snapshot (`gpt-realtime-2025-08-28`); `reasoning_effort` has no effect |
+| `gpt-realtime-mini` | **Deprecated by OpenAI** — use `gpt-realtime-2.1-mini` |
+| `gpt-live-1` | **Not supported.** Uses OpenAI's separate Live API (per-minute billing) and needs a different LiveKit model class; not a drop-in for `voice.model` |
 
 Check the official OpenAI model pages for current
 [`gpt-realtime-2.1`](https://developers.openai.com/api/docs/models/gpt-realtime-2.1)

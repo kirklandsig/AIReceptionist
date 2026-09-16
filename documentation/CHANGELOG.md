@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- `handle_call` setup stages (`handle_call_entered` … `setup_complete`) are now
+  emitted through the normal `receptionist` logger as
+  `handle_call stage=<name>` INFO lines. The previous per-PID breadcrumb file
+  tracer (stderr `print` + synchronous file writes on the event loop, 8x per
+  call) was removed; the `breadcrumbs/` directories it created are no longer
+  written.
+- Configuration reference model table again lists every Realtime model that
+  is live (`gpt-realtime-2.1`, `-2.1-mini`, `-2`, `gpt-realtime`), marks
+  `gpt-realtime-mini` as deprecated by OpenAI, and notes that `gpt-live-1`
+  is not a drop-in `voice.model`.
+- Minimum `livekit-agents` / `livekit-plugins-openai` raised to 1.8.2
+  (verified: no API changes on the surface this project uses; pulls in the
+  1.6.5–1.7.1 Realtime orphaned-response/reconnect fixes and the 1.8.2
+  prefork preload).
+
+### Deprecated
+- `voice.auth.type: oauth_codex` now logs a WARNING when a business YAML is
+  loaded with it, stating that the path no longer authenticates the GA
+  Realtime API and calls will connect to dead air. Loading still succeeds so
+  old configs parse; switch to `api_key`.
+
+### Fixed
+- `voice.max_response_output_tokens` was dropped silently when the installed
+  `livekit-plugins-openai` had no `update_options(max_response_output_tokens=)`
+  setter. It now logs a WARNING naming the cap that was not applied.
 - The default Realtime model and active configuration examples now use
   `gpt-realtime-2.1`. `gpt-realtime-2.1-mini` is documented as an explicit
   lower-cost option that should be validated on the caller workload before use.

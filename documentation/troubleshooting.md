@@ -333,7 +333,7 @@ form returns *"Missing bearer or basic authentication in header."*
    `voice.model: gpt-realtime-2.1` (`gpt-realtime-1.5` was tied to
    the retired beta path).
 4. Restart the worker and place a live test call. A healthy call logs
-   `about_to_session_start` → `session_start_returned` within ~1–2s and no
+   `handle_call stage=about_to_session_start` → `stage=session_start_returned` within ~1–2s and no
    `Invalid response status`.
 
 ### Call transfers fail
@@ -597,10 +597,13 @@ level**, so the logs look like clean gaps. Upgrade to >= 1.6 to surface the
 `RealtimeError('response failed: [tokens] rate_limit_exceeded')` lines.
 
 **Solution** (in order of impact):
-1. **Check the account's OpenAI usage tier.** The public model page currently
-   lists 40k TPM for Tier 1 and 200k TPM for Tier 2, but availability and
-   effective limits are account-specific. Confirm the limit in the OpenAI
-   dashboard or from the `x-ratelimit-limit-tokens` response header.
+1. **Raise the OpenAI usage tier.** This is the real fix — the June 2026
+   dead-air incident was resolved by moving the account off Tier 1. The
+   public model page lists 40k TPM for Tier 1, 200k for Tier 2 and 800k for
+   Tier 3, but effective limits are account-specific: confirm yours in the
+   OpenAI dashboard or from the `x-ratelimit-limit-tokens` response header
+   (probe a real chat model or the realtime endpoint — `gpt-realtime*` slugs
+   against `/v1/chat/completions` return a misleading `40000` placeholder).
 2. **Cap response length.** Set `voice.max_response_output_tokens` (e.g.
    `1200`) so no single response can burn an outsized share of the per-minute
    budget.

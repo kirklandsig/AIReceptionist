@@ -113,7 +113,7 @@ Realtime model access.
 ### Live call smoke test
 
 - [ ] Connect from LiveKit Playground
-- [ ] Greeting is heard using `gpt-realtime-1.5` and the configured voice
+- [ ] Greeting is heard using the configured `voice.model` and voice
 - [ ] Complete at least two conversational turns without `401`, `Invalid bearer token`, or `insufficient_scope`
 
 ### Refresh smoke test

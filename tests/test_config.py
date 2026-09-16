@@ -278,6 +278,25 @@ def test_voice_auth_api_key_custom_env(v2_yaml):
     assert config.voice.auth.env == "ACME_OPENAI_KEY"
 
 
+def test_voice_auth_oauth_codex_warns_deprecated(v2_yaml, caplog):
+    import logging
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "oauth_codex"')
+    with caplog.at_level(logging.WARNING, logger="receptionist"):
+        BusinessConfig.from_yaml_string(yaml_text)
+    assert any(
+        "oauth_codex" in r.getMessage() and "deprecated" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_voice_auth_api_key_does_not_warn(v2_yaml, caplog):
+    import logging
+    yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "api_key"')
+    with caplog.at_level(logging.WARNING, logger="receptionist"):
+        BusinessConfig.from_yaml_string(yaml_text)
+    assert not any("oauth_codex" in r.getMessage() for r in caplog.records)
+
+
 def test_voice_auth_oauth_codex_defaults_to_codex_path(v2_yaml):
     yaml_text = _v2_yaml_with_voice_auth(v2_yaml, '    type: "oauth_codex"')
     config = BusinessConfig.from_yaml_string(yaml_text)

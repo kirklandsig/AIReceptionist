@@ -79,7 +79,7 @@ What the command does:
 ```yaml
 voice:
   voice_id: "marin"
-  model: "gpt-realtime-1.5"
+  model: "gpt-realtime-2.1"
   auth:
     type: "oauth_codex"
     path: "secrets/example-dental/openai_auth.json"

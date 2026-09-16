@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ai-receptionist"
-version = "0.1.0"
+version = "0.2.0"
 description = "High-fidelity AI phone receptionist using OpenAI Realtime API and LiveKit"
 requires-python = ">=3.11"
 dependencies = [
-    "livekit-agents>=1.5.0",
-    "livekit-plugins-openai>=1.5.0",
+    "livekit-agents>=1.8.2",
+    "livekit-plugins-openai>=1.8.2",
     "livekit-plugins-noise-cancellation>=0.2.3",
     "pydantic>=2.0",
     "pyyaml>=6.0",

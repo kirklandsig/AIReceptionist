@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_No unreleased changes yet._
+
+---
+
+## [0.2.0] - 2026-09-16
+
+First tagged release since 0.1.0. Everything below shipped to production incrementally between 2026-03 and 2026-09; see `git log` for per-change commits.
+
 ### Changed
 - `handle_call` setup stages (`handle_call_entered` … `setup_complete`) are now
   emitted through the normal `receptionist` logger as

@@ -15,7 +15,7 @@
 - **Package manager:** pip with `pyproject.toml` (hatchling build backend); the virtualenv lives at the repo root in `venv/`
 - **Validation:** Pydantic v2 for all configuration models
 - **Agent framework:** LiveKit Agents SDK (`livekit-agents >= 1.8.2`, `AgentServer` + `@server.rtc_session`)
-- **Voice AI:** OpenAI Realtime API (speech-to-speech, not cascaded STT/TTS). Default model `gpt-realtime-2.1`; production runs `gpt-realtime-2` with `reasoning_effort: low` and `max_response_output_tokens: 1200`.
+- **Voice AI:** OpenAI Realtime API (speech-to-speech, not cascaded STT/TTS). Default model `gpt-realtime-2.1`; production also runs `gpt-realtime-2.1` with `reasoning_effort: low` and `max_response_output_tokens: 1200`.
 - **Config format:** YAML files in `config/businesses/`, validated through Pydantic
 - **Production:** one worker on a DigitalOcean droplet under systemd (`receptionist.service`, `python -m receptionist.agent start`). Tenant YAML, `secrets/`, `.env` and `handoff.md` are gitignored and live only on the VM / laptop.
 

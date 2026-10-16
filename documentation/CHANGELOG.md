@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Fixed
+
+- `voice.reasoning_effort` was silently ignored (WARNING only) on `livekit-plugins-openai` > 1.8.2, which no longer re-exports `RealtimeReasoning` from `realtime_model`. The agent now falls back to importing it from `openai.types.realtime`.
 
 ---
 

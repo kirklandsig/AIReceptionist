@@ -74,9 +74,16 @@ def _build_realtime_model_kwargs(voice_config, api_key: str | None) -> dict:
 
     if voice_config.reasoning_effort is not None and "reasoning" in supported:
         try:
-            from livekit.plugins.openai.realtime.realtime_model import (
-                RealtimeReasoning,
-            )
+            try:
+                # livekit-plugins-openai 1.8.2 and earlier exposed the type
+                # from its provider module.
+                from livekit.plugins.openai.realtime.realtime_model import (
+                    RealtimeReasoning,
+                )
+            except ImportError:
+                # Newer 1.8.x releases share the protocol implementation with
+                # livekit-agents and use the OpenAI SDK's public type directly.
+                from openai.types.realtime import RealtimeReasoning
 
             kwargs["reasoning"] = RealtimeReasoning(
                 effort=voice_config.reasoning_effort
@@ -2385,7 +2392,11 @@ class Receptionist(Agent):
         )
 
 
-server = AgentServer()
+# A cold subprocess re-imports the application and provider stack. On
+# resource-constrained hosts that can exceed LiveKit's 10-second default;
+# allowing a full minute prevents transient CPU contention from dropping a
+# job even though current SDKs correctly retry failed process acquisition.
+server = AgentServer(initialize_process_timeout=60.0)
 # Per-subprocess signaling warmup (cold-start mitigation). LiveKit recommends
 # assigning lifecycle hooks directly on the AgentServer instance rather than
 # passing them to the constructor. See _warm_signaling for the rationale.

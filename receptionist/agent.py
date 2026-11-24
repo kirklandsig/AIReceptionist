@@ -1794,6 +1794,19 @@ class Receptionist(Agent):
         case_type_cfg = case_types_by_key.get(self._intake_case_type)
         display = case_type_cfg.display_name if case_type_cfg else self._intake_case_type
 
+        if case_type_cfg is not None:
+            missing_required = [
+                q.key
+                for q in case_type_cfg.questions
+                if q.required and q.key not in self._intake_answers
+            ]
+            if missing_required:
+                return (
+                    f"Cannot finalize intake: required question(s) {', '.join(missing_required)} "
+                    f"have not been answered yet. Call record_intake_answer for each "
+                    f"required question before finalizing."
+                )
+
         submission = IntakeSubmission(
             case_type=self._intake_case_type,
             business_name=self.config.business.name,

@@ -332,6 +332,37 @@ async def test_finalize_intake_without_prior_answers_returns_error(
 
 
 @pytest.mark.asyncio
+async def test_finalize_intake_rejects_missing_required_questions(
+    tmp_path, v2_yaml, fake_ctx,
+):
+    config = _config_with_intakes(v2_yaml, intake_file_path=str(tmp_path))
+    lifecycle = CallLifecycle(config=config, call_id="room-1", caller_phone=None)
+    r = _bare_receptionist(config, lifecycle)
+
+    await r._record_intake_answer(
+        fake_ctx,
+        case_type="example_intake",
+        question_key="caller_full_name",
+        spoken_text="Jane Doe",
+        english_summary="Jane Doe",
+    )
+    # 'employer' is required=True in example_intake but has not been recorded
+
+    result = await r._finalize_intake(
+        fake_ctx,
+        caller_name="Jane Doe",
+        callback_number="+15551112222",
+        english_overview="New client intake.",
+    )
+    assert "employer" in result
+    assert "required" in result.lower()
+    assert "intake_submitted" not in lifecycle.metadata.outcomes
+    assert len(list(tmp_path.glob("intake_*.final.json"))) == 0
+    assert lifecycle._pending_intake_submission.status == "partial"
+
+
+
+@pytest.mark.asyncio
 async def test_record_intake_answer_truncates_overlong_text(
     tmp_path, v2_yaml, fake_ctx,
 ):
